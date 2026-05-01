@@ -210,8 +210,14 @@ def get_narratives(data):
     rows = data["rows"]; fin = data["fin"]; tgt = data["tgt"]
     br   = data["br"];   bankName = data["bankName"]
 
-    tot      = sum(float(r.get("latest_dep",0)) for r in rows)
-    avg      = lambda v: sum(float(r.get(v,0)) for r in rows) / max(len(rows),1)
+    def sf(v, default=0):
+        try:
+            return float(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    tot      = sum(sf(r.get("latest_dep")) for r in rows)
+    avg      = lambda v: sum(sf(r.get(v)) for r in rows) / max(len(rows),1)
     invest   = sum(1 for r in rows if r.get("opportunity_zone")=="Invest")
     analyze  = sum(1 for r in rows if r.get("opportunity_zone")=="Analyze")
     defend   = sum(1 for r in rows if r.get("opportunity_zone")=="Defend")
@@ -221,12 +227,12 @@ def get_narratives(data):
     gap      = bankYoY - compYoY
     avgScore = avg("opportunity_score")
 
-    top3 = sorted(br, key=lambda b: float(b.get("opportunity_score",0)), reverse=True)[:3]
+    top3 = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)[:3]
     top3_str = "; ".join(
         f"{b['namebr'].split('--')[-1].strip()} "
-        f"(${float(b.get('latest_dep',0))/1e6:.0f}M, "
-        f"{float(b.get('yoy_deposits',0))*100:.1f}% YoY, "
-        f"score {float(b.get('opportunity_score',0)):.0f})"
+        f"(${sf(b.get('latest_dep'))/1e6:.0f}M, "
+        f"{sf(b.get('yoy_deposits'))*100:.1f}% YoY, "
+        f"score {sf(b.get('opportunity_score')):.0f})"
         for b in top3
     )
 
@@ -548,8 +554,15 @@ def build_deck(data, logo_bytes):
     rows = data["rows"]; fin = data["fin"]; tgt = data["tgt"]
     br   = data["br"];   bankName = data["bankName"]
 
-    tot      = sum(float(r.get("latest_dep",0)) for r in rows)
-    avg      = lambda v: sum(float(r.get(v,0)) for r in rows) / max(len(rows),1)
+    def sf(v, default=0):
+        """Safe float — handles None, empty string, missing."""
+        try:
+            return float(v) if v is not None else default
+        except (TypeError, ValueError):
+            return default
+
+    tot      = sum(sf(r.get("latest_dep")) for r in rows)
+    avg      = lambda v: sum(sf(r.get(v)) for r in rows) / max(len(rows),1)
     invest   = sum(1 for r in rows if r.get("opportunity_zone")=="Invest")
     analyze  = sum(1 for r in rows if r.get("opportunity_zone")=="Analyze")
     defend   = sum(1 for r in rows if r.get("opportunity_zone")=="Defend")
@@ -559,9 +572,9 @@ def build_deck(data, logo_bytes):
     gap      = bankYoY - compYoY
     avgScore = avg("opportunity_score")
 
-    top_br   = sorted(br, key=lambda b: float(b.get("opportunity_score",0)), reverse=True)
+    top_br   = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)
     just_top = sorted([b for b in br if b.get("opportunity_zone")=="Justify"],
-                      key=lambda b: float(b.get("latest_dep",0)), reverse=True)
+                      key=lambda b: sf(b.get("latest_dep")), reverse=True)
     tier1    = [b for b in br if (b.get("priority_tier") or "").startswith("1")][:2]
 
     narr = get_narratives(data)
@@ -584,30 +597,30 @@ def build_deck(data, logo_bytes):
             {
                 "name":  b["namebr"].split("--")[-1].strip()[:16],
                 "city":  f"{b['citybr']}, {b['stalpbr']}",
-                "score": f"{float(b.get('opportunity_score',0)):.0f}",
-                "dep":   f"${float(b.get('latest_dep',0))/1e6:.0f}M",
-                "yoy":   f"{float(b.get('yoy_deposits',0))*100:+.1f}",
+                "score": f"{sf(b.get('opportunity_score')):.0f}",
+                "dep":   f"${sf(b.get('latest_dep'))/1e6:.0f}M",
+                "yoy":   f"{sf(b.get('yoy_deposits'))*100:+.1f}",
                 "zone":  b.get("opportunity_zone",""),
             }
             for b in top_br[:8]
         ],
         "metrics": [
-            {"label":"ROA",           "value":f"{fin.get('roa','—')}%",              "bench":">1.0%",    "ok": float(fin.get("roa",0) or 0)>=1},
-            {"label":"NIM",           "value":f"{fin.get('nim','—')}%",              "bench":"2.5–3.5%", "ok": 2.5<=float(fin.get("nim",0) or 0)<=4},
-            {"label":"Efficiency",    "value":f"{fin.get('efficiency_ratio','—')}%", "bench":"<60%",     "ok": 0<float(fin.get("efficiency_ratio",0) or 0)<60},
-            {"label":"Net Income YoY","value":f"{float(fin.get('net_income_yoy_pct',0) or 0):+.1f}%",   "bench":">0%",      "ok": float(fin.get("net_income_yoy_pct",0) or 0)>0},
+            {"label":"ROA",           "value":f"{fin.get('roa','—')}%",              "bench":">1.0%",    "ok": sf(fin.get("roa"))>=1},
+            {"label":"NIM",           "value":f"{fin.get('nim','—')}%",              "bench":"2.5–3.5%", "ok": 2.5<=sf(fin.get("nim"))<=4},
+            {"label":"Efficiency",    "value":f"{fin.get('efficiency_ratio','—')}%", "bench":"<60%",     "ok": 0<sf(fin.get("efficiency_ratio"))<60},
+            {"label":"Net Income YoY","value":f"{sf(fin.get('net_income_yoy_pct')):+.1f}%",              "bench":">0%",      "ok": sf(fin.get("net_income_yoy_pct"))>0},
             {"label":"Deposit YoY",   "value":f"{bankYoY:+.1f}%",                   "bench":">2%",      "ok": bankYoY>=2},
-            {"label":"Cost of Funds", "value":f"{fin.get('cost_of_funds_pct','—')}%","bench":"<2%",      "ok": 0<float(fin.get("cost_of_funds_pct",0) or 0)<2},
-            {"label":"Tier 1 Capital","value":f"{fin.get('tier1_capital_pct','—')}%","bench":">8%",      "ok": float(fin.get("tier1_capital_pct",0) or 0)>=8},
+            {"label":"Cost of Funds", "value":f"{fin.get('cost_of_funds_pct','—')}%","bench":"<2%",      "ok": 0<sf(fin.get("cost_of_funds_pct"))<2},
+            {"label":"Tier 1 Capital","value":f"{fin.get('tier1_capital_pct','—')}%","bench":">8%",      "ok": sf(fin.get("tier1_capital_pct"))>=8},
         ],
         "competitor": {
             "branches": tgt["branches_in_radius"],
-            "yoy":      f"{float(tgt.get('avg_yoy_pct',0)):.1f}"
+            "yoy":      f"{sf(tgt.get('avg_yoy_pct')):.1f}"
         } if tgt else None,
         "actions": [
             {
                 "title": f"Activate: {' + '.join(' '.join(b['namebr'].split('--')[-1].strip().split()[:3]) for b in tier1)}" if tier1 else "Activate Top Invest Branches",
-                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()} — Score {float(b.get('opportunity_score',0)):.0f} | ${float(b.get('latest_dep',0))/1e6:.0f}M" for b in tier1) or f"{invest} Invest zone branches ready for campaign launch.",
+                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()} — Score {sf(b.get('opportunity_score')):.0f} | ${sf(b.get('latest_dep'))/1e6:.0f}M" for b in tier1) or f"{invest} Invest zone branches ready for campaign launch.",
             },
             {
                 "title": "Launch Targeted Audience Campaigns",
@@ -615,11 +628,11 @@ def build_deck(data, logo_bytes):
             },
             {
                 "title": f"Justify Zone — {justify} Branches Under Review",
-                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()}: ${float(b.get('latest_dep',0))/1e6:.0f}M — assess ROI" for b in just_top[:2]) or f"{justify} branches need investment audit.",
+                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()}: ${sf(b.get('latest_dep'))/1e6:.0f}M — assess ROI" for b in just_top[:2]) or f"{justify} branches need investment audit.",
             },
             {
                 "title": f"Protect Against {tgt['target_institution']}" if tgt else "Protect Market Position",
-                "body":  f"{tgt['branches_in_radius']} shared geographies. Competitor at {float(tgt.get('avg_yoy_pct',0)):.1f}% YoY. Deploy defensive rate messaging." if tgt else "Identify top competitors and monitor rate activity.",
+                "body":  f"{tgt['branches_in_radius']} shared geographies. Competitor at {sf(tgt.get('avg_yoy_pct')):.1f}% YoY. Deploy defensive rate messaging." if tgt else "Identify top competitors and monitor rate activity.",
             },
         ],
     }
