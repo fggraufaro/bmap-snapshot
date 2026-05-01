@@ -236,18 +236,33 @@ def get_narratives(data):
         for b in top3
     )
 
+    comp_str = (
+        f"Primary competitor — {tgt['branches_in_radius']} overlap branches, "
+        f"avg vulnerability score {sf(tgt.get('avg_vuln_score')):.0f}/100, "
+        f"their YoY {sf(tgt.get('avg_yoy_pct')):.1f}%"
+    ) if tgt else "N/A"
+
     ctx = f"""Bank: {bankName} | {len(rows)} branches | ${tot/1e9:.2f}B deposits
-Deposit YoY: +{bankYoY:.1f}% | Peer avg: +{compYoY:.1f}% | Gap: {gap:+.1f}pp
+Deposit YoY: +{bankYoY:.1f}% | Peer avg (competitor growth in bank\'s own markets): +{compYoY:.1f}% | Gap: {gap:+.1f}pp
 Avg opp score: {avgScore:.1f}/100 | Zones: Invest {invest} | Analyze {analyze} | Defend {defend} | Justify {justify}
 ROA: {fin.get('roa','—')}% | NIM: {fin.get('nim','—')}% | Efficiency: {fin.get('efficiency_ratio','—')}%
 Net income YoY: {fin.get('net_income_yoy_pct','—')}% | Tier 1: {fin.get('tier1_capital_pct','—')}%
-Top competitor: {tgt['target_institution']+' — '+str(tgt['branches_in_radius'])+' overlap branches' if tgt else 'N/A'}
+Primary competitor: {comp_str}
 Top 3 branches: {top3_str}"""
 
-    system = """You are BMAP Executive Strategist at Verlocity. Write boardroom-quality slide narratives grounded in exact numbers.
+    system = """You are BMAP Executive Strategist at Verlocity Princeton Partners Group. Write boardroom-quality slide narratives grounded in exact numbers. These slides are SALES TOOLS — they open conversations, they do not close them. Never prescribe specific actions the bank can execute without Verlocity. Tease the insight, name the opportunity size, invite the next conversation. Close bars should create urgency and curiosity — not give away the methodology.
+
+IMPORTANT RULES:
+- Never name competitors directly. Refer to them as "your primary competitor" or "a regional competitor".
+- Never prescribe specific budget reallocation amounts or staff actions.
+- Bullets reveal WHAT the data shows, not HOW to fix it.
+- Close bars end with a question or an invitation, not a directive.
+- "Peer avg" means competitor deposit growth in the bank's own markets — make this clear when relevant.
+- nextsteps slide: focus on what Verlocity delivers next, not what the bank should do internally.
+
 Return ONLY valid JSON — no markdown, no explanation:
 {"slides":[
-  {"id":"network","headline":"strong claim max 9 words","spoken":"2 sentences Tom says walking in. Specific numbers.","bullets":["data point with number","competitive insight","risk or opportunity"],"close":"one punchy forward action with metric"},
+  {"id":"network","headline":"strong claim max 9 words","spoken":"2 sentences Tom says walking in. Specific numbers. Creates urgency.","bullets":["data point with number","competitive threat — no competitor name","gap or risk that needs Verlocity to solve"],"close":"invitation to dig deeper — not a prescription"},
   {"id":"priority","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"financial","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"nextsteps","headline":"...","spoken":"...","bullets":[...],"close":"..."}
@@ -345,7 +360,7 @@ def build_network(prs, d, narr, logo_bytes):
         (d["avgScore"],   "AVG OPP SCORE",  GRAY1,    NAVY),
         (d["depositYoY"], "DEPOSIT YoY",    INVEST_L if not d["gapNeg"] else JUSTIFY_L,
                                             INVEST   if not d["gapNeg"] else JUSTIFY),
-        (d["gap"],        "GAP VS PEERS",   INVEST_L if not d["gapNeg"] else JUSTIFY_L,
+        (d["gap"],        "GAP VS MKT PEERS",   INVEST_L if not d["gapNeg"] else JUSTIFY_L,
                                             INVEST   if not d["gapNeg"] else JUSTIFY),
     ]
     for i, (val, lbl, bg, vc) in enumerate(kpis):
@@ -410,9 +425,9 @@ def build_branches(prs, d, narr, logo_bytes):
         add_text(slide, str(i+1), 6.34, by+0.26, 0.34, 0.34,
                  size=11, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
 
-        add_text(slide, b["name"], 6.76, by+0.07, 2.18, 0.26, size=10, bold=True, color=NAVY)
-        add_text(slide, b["city"], 6.76, by+0.33, 2.18, 0.18, size=8, color=GRAY3)
-        add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY", 6.76, by+0.54, 2.18, 0.22, size=9, color=NAVY)
+        add_text(slide, b["name"], 6.76, by+0.06, 2.18, 0.28, size=9.5, bold=True, color=NAVY)
+        add_text(slide, b["city"], 6.76, by+0.34, 2.18, 0.18, size=8, color=GRAY3)
+        add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY", 6.76, by+0.53, 2.18, 0.22, size=9, color=NAVY)
 
         # Zone pill
         add_rect(slide, 9.0, by+0.30, 0.72, 0.24, zbg, zc, Pt(0.5))
@@ -449,8 +464,8 @@ def build_financial(prs, d, narr, logo_bytes):
     if d.get("competitor"):
         add_rect(slide, 6.22, 4.88, 3.56, 0.34, JUSTIFY_L, JUSTIFY, Pt(0.5))
         add_text(slide,
-            f"⚠  Key Competitor  ·  {d['competitor']['branches']} branch overlap"
-            f"  ·  Peer avg YoY {d['competitor']['yoy']}%",
+            f"⚠  Primary Competitor  ·  {d['competitor']['branches']} overlap markets"
+            f"  ·  Avg branch vulnerability {d['competitor']['vuln']}/100",
             6.32, 4.90, 3.36, 0.28, size=8.5, bold=True, color=JUSTIFY)
 
 
@@ -522,7 +537,7 @@ def build_gap(prs, d, narr):
     add_text(slide,
         f"Verlocity Princeton Partners Group   ·   BMAP Intelligence   ·   {d['bankName']}",
         0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("2A4060"))
-    add_text(slide, "5", 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("2A4060"), align=PP_ALIGN.RIGHT)
+    add_text(slide, "4", 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("2A4060"), align=PP_ALIGN.RIGHT)
 
 
 def build_next_steps(prs, d, narr, logo_bytes):
@@ -549,6 +564,43 @@ def build_next_steps(prs, d, narr, logo_bytes):
 # ═══════════════════════════════════════════════════════════════
 # MAIN BUILD
 # ═══════════════════════════════════════════════════════════════
+
+def _build_branch_list(br, sf):
+    """
+    Urgency mix: top Invest branches (upside) + critical Defend/Justify
+    branches by deposit size (risk). Scores redacted — zone pill only.
+    Max 5 cards. Names up to 28 chars.
+    """
+    invest_br  = sorted(
+        [b for b in br if b.get("opportunity_zone") == "Invest"],
+        key=lambda b: sf(b.get("opportunity_score")), reverse=True
+    )[:3]
+    risk_br = sorted(
+        [b for b in br if b.get("opportunity_zone") in ("Defend", "Justify")],
+        key=lambda b: sf(b.get("latest_dep")), reverse=True
+    )[:2]
+
+    # Merge, dedupe, cap at 5
+    seen = set()
+    merged = []
+    for b in invest_br + risk_br:
+        uid = b.get("uninumbr") or b.get("namebr")
+        if uid not in seen:
+            seen.add(uid)
+            merged.append(b)
+    merged = merged[:5]
+
+    return [
+        {
+            "name":  b["namebr"].split("--")[-1].strip()[:28],
+            "city":  f"{b.get('citybr','')}, {b.get('stalpbr','')}",
+            "dep":   f"${sf(b.get('latest_dep'))/1e6:.0f}M",
+            "yoy":   f"{sf(b.get('yoy_deposits'))*100:+.1f}",
+            "zone":  b.get("opportunity_zone", ""),
+        }
+        for b in merged
+    ]
+
 
 def build_deck(data, logo_bytes):
     rows = data["rows"]; fin = data["fin"]; tgt = data["tgt"]
@@ -593,46 +645,37 @@ def build_deck(data, logo_bytes):
         "gapSubtitle": f"Deposit growth vs. peer average — {fin.get('period','Q4 2025')}",
         "invest":  invest,  "analyze": analyze,
         "defend":  defend,  "justify": justify,
-        "branchList": [
-            {
-                "name":  b["namebr"].split("--")[-1].strip()[:16],
-                "city":  f"{b['citybr']}, {b['stalpbr']}",
-                "score": f"{sf(b.get('opportunity_score')):.0f}",
-                "dep":   f"${sf(b.get('latest_dep'))/1e6:.0f}M",
-                "yoy":   f"{sf(b.get('yoy_deposits'))*100:+.1f}",
-                "zone":  b.get("opportunity_zone",""),
-            }
-            for b in top_br[:8]
-        ],
+        "branchList": _build_branch_list(br, sf),
         "metrics": [
-            {"label":"ROA",           "value":f"{fin.get('roa','—')}%",              "bench":">1.0%",    "ok": sf(fin.get("roa"))>=1},
-            {"label":"NIM",           "value":f"{fin.get('nim','—')}%",              "bench":"2.5–3.5%", "ok": 2.5<=sf(fin.get("nim"))<=4},
-            {"label":"Efficiency",    "value":f"{fin.get('efficiency_ratio','—')}%", "bench":"<60%",     "ok": 0<sf(fin.get("efficiency_ratio"))<60},
-            {"label":"Net Income YoY","value":f"{sf(fin.get('net_income_yoy_pct')):+.1f}%",              "bench":">0%",      "ok": sf(fin.get("net_income_yoy_pct"))>0},
-            {"label":"Deposit YoY",   "value":f"{bankYoY:+.1f}%",                   "bench":">2%",      "ok": bankYoY>=2},
-            {"label":"Cost of Funds", "value":f"{fin.get('cost_of_funds_pct','—')}%","bench":"<2%",      "ok": 0<sf(fin.get("cost_of_funds_pct"))<2},
-            {"label":"Tier 1 Capital","value":f"{fin.get('tier1_capital_pct','—')}%","bench":">8%",      "ok": sf(fin.get("tier1_capital_pct"))>=8},
+            {"label":"ROA",           "value":f"{sf(fin.get('roa')):.2f}%",              "bench":">1.0%",    "ok": sf(fin.get("roa"))>=1},
+            {"label":"NIM",           "value":f"{sf(fin.get('nim')):.2f}%",              "bench":"2.5–3.5%", "ok": 2.5<=sf(fin.get("nim"))<=4},
+            {"label":"Efficiency",    "value":f"{sf(fin.get('efficiency_ratio')):.2f}%", "bench":"<60%",     "ok": 0<sf(fin.get("efficiency_ratio"))<60},
+            {"label":"Net Income YoY","value":f"{sf(fin.get('net_income_yoy_pct')):+.1f}%",               "bench":">0%",      "ok": sf(fin.get("net_income_yoy_pct"))>0},
+            {"label":"Deposit YoY",   "value":f"{bankYoY:+.1f}%",                        "bench":">2%",      "ok": bankYoY>=2},
+            {"label":"Cost of Funds", "value":f"{sf(fin.get('cost_of_funds_pct')):.2f}%","bench":"<2%",      "ok": 0<sf(fin.get("cost_of_funds_pct"))<2},
+            {"label":"Tier 1 Capital","value":f"{sf(fin.get('tier1_capital_pct')):.2f}%","bench":">8%",      "ok": sf(fin.get("tier1_capital_pct"))>=8},
         ],
         "competitor": {
             "branches": tgt["branches_in_radius"],
-            "yoy":      f"{sf(tgt.get('avg_yoy_pct')):.1f}"
+            "yoy":      f"{sf(tgt.get('avg_yoy_pct')):.1f}",
+            "vuln":     f"{sf(tgt.get('avg_vuln_score')):.0f}",
         } if tgt else None,
         "actions": [
             {
-                "title": f"Activate: {' + '.join(' '.join(b['namebr'].split('--')[-1].strip().split()[:3]) for b in tier1)}" if tier1 else "Activate Top Invest Branches",
-                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()} — Score {sf(b.get('opportunity_score')):.0f} | ${sf(b.get('latest_dep'))/1e6:.0f}M" for b in tier1) or f"{invest} Invest zone branches ready for campaign launch.",
+                "title": "AudienceFinder Activation",
+                "body":  f"Deploy rate-sensitive depositor campaigns to your top {invest} Invest-zone markets within 30 days. Precision targeting across digital and direct channels.",
             },
             {
-                "title": "Launch Targeted Audience Campaigns",
-                "body":  f"{invest} Invest zone branches. Rate-sensitive depositors + digital big-bank leavers. Deploy via AudienceFinder.",
+                "title": "Competitive Intelligence Brief",
+                "body":  f"Full vulnerability analysis of your primary competitor's {tgt['branches_in_radius'] if tgt else 'N'} overlap geographies — including branch-level exposure scoring and deposit flow modeling.",
             },
             {
-                "title": f"Justify Zone — {justify} Branches Under Review",
-                "body":  "\n".join(f"{b['namebr'].split('--')[-1].strip()}: ${sf(b.get('latest_dep'))/1e6:.0f}M — assess ROI" for b in just_top[:2]) or f"{justify} branches need investment audit.",
+                "title": "90-Day Branch Portfolio Review",
+                "body":  f"Verlocity-facilitated session with your retail leadership to triage {defend + justify} Defend and Justify branches and build a reallocation roadmap.",
             },
             {
-                "title": f"Protect Against {tgt['target_institution']}" if tgt else "Protect Market Position",
-                "body":  f"{tgt['branches_in_radius']} shared geographies. Competitor at {sf(tgt.get('avg_yoy_pct')):.1f}% YoY. Deploy defensive rate messaging." if tgt else "Identify top competitors and monitor rate activity.",
+                "title": "BMAP Platform Access",
+                "body":  f"Live scoring across all {len(rows)} branches, updated monthly. Your team works directly in the platform between Verlocity sessions.",
             },
         ],
     }
