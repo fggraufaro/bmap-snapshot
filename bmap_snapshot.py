@@ -167,6 +167,66 @@ def fetch_logo():
 # ═══════════════════════════════════════════════════════════════
 # DATA FETCH
 # ═══════════════════════════════════════════════════════════════
+def _fetch_brokered(ik):
+    """
+    Fetch brokered deposit data from raw_schedule_RCE + raw_schedule_RC.
+    Returns dict with brokered metrics, or None if below 15% threshold.
+    Uses RCON2365 (brokered deposits) / RCON2385 (total deposits RCE).
+    All values in $thousands from FFIEC call report.
+    """
+    THRESHOLD = 0.15   # 15% — meaningful brokered pressure
+
+    # Extract RSSDID from inst_key (bank_463735 → 463735)
+    rssdid = ik.replace("bank_", "").replace("cu_", "")
+
+    # Use Supabase RPC-style SQL via the raw PostgREST endpoint
+    # We'll query raw_schedule_RCE directly
+    url = (
+        f"{SUPA_URL}/rest/v1/raw_schedule_RCE"
+        f'?IDRSSD=eq.{rssdid}'
+        f'&period=eq.2025-12-31'
+        f'&select=RCON2365,RCON2385,RCON0352,RCON5590'
+        f'&limit=1'
+    )
+    import requests as _req
+    try:
+        r = _req.get(url,
+            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"},
+            timeout=15)
+        rows = r.json()
+    except Exception as e:
+        print(f"  [brokered] fetch error: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    row = rows[0]
+    try:
+        brokered  = float(row.get("RCON2365") or 0)   # $thousands
+        total_dep = float(row.get("RCON2385") or 0)   # $thousands
+        savings   = float(row.get("RCON0352") or 0)   # $thousands
+        cds       = float(row.get("RCON5590") or 0)   # $thousands
+    except (TypeError, ValueError):
+        return None
+
+    if total_dep == 0:
+        return None
+
+    brok_pct = brokered / total_dep
+
+    if brok_pct < THRESHOLD:
+        return None   # below threshold — don't show module
+
+    return {
+        "brokered_M":   round(brokered   / 1000, 1),   # convert to $M
+        "total_dep_M":  round(total_dep  / 1000, 1),
+        "savings_M":    round(savings    / 1000, 1),
+        "cds_M":        round(cds        / 1000, 1),
+        "brokered_pct": round(brok_pct * 100, 1),
+    }
+
+
 def fetch_bank_data(ik):
     print(f"  Fetching branch data...")
     rows = supabase("branch_opportunity_base",
@@ -189,6 +249,9 @@ def fetch_bank_data(ik):
     fin_arr = supabase("bank_financial_snapshot_latest",
         f"inst_key=eq.{ik}&select=*&limit=1")
 
+    print(f"  Fetching brokered deposits...")
+    brok = _fetch_brokered(ik)
+
     return {
         "ik":       ik,
         "bankName": rows[0].get("namefull", ik) if rows else ik,
@@ -196,6 +259,7 @@ def fetch_bank_data(ik):
         "br":       br   or [],
         "tgt":      tgt_arr[0] if tgt_arr else None,
         "fin":      fin_arr[0] if fin_arr else {},
+        "brokered": brok,
     }
 
 # ═══════════════════════════════════════════════════════════════
@@ -242,12 +306,22 @@ def get_narratives(data):
         f"their YoY {sf(tgt.get('avg_yoy_pct')):.1f}%"
     ) if tgt else "N/A"
 
+    brok = data.get("brokered")
+    brok_str = (
+        f"Brokered deposits: {brok['brokered_pct']}% of total "
+        f"(${brok['brokered_M']:.0f}M of ${brok['total_dep_M']:.0f}M total). "
+        f"Direct savings base: ${brok['savings_M']:.0f}M. "
+        f"Conversion opportunity: replace expensive brokered funding with "
+        f"direct customer deposits via savings→CD funnel strategy."
+    ) if brok else "Brokered deposits: not a material factor for this bank."
+
     ctx = f"""Bank: {bankName} | {len(rows)} branches | ${tot/1e9:.2f}B deposits
 Deposit YoY: +{bankYoY:.1f}% | Peer avg (competitor growth in bank\'s own markets): +{compYoY:.1f}% | Gap: {gap:+.1f}pp
 Avg opp score: {avgScore:.1f}/100 | Zones: Invest {invest} | Analyze {analyze} | Defend {defend} | Justify {justify}
 ROA: {fin.get('roa','—')}% | NIM: {fin.get('nim','—')}% | Efficiency: {fin.get('efficiency_ratio','—')}%
 Net income YoY: {fin.get('net_income_yoy_pct','—')}% | Tier 1: {fin.get('tier1_capital_pct','—')}%
 Primary competitor: {comp_str}
+Brokered deposit situation: {brok_str}
 Top 3 branches: {top3_str}"""
 
     system = """You are BMAP Executive Strategist at Verlocity Princeton Partners Group. Write boardroom-quality slide narratives grounded in exact numbers. These slides are SALES TOOLS — they open conversations, they do not close them. Never prescribe specific actions the bank can execute without Verlocity. Tease the insight, name the opportunity size, invite the next conversation. Close bars should create urgency and curiosity — not give away the methodology.
@@ -468,6 +542,26 @@ def build_financial(prs, d, narr, logo_bytes):
             f"  ·  Avg branch vulnerability {d['competitor']['vuln']}/100",
             6.32, 4.90, 3.36, 0.28, size=8.5, bold=True, color=JUSTIFY)
 
+    if d.get("brokered"):
+        b = d["brokered"]
+        # Brokered callout box — amber alert below metrics
+        brok_y = 4.54 if d.get("competitor") else 4.88
+        add_rect(slide, 6.22, brok_y, 3.56, 0.62, rgb("FFF8EC"), AMBER, Pt(0.5))
+        add_text(slide,
+            f"BROKERED DEPOSIT EXPOSURE",
+            6.32, brok_y + 0.06, 3.36, 0.20,
+            size=7.5, bold=True, color=AMBER)
+        add_text(slide,
+            f"{b['brokered_pct']}% of deposits ({b['brokered_M']:.0f}M) sourced from brokers"
+            f"  ·  Direct savings base: ${b['savings_M']:.0f}M",
+            6.32, brok_y + 0.26, 3.36, 0.20,
+            size=8, color=NAVY)
+        add_text(slide,
+            f"Savings→CD funnel strategy could reduce funding cost by converting"
+            f" brokered volume to direct customer deposits.",
+            6.32, brok_y + 0.42, 3.36, 0.18,
+            size=7.5, italic=True, color=GRAY3)
+
 
 def build_gap(prs, d, narr):
     """Dark slide — no chrome, uses navy background"""
@@ -660,6 +754,7 @@ def build_deck(data, logo_bytes):
             "yoy":      f"{sf(tgt.get('avg_yoy_pct')):.1f}",
             "vuln":     f"{sf(tgt.get('avg_vuln_score')):.0f}",
         } if tgt else None,
+        "brokered": data.get("brokered"),
         "actions": [
             {
                 "title": "AudienceFinder Activation",
