@@ -326,13 +326,29 @@ Top 3 branches: {top3_str}"""
 
     system = """You are BMAP Executive Strategist at Verlocity Princeton Partners Group. Write boardroom-quality slide narratives grounded in exact numbers. These slides are SALES TOOLS — they open conversations, they do not close them. Never prescribe specific actions the bank can execute without Verlocity. Tease the insight, name the opportunity size, invite the next conversation. Close bars should create urgency and curiosity — not give away the methodology.
 
+VERLOCITY GROWTH SYSTEM CONTEXT (reference naturally where relevant):
+Verlocity is a Marketing Intelligence System built around 5 capabilities organized in 3 phases:
+- Foundation: BMAP (Market Truth — where to compete, invest, target) + Brandvention (Brand Reality — 6-point brand strategy)
+- Activation: Infrastrucsure (Customer Experience — CRM, journey design, funded account linkage) + Mediapredict & Audiencefinder (Media Performance — paid/owned/earned, deposit growth campaigns)
+- Compounding: Clientdelight (Loyalty — predictive analytics, churn risk, cross-sell, wallet share growth)
+The BMAP Snapshot is Step 1 of Foundation. It is the entry point to the full system, not the end product.
+When writing nextsteps, position Verlocity as the partner that connects market truth → brand story → performance → loyalty. Reference the Growth System naturally. The bank is seeing BMAP — help them understand there is a complete system behind it.
+Key proof point: one Verlocity client generated $660M in new deposits over two years using this approach.
+WinShare model: Verlocity invests alongside the bank — compensation tied to results, not effort.
+
+BROKERED DEPOSIT CONTEXT (use if brokered pressure is present):
+Brokered deposits are expensive, rate-sensitive, and leave when a better rate appears. The savings→CD funnel strategy converts brokered volume to sticky direct customer deposits at lower cost. If brokered pressure is present, frame it as a funded account conversion opportunity — Mediapredicted and Audiencefinder campaigns targeting savings account openers who convert to CDs.
+
 IMPORTANT RULES:
 - Never name competitors directly. Refer to them as "your primary competitor" or "a regional competitor".
 - Never prescribe specific budget reallocation amounts or staff actions.
 - Bullets reveal WHAT the data shows, not HOW to fix it.
 - Close bars end with a question or an invitation, not a directive.
-- "Peer avg" means competitor deposit growth in the bank's own markets — make this clear when relevant.
-- nextsteps slide: focus on what Verlocity delivers next, not what the bank should do internally.
+- "Peer avg" means competitor deposit growth in the bank's own markets.
+- nextsteps headline: make it about what Verlocity delivers — position as the full Growth System, not just BMAP.
+- nextsteps spoken: 2 sentences. Reference that BMAP is step 1. The full system connects market truth → brand → performance → loyalty.
+- nextsteps bullets: each bullet names a Growth System phase output and the business result it delivers.
+- nextsteps close: invite them to start the engagement. Make not starting feel expensive.
 
 Return ONLY valid JSON — no markdown, no explanation:
 {"slides":[
@@ -636,23 +652,31 @@ def build_gap(prs, d, narr):
 
 def build_next_steps(prs, d, narr, logo_bytes):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, 5, "STRATEGIC PRIORITIES", logo_bytes)
+    add_chrome(slide, 5, "THE VERLOCITY GROWTH SYSTEM", logo_bytes)
     add_narrative(slide, narr["nextsteps"], 0.14)
 
+    # Growth System phase labels above cards
+    phase_labels = ["FOUNDATION", "FOUNDATION", "ACTIVATION", "COMPOUNDING"]
+    phase_colors = [TEAL, TEAL, ANALYZE, NAVY]
     ac_colors = [TEAL, ANALYZE, AMBER, NAVY]
+
     for i, action in enumerate(d["actions"]):
         ay = 0.14 + i*1.30
         ac = ac_colors[i]
 
         add_rect(slide, 6.22, ay, 3.6, 1.14, GRAY1, GRAY2, Pt(0.4))
         add_rect(slide, 6.22, ay, 0.06, 1.14, ac)
-        add_rect(slide, 6.34, ay+0.36, 0.34, 0.34, ac)
-        add_text(slide, str(i+1).zfill(2), 6.34, ay+0.36, 0.34, 0.34,
+        add_rect(slide, 6.34, ay+0.14, 0.34, 0.34, ac)
+        add_text(slide, str(i+1).zfill(2), 6.34, ay+0.14, 0.34, 0.34,
                  size=9, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-        add_text(slide, action["title"], 6.76, ay+0.10, 2.98, 0.28,
-                 size=10.5, bold=True, color=NAVY)
-        add_text(slide, action["body"],  6.76, ay+0.42, 2.98, 0.62,
-                 size=8.5, color=GRAY3)
+        # Phase pill
+        add_rect(slide, 6.76, ay+0.10, 0.90, 0.16, phase_colors[i])
+        add_text(slide, phase_labels[i], 6.76, ay+0.10, 0.90, 0.16,
+                 size=5.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, action["title"], 6.76, ay+0.28, 2.98, 0.26,
+                 size=10, bold=True, color=NAVY)
+        add_text(slide, action["body"],  6.76, ay+0.56, 2.98, 0.52,
+                 size=8, color=GRAY3)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -757,20 +781,20 @@ def build_deck(data, logo_bytes):
         "brokered": data.get("brokered"),
         "actions": [
             {
-                "title": "AudienceFinder Activation",
-                "body":  f"Deploy rate-sensitive depositor campaigns to your top {invest} Invest-zone markets within 30 days. Precision targeting across digital and direct channels.",
+                "title": "Step 1 — BMAP Strategic Assessment",
+                "body":  f"Full branch scoring across all {len(rows)} locations. Decision-quality clarity on where to invest, defend, and exit. Delivered in 4–6 weeks. This is Foundation — where the Growth System starts.",
             },
             {
-                "title": "Competitive Intelligence Brief",
-                "body":  f"Full vulnerability analysis of your primary competitor's {tgt['branches_in_radius'] if tgt else 'N'} overlap geographies — including branch-level exposure scoring and deposit flow modeling.",
+                "title": "Step 2 — Brandvention",
+                "body":  "6-Point Brand Strategy: Purpose, Positioning, Promise, Propositions, Proof, Personality. Authentic differentiation rooted in your market position — the story that makes every media dollar work harder.",
             },
             {
-                "title": "90-Day Branch Portfolio Review",
-                "body":  f"Verlocity-facilitated session with your retail leadership to triage {defend + justify} Defend and Justify branches and build a reallocation roadmap.",
+                "title": "Step 3 — AudienceFinder Activation",
+                "body":  f"Deploy rate-sensitive depositor campaigns to your top {invest} Invest-zone markets. Savings account openers → CD converters. Sticky deposits, lower cost of funds. Mediapredict + Audiencefinder working together.",
             },
             {
-                "title": "BMAP Platform Access",
-                "body":  f"Live scoring across all {len(rows)} branches, updated monthly. Your team works directly in the platform between Verlocity sessions.",
+                "title": "Step 4 — Clientdelight (Compounding)",
+                "body":  "Predictive analytics that identify churn risk and cross-sell opportunities across your full customer base. One Verlocity client grew $660M in new deposits over two years using this approach.",
             },
         ],
     }
