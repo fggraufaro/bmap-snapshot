@@ -361,7 +361,7 @@ Return ONLY valid JSON — no markdown, no explanation:
     print(f"  Generating AI narratives...")
     client = anthropic.Anthropic(api_key=ANTH_KEY)
     msg = client.messages.create(
-        model="claude-sonnet-4-5",
+        model="claude-sonnet-4-6",
         max_tokens=2400,
         system=system,
         messages=[{"role":"user","content":f"Generate 4-slide narratives for:\n\n{ctx}"}]
