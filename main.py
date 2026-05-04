@@ -21,6 +21,7 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 
 import bmap_snapshot as bm
+import bmap_board_brief as bb
 
 app = Flask(__name__)
 CORS(app)  # Allow calls from context-generator on GitHub Pages
@@ -29,6 +30,39 @@ CORS(app)  # Allow calls from context-generator on GitHub Pages
 @app.route("/health", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "BMAP Snapshot API"})
+
+
+# ── Board Brief PDF ────────────────────────────────────────────
+@app.route("/generate-brief", methods=["POST"])
+def generate_brief():
+    body      = request.get_json(force=True)
+    ik        = (body.get("inst_key") or "").strip()
+    name_hint = (body.get("bank_name") or "").strip()
+
+    if not ik:
+        return jsonify({"error": "inst_key required"}), 400
+
+    try:
+        print(f"[brief] {ik} — {name_hint or 'no name hint'}")
+        buf = bb.generate_board_brief(ik, name_hint or None)
+
+        safe = "".join(c if c.isalnum() or c in " _-" else "_"
+                       for c in (name_hint or ik)).strip()
+        date = datetime.now().strftime("%Y%m%d")
+        filename = f"Board_Brief_{safe}_{date}.pdf"
+
+        print(f"[brief] ✓ {filename} ({buf.getbuffer().nbytes // 1024}KB)")
+
+        return send_file(
+            buf,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"[brief] ✗ {e}")
+        return jsonify({"error": str(e)}), 500
 
 
 # ── Single deck ────────────────────────────────────────────────
@@ -42,14 +76,24 @@ def generate():
         return jsonify({"error": "inst_key required"}), 400
 
     try:
-        print(f"[generate] {ik} — {name_hint or 'no name hint'}")
+        no_ai = body.get("no_ai", False)
+        print(f"[generate] {ik} — {name_hint or 'no name hint'} — no_ai={no_ai}")
 
         data = bm.fetch_bank_data(ik)
         if name_hint:
             data["bankName"] = name_hint
 
+        # Temporarily skip AI to stay within Railway's 60s HTTP timeout
+        if no_ai:
+            import os as _os
+            _os.environ["_SKIP_AI"] = "1"
+        
         logo  = bm.fetch_logo()
         prs   = bm.build_deck(data, logo)
+        
+        if no_ai:
+            import os as _os
+            _os.environ.pop("_SKIP_AI", None)
 
         # Save to in-memory buffer — no disk writes needed
         buf = io.BytesIO()
