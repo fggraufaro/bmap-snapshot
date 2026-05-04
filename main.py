@@ -76,24 +76,14 @@ def generate():
         return jsonify({"error": "inst_key required"}), 400
 
     try:
-        no_ai = body.get("no_ai", False)
-        print(f"[generate] {ik} — {name_hint or 'no name hint'} — no_ai={no_ai}")
+        print(f"[generate] {ik} — {name_hint or 'no name hint'}")
 
         data = bm.fetch_bank_data(ik)
         if name_hint:
             data["bankName"] = name_hint
 
-        # Temporarily skip AI to stay within Railway's 60s HTTP timeout
-        if no_ai:
-            import os as _os
-            _os.environ["_SKIP_AI"] = "1"
-        
         logo  = bm.fetch_logo()
         prs   = bm.build_deck(data, logo)
-        
-        if no_ai:
-            import os as _os
-            _os.environ.pop("_SKIP_AI", None)
 
         # Save to in-memory buffer — no disk writes needed
         buf = io.BytesIO()
