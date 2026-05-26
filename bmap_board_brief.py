@@ -72,11 +72,21 @@ MARGIN = 0.65 * inch
 # DATA FETCH
 # ══════════════════════════════════════════════════════════════
 
+SCHEMA_MAP = {
+    'branch_opportunity_base':        'analytics',
+    'bank_financial_snapshot_latest': 'analytics',
+    'branch_target_competitors':      'analytics',
+    'dim_institutions':               'ref',
+    'bank_website':                   'ref',
+}
+
 def _supa(table, params):
     url = f"{SUPA_URL}/rest/v1/{table}?{params}"
-    r = requests.get(url,
-        headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"},
-        timeout=25)
+    schema = SCHEMA_MAP.get(table, 'public')
+    headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"}
+    if schema != 'public':
+        headers['Accept-Profile'] = schema
+    r = requests.get(url, headers=headers, timeout=25)
     r.raise_for_status()
     return r.json()
 
@@ -114,7 +124,7 @@ def fetch_board_data(ik):
             f"{SUPA_URL}/rest/v1/raw_schedule_RCE"
             f"?IDRSSD=eq.{rssdid}&period=eq.2025-12-31"
             f"&select=RCON2365,RCON2385&limit=1",
-            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"},
+            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}", "Accept-Profile": "raw"},
             timeout=15
         ).json()
         if rce:
