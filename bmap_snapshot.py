@@ -93,9 +93,21 @@ H = Inches(5.625)
 # ═══════════════════════════════════════════════════════════════
 # HELPERS
 # ═══════════════════════════════════════════════════════════════
+SCHEMA_MAP = {
+    'branch_opportunity_base':      'analytics',
+    'bank_financial_snapshot_latest': 'analytics',
+    'branch_target_competitors':    'analytics',
+    'dim_institutions':             'ref',
+    'bank_website':                 'ref',
+}
+
 def supabase(table, params):
     url = f"{SUPA_URL}/rest/v1/{table}?{params}"
-    r = requests.get(url, headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"}, timeout=30)
+    schema = SCHEMA_MAP.get(table, 'public')
+    headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"}
+    if schema != 'public':
+        headers['Accept-Profile'] = schema
+    r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
     return r.json()
 
@@ -191,7 +203,7 @@ def _fetch_brokered(ik):
     import requests as _req
     try:
         r = _req.get(url,
-            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"},
+            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}", "Accept-Profile": "raw"},
             timeout=15)
         rows = r.json()
     except Exception as e:
