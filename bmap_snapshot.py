@@ -303,7 +303,8 @@ def get_narratives(data):
     gap      = bankYoY - compYoY
     avgScore = avg("opportunity_score")
 
-    top3 = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)[:3]
+    sig_br = [b for b in br if sf(b.get("latest_dep")) >= 5e6]
+    top3 = sorted(sig_br or br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)[:3]
     top3_str = "; ".join(
         f"{b['namebr'].split('--')[-1].strip()} "
         f"(${sf(b.get('latest_dep'))/1e6:.0f}M, "
@@ -702,7 +703,7 @@ def _build_branch_list(br, sf):
     Max 5 cards. Names up to 28 chars.
     """
     invest_br  = sorted(
-        [b for b in br if b.get("opportunity_zone") == "Invest"],
+        [b for b in br if b.get("opportunity_zone") == "Invest" and sf(b.get("latest_dep")) >= 5e6],
         key=lambda b: sf(b.get("opportunity_score")), reverse=True
     )[:3]
     risk_br = sorted(
@@ -757,7 +758,7 @@ def build_deck(data, logo_bytes):
     top_br   = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)
     just_top = sorted([b for b in br if b.get("opportunity_zone")=="Justify"],
                       key=lambda b: sf(b.get("latest_dep")), reverse=True)
-    tier1    = [b for b in br if (b.get("priority_tier") or "").startswith("1")][:2]
+    tier1    = [b for b in br if b.get("campaign") in ["Aggressive Acquisition","Urgent Competitive Push","Capitalize","Turnaround","Grow Share","Competitive Defense"]][:2]
 
     narr = get_narratives(data)
 
