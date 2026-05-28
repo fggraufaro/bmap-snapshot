@@ -261,7 +261,7 @@ Market: {metro} | States: {", ".join(states)} | Key cities: {", ".join(cities)}
 Branch pool: {len(target_br)} Invest/Analyze branches (>$5M deposits)
 
 DEMOGRAPHIC SIGNALS (Census ACS 2024, averaged across target branch ZIPs):
-- Avg household income: ${avg_income:,.0f} if avg_income else "N/A"}
+- Avg household income: {f"${avg_income:,.0f}" if avg_income else "N/A"}
 - Income growth YoY: {f"+{avg_inc_yoy*100:.1f}%" if avg_inc_yoy else "N/A"}
 - Population growth YoY: {f"+{avg_pop_yoy*100:.1f}%" if avg_pop_yoy else "N/A"}
 - Home value appreciation (ZHVI YoY): {f"+{avg_zhvi_yoy:.1f}%" if avg_zhvi_yoy else "N/A"}
