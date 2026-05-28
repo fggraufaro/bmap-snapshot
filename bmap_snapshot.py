@@ -26,6 +26,7 @@ import argparse
 import csv
 import io
 import json
+import hashlib
 import os
 import sys
 import time
@@ -110,6 +111,226 @@ def supabase(table, params):
     r = requests.get(url, headers=headers, timeout=30)
     r.raise_for_status()
     return r.json()
+
+
+
+# ═══════════════════════════════════════════════════════════════
+# PERSONA GENERATION
+# ═══════════════════════════════════════════════════════════════
+
+def _branch_fingerprint(br):
+    """Hash of sorted branch IDs + zones — fingerprint for this branch selection."""
+    ids = sorted(str(b.get("uninumbr","")) for b in br)
+    zones = sorted(str(b.get("opportunity_zone","")) for b in br)
+    raw = "|".join(ids) + "||" + "|".join(zones)
+    return hashlib.md5(raw.encode()).hexdigest()[:16]
+
+def _branch_zone_summary(br):
+    """e.g. Invest:2,Analyze:4,Defend:1,Justify:3"""
+    from collections import Counter
+    c = Counter(b.get("opportunity_zone","Unknown") for b in br)
+    return ",".join(f"{z}:{c[z]}" for z in ["Invest","Analyze","Defend","Justify"] if z in c)
+
+def fetch_or_generate_personas(ik, institution_name, br, data):
+    """
+    Check Supabase for approved/draft personas for this inst_key + branch_fingerprint.
+    If found -> return existing.
+    If not found -> generate with Claude + web search -> save as draft -> return.
+    """
+    fingerprint = _branch_fingerprint(br)
+    zone_summary = _branch_zone_summary(br)
+
+    # 1. Check for existing approved or draft personas
+    url = (f"{SUPA_URL}/rest/v1/persona_runs"
+           f"?inst_key=eq.{ik}&branch_fingerprint=eq.{fingerprint}"
+           f"&status=in.(approved,draft)&order=run_date.desc&limit=1")
+    r = requests.get(url, headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"}, timeout=15)
+    rows = r.json() if r.ok else []
+
+    if rows:
+        p = rows[0]
+        print(f"  Using existing personas (status: {p.get('status')}, run: {p.get('run_date','')[:10]})")
+        return _parse_persona_run(p)
+
+    # 2. No existing — generate new
+    print("  Generating new personas with Claude + web search...")
+    personas = _generate_personas(ik, institution_name, br, data)
+    if not personas:
+        return None
+
+    # 3. Save as draft to Supabase
+    sf = lambda v: float(v) if v is not None else None
+    rows_data = data.get("rows", [])
+    avg_income = sum(float(r.get("household_income") or 0) for r in rows_data) / max(len(rows_data),1)
+    avg_pop_growth = sum(float(r.get("yoy_pop_growth") or 0) for r in rows_data) / max(len(rows_data),1) * 100
+    avg_zhvi = sum(float(r.get("zhvi_yoy_pct") or 0) for r in rows_data) / max(len(rows_data),1)
+    metro = rows_data[0].get("metro","") if rows_data else ""
+
+    payload = {
+        "inst_key":           ik,
+        "institution_name":   institution_name,
+        "branch_fingerprint": fingerprint,
+        "branch_count":       len(br),
+        "branch_zones":       zone_summary,
+        "metro":              metro,
+        "avg_income":         round(avg_income, 0) if avg_income else None,
+        "pop_growth_pct":     round(avg_pop_growth, 2) if avg_pop_growth else None,
+        "zhvi_yoy_pct":       round(avg_zhvi, 2) if avg_zhvi else None,
+        "status":             "draft",
+        "p1_name":    personas[0].get("name"),
+        "p1_age":     personas[0].get("age"),
+        "p1_income":  personas[0].get("income"),
+        "p1_occupation": personas[0].get("occupation"),
+        "p1_insight": personas[0].get("insight"),
+        "p1_moment":  personas[0].get("moment"),
+        "p1_why_now": personas[0].get("why_now"),
+        "p2_name":    personas[1].get("name") if len(personas)>1 else None,
+        "p2_age":     personas[1].get("age") if len(personas)>1 else None,
+        "p2_income":  personas[1].get("income") if len(personas)>1 else None,
+        "p2_occupation": personas[1].get("occupation") if len(personas)>1 else None,
+        "p2_insight": personas[1].get("insight") if len(personas)>1 else None,
+        "p2_moment":  personas[1].get("moment") if len(personas)>1 else None,
+        "p2_why_now": personas[1].get("why_now") if len(personas)>1 else None,
+        "p3_name":    personas[2].get("name") if len(personas)>2 else None,
+        "p3_age":     personas[2].get("age") if len(personas)>2 else None,
+        "p3_income":  personas[2].get("income") if len(personas)>2 else None,
+        "p3_occupation": personas[2].get("occupation") if len(personas)>2 else None,
+        "p3_insight": personas[2].get("insight") if len(personas)>2 else None,
+        "p3_moment":  personas[2].get("moment") if len(personas)>2 else None,
+        "p3_why_now": personas[2].get("why_now") if len(personas)>2 else None,
+    }
+
+    save_url = f"{SUPA_URL}/rest/v1/persona_runs"
+    save_r = requests.post(save_url,
+        headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}",
+                 "Content-Type": "application/json", "Prefer": "return=minimal"},
+        json=payload, timeout=15)
+    if save_r.ok:
+        print(f"  Personas saved as draft (fingerprint: {fingerprint})")
+    else:
+        print(f"  Warning: could not save personas ({save_r.status_code})")
+
+    return personas
+
+
+def _parse_persona_run(p):
+    """Convert a persona_runs DB row into the personas list format."""
+    personas = []
+    for prefix in ["p1","p2","p3"]:
+        if p.get(f"{prefix}_name"):
+            personas.append({
+                "name":       p.get(f"{prefix}_name",""),
+                "age":        p.get(f"{prefix}_age",""),
+                "income":     p.get(f"{prefix}_income",""),
+                "occupation": p.get(f"{prefix}_occupation",""),
+                "insight":    p.get(f"{prefix}_insight",""),
+                "moment":     p.get(f"{prefix}_moment",""),
+                "why_now":    p.get(f"{prefix}_why_now",""),
+            })
+    return personas if personas else None
+
+
+def _generate_personas(ik, institution_name, br, data):
+    """Generate 3 personas using Claude with web search, grounded in branch demographics."""
+    if not ANTH_KEY:
+        return None
+
+    rows = data.get("rows", [])
+    # Only use Invest + Analyze branches for persona targeting
+    target_br = [b for b in rows if b.get("opportunity_zone") in ("Invest","Analyze")
+                 and float(b.get("latest_dep") or 0) >= 5e6]
+    if not target_br:
+        target_br = [b for b in rows if float(b.get("latest_dep") or 0) >= 5e6]
+
+    # Build demographic context from branch ZIPs
+    def safe_avg(key):
+        vals = [float(v) for b in target_br if (v:=b.get(key)) not in (None,"")]
+        return round(sum(vals)/len(vals), 2) if vals else None
+
+    avg_income    = safe_avg("household_income")
+    avg_inc_yoy   = safe_avg("yoy_income_growth")
+    avg_pop_yoy   = safe_avg("yoy_pop_growth")
+    avg_zhvi_yoy  = safe_avg("zhvi_yoy_pct")
+    avg_dep_yoy   = safe_avg("yoy_deposits")
+    metro         = target_br[0].get("metro","") if target_br else ""
+    states        = list(set(b.get("stalpbr","") for b in target_br))
+    cities        = list(set(b.get("citybr","") for b in target_br))[:5]
+
+    demo_ctx = f"""Institution: {institution_name}
+Market: {metro} | States: {", ".join(states)} | Key cities: {", ".join(cities)}
+Branch pool: {len(target_br)} Invest/Analyze branches (>$5M deposits)
+
+DEMOGRAPHIC SIGNALS (Census ACS 2024, averaged across target branch ZIPs):
+- Avg household income: ${avg_income:,.0f} if avg_income else "N/A"}
+- Income growth YoY: {f"+{avg_inc_yoy*100:.1f}%" if avg_inc_yoy else "N/A"}
+- Population growth YoY: {f"+{avg_pop_yoy*100:.1f}%" if avg_pop_yoy else "N/A"}
+- Home value appreciation (ZHVI YoY): {f"+{avg_zhvi_yoy:.1f}%" if avg_zhvi_yoy else "N/A"}
+- Branch deposit growth vs peers: {f"+{avg_dep_yoy*100:.1f}%" if avg_dep_yoy else "N/A"}"""
+
+    system = """You are Verlocity's Audience Intelligence Director. Your job is to identify the 3 most valuable deposit-growth personas for a community bank based on their specific market demographics and current economic context.
+
+PERSONA PHILOSOPHY:
+- These are real people, not demographic buckets. Give them names that feel human ("The Worcester Accumulator", "The Gulf Coast Professional")  
+- Ground every insight in the actual data provided
+- Use web search to add current market context — what's happening economically in this specific metro that creates a banking moment RIGHT NOW
+- Banking moments must be specific and actionable — not "savings account" but "CD ladder to lock in rates before Fed cuts"
+- Why Now must reference something current and real — a rate environment shift, local employer, demographic wave
+
+Return ONLY a JSON array of exactly 3 objects, each with:
+{
+  "name": "The [Descriptor] [Type]",
+  "age": "35-54",
+  "income": "$87K avg household",
+  "occupation": "Primary occupation cluster",
+  "insight": "One sentence — who they are and what defines their financial life right now",
+  "moment": "Specific banking product/behavior opportunity",
+  "why_now": "One sentence — why this is the moment to reach them, referencing current market conditions"
+}
+
+No markdown, no explanation, ONLY the JSON array."""
+
+    import anthropic
+    client = anthropic.Anthropic(api_key=ANTH_KEY)
+
+    try:
+        response = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            system=system,
+            messages=[{
+                "role": "user",
+                "content": f"""Generate 3 target personas for {institution_name} based on this data:
+
+{demo_ctx}
+
+Search for current economic conditions, major employers, demographic trends, and banking behavior in {metro} to enrich the personas with real market context. Then return the JSON array."""
+            }]
+        )
+
+        # Extract text from response (may include tool use blocks)
+        txt = ""
+        for block in response.content:
+            if hasattr(block, "text"):
+                txt += block.text
+
+        # Parse JSON
+        clean = txt.replace("```json","").replace("```","").strip()
+        # Find JSON array
+        start = clean.find("[")
+        end = clean.rfind("]") + 1
+        if start >= 0 and end > start:
+            personas = json.loads(clean[start:end])
+            print(f"  Generated {len(personas)} personas for {institution_name}")
+            return personas[:3]
+        else:
+            print(f"  Could not parse personas JSON")
+            return None
+
+    except Exception as e:
+        print(f"  Persona generation error: {e}")
+        return None
+
 
 def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
     shape = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -732,6 +953,127 @@ def _build_branch_list(br, sf):
     ]
 
 
+
+# ═══════════════════════════════════════════════════════════════
+# PERSONA SLIDE
+# ═══════════════════════════════════════════════════════════════
+
+def build_persona_slide(prs, personas, bank_name, logo_bytes):
+    """
+    Slide: Top 3 Audience Personas — bridge to AudienceFinder.
+    Layout: dark navy header, 3 side-by-side persona cards, audiencefinder CTA bar.
+    """
+    GREEN   = rgb("2ECC71")
+    TEAL    = rgb("028090")
+    CARD_BG = rgb("F7F8FA")
+    CARD_BD = rgb("DDE3EA")
+    ACCENT  = rgb("00A896")
+
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+    # Left nav bar (consistent with other slides)
+    add_rect(slide, 0, 0, 0.28, 5.625, NAVY)
+
+    # Header background
+    add_rect(slide, 0.28, 0, 9.72, 1.05, NAVY)
+
+    # Slide title
+    add_text(slide, "YOUR MARKET IS TELLING YOU WHO TO TALK TO",
+             0.42, 0.08, 7.5, 0.38, size=13, bold=True, color=WHITE)
+    add_text(slide, f"Top 3 audience segments across Invest + Analyze branches · {bank_name}",
+             0.42, 0.52, 7.5, 0.30, size=8.5, color=rgb("8BAECC"), italic=True)
+
+    # AudienceFinder tag top right
+    add_rect(slide, 8.20, 0.14, 1.65, 0.34, ACCENT)
+    add_text(slide, "AUDIENCEFINDER ›", 8.20, 0.14, 1.65, 0.34,
+             size=7, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+
+    # Logo top right
+    if logo_bytes:
+        try:
+            import io
+            logo_stream = io.BytesIO(logo_bytes)
+            slide.shapes.add_picture(logo_stream, Inches(9.30), Inches(0.62),
+                                     width=Inches(0.60), height=Inches(0.32))
+        except Exception:
+            pass
+
+    # 3 persona cards side by side
+    card_w = 2.90
+    card_h = 3.60
+    card_y = 1.15
+    gaps   = [0.42, 3.46, 6.50]  # x positions for 3 cards
+
+    persona_colors = [rgb("1A6B8A"), rgb("1A7A5E"), rgb("6B3FA0")]  # teal, green, purple
+    icons = ["◎", "◉", "●"]  # simple circle icons
+
+    for i, (cx, p) in enumerate(zip(gaps, personas[:3])):
+        accent_c = persona_colors[i]
+
+        # Card background
+        add_rect(slide, cx, card_y, card_w, card_h, CARD_BG, CARD_BD, Pt(0.75))
+
+        # Card top accent strip
+        add_rect(slide, cx, card_y, card_w, 0.08, accent_c)
+
+        # Persona number badge
+        add_rect(slide, cx + 0.12, card_y + 0.14, 0.30, 0.30, accent_c)
+        add_text(slide, str(i+1), cx + 0.12, card_y + 0.14, 0.30, 0.30,
+                 size=11, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+
+        # Persona name
+        add_text(slide, p.get("name","—"), cx + 0.50, card_y + 0.14, card_w - 0.62, 0.32,
+                 size=10.5, bold=True, color=NAVY)
+
+        # Demographic pills row
+        age_str    = p.get("age","")
+        income_str = p.get("income","")
+        occ_str    = p.get("occupation","")
+        demo_line  = f"{age_str}  ·  {income_str}"
+        add_text(slide, demo_line, cx + 0.12, card_y + 0.52, card_w - 0.24, 0.22,
+                 size=8, color=rgb("446688"), bold=False)
+
+        # Occupation
+        add_text(slide, occ_str[:45], cx + 0.12, card_y + 0.74, card_w - 0.24, 0.20,
+                 size=7.5, color=GRAY3, italic=True)
+
+        # Divider
+        add_rect(slide, cx + 0.12, card_y + 1.00, card_w - 0.24, 0.02, CARD_BD)
+
+        # Insight
+        add_text(slide, "INSIGHT", cx + 0.12, card_y + 1.10, card_w - 0.24, 0.18,
+                 size=6.5, bold=True, color=accent_c)
+        add_text(slide, p.get("insight",""), cx + 0.12, card_y + 1.28, card_w - 0.24, 0.68,
+                 size=8, color=NAVY)
+
+        # Banking moment
+        add_text(slide, "BANKING MOMENT", cx + 0.12, card_y + 2.02, card_w - 0.24, 0.18,
+                 size=6.5, bold=True, color=accent_c)
+        add_text(slide, p.get("moment",""), cx + 0.12, card_y + 2.20, card_w - 0.24, 0.42,
+                 size=8, color=NAVY)
+
+        # Why now
+        add_rect(slide, cx + 0.12, card_y + 2.68, card_w - 0.24, 0.02, CARD_BD)
+        add_text(slide, "WHY NOW", cx + 0.12, card_y + 2.76, card_w - 0.24, 0.16,
+                 size=6.5, bold=True, color=GRAY3)
+        add_text(slide, p.get("why_now",""), cx + 0.12, card_y + 2.92, card_w - 0.24, 0.50,
+                 size=7.5, color=GRAY3, italic=True)
+
+    # Bottom CTA bar
+    add_rect(slide, 0.28, 4.88, 9.52, 0.56, NAVY)
+    add_text(slide,
+             "AudienceFinder builds precision digital audiences around these 3 segments — "
+             "reach them before your competitors do.",
+             0.42, 4.88, 7.80, 0.56, size=8.5, color=WHITE, italic=True, valign="center")
+    add_rect(slide, 8.28, 4.98, 1.30, 0.36, ACCENT)
+    add_text(slide, "ACTIVATE ›", 8.28, 4.98, 1.30, 0.36,
+             size=8, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+
+    # Page number
+    add_text(slide, "A", 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
+
+    return slide
+
 def build_deck(data, logo_bytes):
     rows = data["rows"]; fin = data["fin"]; tgt = data["tgt"]
     br   = data["br"];   bankName = data["bankName"]
@@ -824,6 +1166,13 @@ def build_deck(data, logo_bytes):
     build_branches(prs, D, narr, logo_bytes)
     build_financial(prs, D, narr, logo_bytes)
     build_gap(prs, D, narr)
+    # Persona slide — before next steps
+    personas = data.get("personas")
+    if personas and len(personas) >= 1:
+        print(f"  Adding persona slide ({len(personas)} personas)...")
+        build_persona_slide(prs, personas, bankName, logo_bytes)
+    else:
+        print("  Skipping persona slide — no personas available")
     build_next_steps(prs, D, narr, logo_bytes)
 
     return prs
@@ -848,6 +1197,10 @@ def run_single(ik, name_hint=None):
     data = fetch_bank_data(ik)
     if name_hint:
         data["bankName"] = name_hint
+    # Fetch or generate personas
+    personas = fetch_or_generate_personas(
+        ik, data["bankName"], data.get("br", []), data)
+    data["personas"] = personas
     logo = fetch_logo()
     prs  = build_deck(data, logo)
     path = save_deck(prs, data["bankName"])
