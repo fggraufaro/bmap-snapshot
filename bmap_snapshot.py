@@ -157,15 +157,15 @@ def add_narrative(slide, n, y0):
              size=9.5, italic=True, color=GRAY3)
     bullets = n.get("bullets", [])
     if bullets:
-        tb = slide.shapes.add_textbox(Inches(0.45), Inches(y0+1.62), Inches(5.6), Inches(1.28))
+        tb = slide.shapes.add_textbox(Inches(0.45), Inches(y0+1.62), Inches(5.6), Inches(2.0))
         tf = tb.text_frame; tf.word_wrap = True
         for i, b in enumerate(bullets):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = f"• {b}"
             p.font.size = Pt(9.5); p.font.color.rgb = NAVY; p.font.name = "Calibri"
             p.space_after = Pt(5)
-    add_rect(slide, 0.45, y0+2.98, 5.6, 0.46, NAVY)
-    add_text(slide, n.get("close",""), 0.56, y0+2.98, 5.4, 0.46,
+    add_rect(slide, 0.45, y0+3.68, 5.6, 0.46, NAVY)
+    add_text(slide, n.get("close",""), 0.56, y0+3.68, 5.4, 0.46,
              size=9.5, bold=True, color=WHITE)
 
 def fetch_logo():
@@ -303,8 +303,7 @@ def get_narratives(data):
     gap      = bankYoY - compYoY
     avgScore = avg("opportunity_score")
 
-    sig_br = [b for b in br if sf(b.get("latest_dep")) >= 5e6]
-    top3 = sorted(sig_br or br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)[:3]
+    top3 = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)[:3]
     top3_str = "; ".join(
         f"{b['namebr'].split('--')[-1].strip()} "
         f"(${sf(b.get('latest_dep'))/1e6:.0f}M, "
@@ -703,7 +702,7 @@ def _build_branch_list(br, sf):
     Max 5 cards. Names up to 28 chars.
     """
     invest_br  = sorted(
-        [b for b in br if b.get("opportunity_zone") == "Invest" and sf(b.get("latest_dep")) >= 5e6],
+        [b for b in br if b.get("opportunity_zone") == "Invest"],
         key=lambda b: sf(b.get("opportunity_score")), reverse=True
     )[:3]
     risk_br = sorted(
@@ -758,7 +757,7 @@ def build_deck(data, logo_bytes):
     top_br   = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)
     just_top = sorted([b for b in br if b.get("opportunity_zone")=="Justify"],
                       key=lambda b: sf(b.get("latest_dep")), reverse=True)
-    tier1    = [b for b in br if b.get("campaign") in ["Aggressive Acquisition","Urgent Competitive Push","Capitalize","Turnaround","Grow Share","Competitive Defense"]][:2]
+    tier1    = [b for b in br if (b.get("priority_tier") or "").startswith("1")][:2]
 
     narr = get_narratives(data)
 
