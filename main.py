@@ -82,6 +82,11 @@ def generate():
         if name_hint:
             data["bankName"] = name_hint
 
+        # Fetch or generate personas (checks DB first, generates with Claude if not found)
+        personas = bm.fetch_or_generate_personas(
+            ik, data["bankName"], data.get("br", []), data)
+        data["personas"] = personas
+
         logo  = bm.fetch_logo()
         prs   = bm.build_deck(data, logo)
 
@@ -134,6 +139,10 @@ def generate_batch():
                 data = bm.fetch_bank_data(ik)
                 if name:
                     data["bankName"] = name
+
+                personas = bm.fetch_or_generate_personas(
+                    ik, data["bankName"], data.get("br", []), data)
+                data["personas"] = personas
 
                 prs = bm.build_deck(data, logo)
 
