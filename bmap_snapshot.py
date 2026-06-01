@@ -984,20 +984,9 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes):
     add_text(slide, f"Top 3 audience segments across Invest + Analyze branches · {bank_name}",
              0.42, 0.52, 7.5, 0.30, size=8.5, color=rgb("8BAECC"), italic=True)
 
-    # AudienceFinder tag top right
-    add_rect(slide, 8.20, 0.14, 1.65, 0.34, ACCENT)
-    add_text(slide, "AUDIENCEFINDER ›", 8.20, 0.14, 1.65, 0.34,
-             size=7, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-
-    # Logo top right
-    if logo_bytes:
-        try:
-            import io
-            logo_stream = io.BytesIO(logo_bytes)
-            slide.shapes.add_picture(logo_stream, Inches(9.30), Inches(0.62),
-                                     width=Inches(0.60), height=Inches(0.32))
-        except Exception:
-            pass
+    # AudienceFinder label top right (plain text, no button)
+    add_text(slide, "POWERED BY AUDIENCEFINDER", 7.50, 0.18, 2.30, 0.28,
+             size=7, bold=True, color=rgb("00A896"), align=PP_ALIGN.RIGHT)
 
     # 3 persona cards side by side
     card_w = 2.90
@@ -1065,10 +1054,17 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes):
     add_text(slide,
              "AudienceFinder builds precision digital audiences around these 3 segments — "
              "reach them before your competitors do.",
-             0.42, 4.88, 7.80, 0.56, size=8.5, color=WHITE, italic=True, valign="center")
-    add_rect(slide, 8.28, 4.98, 1.30, 0.36, ACCENT)
-    add_text(slide, "ACTIVATE ›", 8.28, 4.98, 1.30, 0.36,
-             size=8, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+             0.42, 4.88, 9.20, 0.56, size=8.5, color=WHITE, italic=True, valign="center")
+
+    # Logo bottom left
+    if logo_bytes:
+        try:
+            import io
+            logo_stream = io.BytesIO(logo_bytes)
+            slide.shapes.add_picture(logo_stream, Inches(0.35), Inches(4.90),
+                                     width=Inches(0.90), height=Inches(0.45))
+        except Exception:
+            pass
 
     # Page number
     add_text(slide, "A", 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
