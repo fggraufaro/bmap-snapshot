@@ -156,7 +156,41 @@ def fetch_or_generate_personas(ik, institution_name, br, data):
     print("  Generating new personas with Claude + web search...")
     personas = _generate_personas(ik, institution_name, br, data)
     if not personas:
-        return None
+        # Fallback: build 3 generic personas from branch demographics so the
+        # slide is never silently skipped when Claude generation fails.
+        rows_data = data.get("rows", [])
+        metro = rows_data[0].get("metro", institution_name) if rows_data else institution_name
+        avg_income = sum(float(r.get("household_income") or 0) for r in rows_data) / max(len(rows_data), 1)
+        personas = [
+            {
+                "name": f"The {metro} Rate Seeker",
+                "age": "35–54",
+                "income": f"${avg_income/1000:.0f}k avg household" if avg_income else "Mid-income",
+                "occupation": "Professional / Dual-income household",
+                "insight": f"Actively comparing CD and savings rates in {metro} — rate environment is top of mind.",
+                "moment": "CD ladder to lock in rates before the next Fed move",
+                "why_now": "Fed rate uncertainty is driving depositors to act now rather than wait.",
+            },
+            {
+                "name": f"The {metro} Community Loyalist",
+                "age": "45–65",
+                "income": f"${avg_income/1000:.0f}k avg household" if avg_income else "Mid-income",
+                "occupation": "Small business owner / Pre-retiree",
+                "insight": "Values local relationships and trust — open to consolidating accounts at one institution.",
+                "moment": "Primary checking anchor + savings relationship deepening",
+                "why_now": "National bank frustration is at a high — community banking is a differentiated story.",
+            },
+            {
+                "name": f"The {metro} Digital Switcher",
+                "age": "28–44",
+                "income": f"${max(50, avg_income/1000 - 15):.0f}k avg household" if avg_income else "Mid-income",
+                "occupation": "Tech-adjacent professional / Young family",
+                "insight": "Mobile-first, rate-aware — looking for a better savings rate without sacrificing digital experience.",
+                "moment": "High-yield savings account as entry product → CD conversion",
+                "why_now": "Online bank rates are plateauing — community banks with competitive rates can win on trust.",
+            },
+        ]
+        print(f"  Using fallback personas for {institution_name}")
 
     # 3. Save as draft to Supabase
     sf = lambda v: float(v) if v is not None else None
