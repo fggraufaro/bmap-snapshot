@@ -327,42 +327,67 @@ No markdown, no explanation, ONLY the JSON array."""
     client = anthropic.Anthropic(api_key=ANTH_KEY)
 
     try:
-        response = client.messages.create(
-            model="claude-sonnet-4-20250514",
-            max_tokens=2000,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            system=system,
-            messages=[{
-                "role": "user",
-                "content": f"""Generate 3 target personas for {institution_name} based on this data:
+        messages = [{
+            "role": "user",
+            "content": f"""Generate 3 target personas for {institution_name} based on this data:
 
 {demo_ctx}
 
-Search for current economic conditions, major employers, demographic trends, and banking behavior in {metro} to enrich the personas with real market context. Then return the JSON array."""
-            }]
-        )
+Search for current economic conditions, major employers, demographic trends, and banking behavior in {metro} to enrich the personas with real market context. Then return ONLY the JSON array — no explanation, no markdown."""
+        }]
 
-        # Extract text from response (may include tool use blocks)
+        # Agentic loop — handle web_search tool use turns properly
         txt = ""
-        for block in response.content:
-            if hasattr(block, "text"):
-                txt += block.text
+        for attempt in range(6):  # max 6 turns (search calls)
+            response = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=2000,
+                tools=[{"type": "web_search_20250305", "name": "web_search"}],
+                system=system,
+                messages=messages
+            )
 
-        # Parse JSON
-        clean = txt.replace("```json","").replace("```","").strip()
-        # Find JSON array
-        start = clean.find("[")
-        end = clean.rfind("]") + 1
-        if start >= 0 and end > start:
-            personas = json.loads(clean[start:end])
-            print(f"  Generated {len(personas)} personas for {institution_name}")
-            return personas[:3]
-        else:
-            print(f"  Could not parse personas JSON")
-            return None
+            # Collect any text from this turn
+            for block in response.content:
+                if hasattr(block, "text") and block.text:
+                    txt += block.text
+
+            # If model is done (end_turn or no tool calls), break
+            if response.stop_reason == "end_turn":
+                break
+
+            # If tool_use, feed results back and continue
+            tool_calls = [b for b in response.content if b.type == "tool_use"]
+            if not tool_calls:
+                break
+
+            # Append assistant turn + tool results to messages
+            messages.append({"role": "assistant", "content": response.content})
+            tool_results = []
+            for tc in tool_calls:
+                # web_search results are returned by the API automatically in the next turn
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tc.id,
+                    "content": "Search completed."
+                })
+            messages.append({"role": "user", "content": tool_results})
+
+        # Parse JSON from collected text
+        clean = txt.replace("```json", "").replace("```", "").strip()
+        s = clean.find("[")
+        e = clean.rfind("]") + 1
+        if s >= 0 and e > s:
+            personas = json.loads(clean[s:e])
+            if personas and len(personas) >= 1:
+                print(f"  ✓ Generated {len(personas)} personas for {institution_name}")
+                return personas[:3]
+
+        print(f"  Could not parse personas JSON for {institution_name}. Response: {txt[:200]}")
+        return None
 
     except Exception as e:
-        print(f"  Persona generation error: {e}")
+        print(f"  Persona generation error for {institution_name}: {e}")
         return None
 
 
