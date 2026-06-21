@@ -73,6 +73,7 @@ OUT_DIR   = Path(".")
 def rgb(h): return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
 
 NAVY    = rgb("1A2332")
+NAVY_SOFT = rgb("3D4D63")  # darker than GRAY3 — used for narrative body copy, keeps contrast on white
 TEAL    = rgb("1D9E75")
 AMBER   = rgb("F5A623")
 WHITE   = rgb("FFFFFF")
@@ -417,6 +418,15 @@ def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
     run.font.color.rgb = color
     return tb
 
+def truncate_label(text, max_len):
+    """Truncate to max_len, breaking on the last word boundary rather than mid-word."""
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len]
+    if " " in cut:
+        cut = cut[:cut.rindex(" ")]
+    return cut.rstrip() + "…"
+
 def add_chrome(slide, page_num, label, logo_bytes):
     """Verlocity sidebar + logo + section label + page number"""
     add_rect(slide, 0, 0, 0.28, 5.625, NAVY)
@@ -434,7 +444,7 @@ def add_narrative(slide, n, y0):
              size=24, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.45, y0+0.84, 5.6, 0.04, TEAL)
     add_text(slide, n.get("spoken",""), 0.45, y0+0.96, 5.6, 0.60,
-             size=9.5, italic=True, color=GRAY3)
+             size=9.5, italic=True, color=NAVY_SOFT)
     bullets = n.get("bullets", [])
     if bullets:
         tb = slide.shapes.add_textbox(Inches(0.45), Inches(y0+1.62), Inches(5.6), Inches(2.0))
@@ -617,31 +627,31 @@ Primary competitor: {comp_str}
 Brokered deposit situation: {brok_str}
 Top 3 branches: {top3_str}"""
 
-    system = """You are BMAP Executive Strategist at Verlocity Princeton Partners Group. Write boardroom-quality slide narratives grounded in exact numbers. These slides are SALES TOOLS — they open conversations, they do not close them. Never prescribe specific actions the bank can execute without Verlocity. Tease the insight, name the opportunity size, invite the next conversation. Close bars should create urgency and curiosity — not give away the methodology.
+    system = """You are BMAP Executive Strategist at Verlocity Princeton Partners Group. Write boardroom-quality slide narratives grounded in exact numbers. These slides open conversations — they inform, they don't pressure. Never prescribe specific actions the bank can execute without Verlocity. Name the opportunity clearly and let the data make the case; avoid hype language, urgency gimmicks, or anything that reads as a sales pitch rather than an analysis.
 
-VERLOCITY GROWTH SYSTEM CONTEXT (reference naturally where relevant):
-Verlocity is a Marketing Intelligence System built around 5 capabilities organized in 3 phases:
-- Foundation: BMAP (Market Truth — where to compete, invest, target) + Brandvention (Brand Reality — 6-point brand strategy)
-- Activation: Infrastrucsure (Customer Experience — CRM, journey design, funded account linkage) + Mediapredict & Audiencefinder (Media Performance — paid/owned/earned, deposit growth campaigns)
-- Compounding: Clientdelight (Loyalty — predictive analytics, churn risk, cross-sell, wallet share growth)
-The BMAP Snapshot is Step 1 of Foundation. It is the entry point to the full system, not the end product.
-When writing nextsteps, position Verlocity as the partner that connects market truth → brand story → performance → loyalty. Reference the Growth System naturally. The bank is seeing BMAP — help them understand there is a complete system behind it.
-Key proof point: one Verlocity client generated $660M in new deposits over two years using this approach.
+VERLOCITY PLATFORM CONTEXT (reference naturally where relevant):
+Verlocity's marketing intelligence platform is built around four capabilities, all live today:
+- BMAP — Market Truth: branch-level scoring across deposits, growth, and competitive density; where to invest, defend, and exit.
+- AudienceFinder & MediaPredict — Media Performance: precision-targeted depositor campaigns built on the audiences BMAP identifies, converting savings openers into sticky CD relationships.
+- Omnibranch — Branch Orchestration: unifies deposit data, market signals, and campaign execution into one operating view across the network.
+- Predictive ROI — Accountability: forecasts the return on marketing spend before it happens, then tracks performance against that forecast.
+The BMAP Snapshot is the entry point — it's the data layer the other three capabilities act on.
+When writing nextsteps, position Verlocity as the partner that turns BMAP's market read into targeted campaigns (AudienceFinder/MediaPredict), coordinated execution (Omnibranch), and measurable return (Predictive ROI). Reference the platform naturally — the bank is seeing BMAP; help them understand what it connects to.
 WinShare model: Verlocity invests alongside the bank — compensation tied to results, not effort.
 
 BROKERED DEPOSIT CONTEXT (use if brokered pressure is present):
-Brokered deposits are expensive, rate-sensitive, and leave when a better rate appears. The savings→CD funnel strategy converts brokered volume to sticky direct customer deposits at lower cost. If brokered pressure is present, frame it as a funded account conversion opportunity — Mediapredicted and Audiencefinder campaigns targeting savings account openers who convert to CDs.
+Brokered deposits are expensive, rate-sensitive, and leave when a better rate appears. The savings→CD funnel strategy converts brokered volume to sticky direct customer deposits at lower cost. If brokered pressure is present, frame it as a funded account conversion opportunity for AudienceFinder and MediaPredict campaigns targeting savings account openers who convert to CDs.
 
 IMPORTANT RULES:
 - Never name competitors directly. Refer to them as "your primary competitor" or "a regional competitor".
 - Never prescribe specific budget reallocation amounts or staff actions.
 - Bullets reveal WHAT the data shows, not HOW to fix it.
-- Close bars end with a question or an invitation, not a directive.
+- Close bars end with a genuine question or invitation to discuss — never a pressure tactic or implied cost of inaction.
 - "Peer avg" means competitor deposit growth in the bank's own markets.
-- nextsteps headline: make it about what Verlocity delivers — position as the full Growth System, not just BMAP.
-- nextsteps spoken: 2 sentences. Reference that BMAP is step 1. The full system connects market truth → brand → performance → loyalty.
-- nextsteps bullets: each bullet names a Growth System phase output and the business result it delivers.
-- nextsteps close: invite them to start the engagement. Make not starting feel expensive.
+- nextsteps headline: make it about what the Verlocity platform delivers as a whole, not just BMAP.
+- nextsteps spoken: 2 sentences, factual tone. Note that BMAP is the data foundation the other three capabilities build on.
+- nextsteps bullets: each bullet names one of the four capabilities and the concrete outcome it drives.
+- nextsteps close: invite a conversation about next steps — direct and respectful, not a hard sell.
 
 Return ONLY valid JSON — no markdown, no explanation:
 {"slides":[
@@ -732,9 +742,9 @@ def build_cover(prs, d, logo_bytes):
         1.2, 5.3, 8.5, 0.2, size=7.5, color=GRAY3, align=PP_ALIGN.CENTER)
 
 
-def build_network(prs, d, narr, logo_bytes):
+def build_network(prs, d, narr, logo_bytes, page_num=1):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, 1, "MARKET OVERVIEW", logo_bytes)
+    add_chrome(slide, page_num, "MARKET OVERVIEW", logo_bytes)
     add_narrative(slide, narr["network"], 0.14)
 
     # 4 KPI tiles right
@@ -753,14 +763,14 @@ def build_network(prs, d, narr, logo_bytes):
         add_text(slide, val, kx, ky+0.06, 1.62, 0.42, size=19, bold=True, color=vc, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, kx, ky+0.52, 1.62, 0.20, size=6.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
-    # ── NATIVE VECTOR PIE CHART ──────────────────────────────────
+    # ── NATIVE VECTOR DOUGHNUT CHART (modernized) ────────────────
     chart_data = ChartData()
     chart_data.categories = ["Invest", "Analyze", "Defend", "Justify"]
     chart_data.add_series("Zones", (d["invest"], d["analyze"], d["defend"], d["justify"]))
 
     chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.PIE,
-        Inches(6.0), Inches(1.8), Inches(3.8), Inches(3.1),
+        XL_CHART_TYPE.DOUGHNUT,
+        Inches(6.0), Inches(1.7), Inches(3.8), Inches(3.1),
         chart_data
     )
     chart = chart_frame.chart
@@ -768,14 +778,47 @@ def build_network(prs, d, narr, logo_bytes):
     chart.has_legend = True
     chart.legend.position = XL_LEGEND_POSITION.BOTTOM
     chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(9)
+    chart.legend.font.color.rgb = NAVY
 
-    # Color each slice
-    colors = [INVEST, ANALYZE, DEFEND, JUSTIFY]
+    # Updated, more saturated zone palette — distinct from the flat originals
+    ZONE_VIVID = {
+        "Invest":  rgb("2E8B3D"),
+        "Analyze": rgb("2E78C2"),
+        "Defend":  rgb("D98C1A"),
+        "Justify": rgb("C03A3A"),
+    }
+    vivid = [ZONE_VIVID["Invest"], ZONE_VIVID["Analyze"], ZONE_VIVID["Defend"], ZONE_VIVID["Justify"]]
     for i, point in enumerate(chart.series[0].points):
         point.format.fill.solid()
-        point.format.fill.fore_color.rgb = colors[i]
+        point.format.fill.fore_color.rgb = vivid[i]
         point.format.line.color.rgb = WHITE
-        point.format.line.width = Pt(2)
+        point.format.line.width = Pt(2.25)
+
+    # Data labels — show value on each slice for a less "flat" read
+    plot = chart.plots[0]
+    plot.has_data_labels = True
+    dl = plot.data_labels
+    dl.show_value = True
+    dl.show_percentage = False
+    dl.show_category_name = False
+    dl.font.size = Pt(10)
+    dl.font.bold = True
+    dl.font.color.rgb = WHITE
+
+    # Doughnut hole size — slim ring reads more modern than a thick donut
+    try:
+        from pptx.oxml.ns import qn as _qn2
+        ser_xml = chart.series[0]._element
+        hole = ser_xml.find(_qn2('c:holeSize'))
+        plot_xml = plot._element
+        hole = plot_xml.find(_qn2('c:holeSize'))
+        if hole is None:
+            from lxml import etree as _et2
+            hole = _et2.SubElement(plot_xml, _qn2('c:holeSize'))
+        hole.set('val', '68')
+    except Exception:
+        pass
 
     # Remove graphic frame border via XML
     from pptx.oxml.ns import qn as _qn
@@ -789,10 +832,20 @@ def build_network(prs, d, narr, logo_bytes):
     if ln.find(_qn('a:noFill')) is None:
         _et.SubElement(ln, _qn('a:noFill'))
 
+    # Center KPI callout — sits inside the doughnut hole for visual depth
+    # Chart spans x:[6.0,9.8] y:[1.7,4.8] → center ≈ (7.9, 3.25)
+    total_branches = d["invest"] + d["analyze"] + d["defend"] + d["justify"]
+    add_text(slide, str(total_branches), 6.95, 2.92, 1.9, 0.46,
+             size=22, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    add_text(slide, "BRANCHES", 6.95, 3.36, 1.9, 0.20,
+             size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
-def build_branches(prs, d, narr, logo_bytes):
+
+
+
+def build_branches(prs, d, narr, logo_bytes, page_num=2):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, 2, "PRIORITY MARKETS", logo_bytes)
+    add_chrome(slide, page_num, "PRIORITY MARKETS", logo_bytes)
     add_narrative(slide, narr["priority"], 0.14)
 
     for i, b in enumerate(d["branchList"][:5]):
@@ -818,9 +871,9 @@ def build_branches(prs, d, narr, logo_bytes):
                  size=7, bold=True, color=zc, align=PP_ALIGN.CENTER)
 
 
-def build_financial(prs, d, narr, logo_bytes):
+def build_financial(prs, d, narr, logo_bytes, page_num=3):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, 3, "FINANCIAL HEALTH", logo_bytes)
+    add_chrome(slide, page_num, "FINANCIAL HEALTH", logo_bytes)
     add_narrative(slide, narr["financial"], 0.14)
 
     # Column headers
@@ -872,7 +925,7 @@ def build_financial(prs, d, narr, logo_bytes):
             size=7.5, italic=True, color=GRAY3)
 
 
-def build_gap(prs, d, narr):
+def build_gap(prs, d, narr, page_num=4):
     """Dark slide — no chrome, uses navy background"""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
@@ -892,8 +945,9 @@ def build_gap(prs, d, narr):
 
     # 3 stat tiles
     tile_c = rgb("F87171") if d["gapNeg"] else TEAL
+    tile_bank_label = truncate_label(d["bankName"], 18)
     tiles = [
-        (f"{d['bankYoY']}%", "THIS BANK YoY", tile_c),
+        (f"{d['bankYoY']}%", f"{tile_bank_label.upper()} YoY", tile_c),
         (f"{d['peerYoY']}%", "PEER AVG",      GRAY3),
         (d["gap"],           "GAP",            AMBER),
     ]
@@ -905,8 +959,9 @@ def build_gap(prs, d, narr):
         add_text(slide, lbl, tx, 3.70, 1.62, 0.26, size=7,  bold=True, color=rgb("3A5A7A"), align=PP_ALIGN.CENTER)
 
     # ── NATIVE VECTOR BAR CHART ──────────────────────────────────
+    bank_label = truncate_label(d["bankName"], 22)
     chart_data = ChartData()
-    chart_data.categories = ["This Bank", "Peer Avg"]
+    chart_data.categories = [bank_label, "Peer Avg"]
     chart_data.add_series("Deposit YoY %", (float(d["bankYoY"]), float(d["peerYoY"])))
 
     chart_frame = slide.shapes.add_chart(
@@ -939,18 +994,18 @@ def build_gap(prs, d, narr):
     # Footer
     add_text(slide,
         f"Verlocity Princeton Partners Group   ·   BMAP Intelligence   ·   {d['bankName']}",
-        0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("2A4060"))
-    add_text(slide, "4", 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("2A4060"), align=PP_ALIGN.RIGHT)
+        0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("8DA3BC"))
+    add_text(slide, str(page_num), 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("8DA3BC"), align=PP_ALIGN.RIGHT)
 
 
-def build_next_steps(prs, d, narr, logo_bytes):
+def build_next_steps(prs, d, narr, logo_bytes, page_num=6):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, 5, "THE VERLOCITY GROWTH SYSTEM", logo_bytes)
+    add_chrome(slide, page_num, "THE VERLOCITY PLATFORM", logo_bytes)
     add_narrative(slide, narr["nextsteps"], 0.14)
 
-    # Growth System phase labels above cards
-    phase_labels = ["FOUNDATION", "FOUNDATION", "ACTIVATION", "COMPOUNDING"]
-    phase_colors = [TEAL, TEAL, ANALYZE, NAVY]
+    # Product labels above cards — all four presented as live capabilities
+    phase_labels = ["BMAP", "AUDIENCE/MEDIA", "OMNIBRANCH", "PREDICTIVE ROI"]
+    phase_colors = [TEAL, ANALYZE, AMBER, NAVY]
     ac_colors = [TEAL, ANALYZE, AMBER, NAVY]
 
     for i, action in enumerate(d["actions"]):
@@ -1018,7 +1073,7 @@ def _build_branch_list(br, sf):
 # PERSONA SLIDE
 # ═══════════════════════════════════════════════════════════════
 
-def build_persona_slide(prs, personas, bank_name, logo_bytes):
+def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
     """
     Slide: Top 3 Audience Personas — bridge to AudienceFinder.
     Layout: dark navy header, 3 side-by-side persona cards, audiencefinder CTA bar.
@@ -1126,7 +1181,7 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes):
             pass
 
     # Page number
-    add_text(slide, "A", 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
+    add_text(slide, str(page_num), 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
 
     return slide
 
@@ -1191,20 +1246,20 @@ def build_deck(data, logo_bytes):
         "brokered": data.get("brokered"),
         "actions": [
             {
-                "title": "Step 1 — BMAP Strategic Assessment",
-                "body":  f"Full branch scoring across all {len(rows)} locations. Decision-quality clarity on where to invest, defend, and exit. Delivered in 4–6 weeks. This is Foundation — where the Growth System starts.",
+                "title": "BMAP — Market Truth",
+                "body":  f"Full branch scoring across all {len(rows)} locations. Decision-quality clarity on where to invest, defend, and exit. The data foundation every other step builds on.",
             },
             {
-                "title": "Step 2 — Brandvention",
-                "body":  "6-Point Brand Strategy: Purpose, Positioning, Promise, Propositions, Proof, Personality. Authentic differentiation rooted in your market position — the story that makes every media dollar work harder.",
+                "title": "AudienceFinder & MediaPredict",
+                "body":  f"Rate-sensitive depositor campaigns targeted to your top {invest} Invest-zone markets. Precision media that general spend can't replicate — savings openers converted into sticky CD relationships.",
             },
             {
-                "title": "Step 3 — AudienceFinder Activation",
-                "body":  f"Deploy rate-sensitive depositor campaigns to your top {invest} Invest-zone markets. Savings account openers → CD converters. Sticky deposits, lower cost of funds. Mediapredict + Audiencefinder working together.",
+                "title": "Omnibranch",
+                "body":  "Unified branch-level orchestration — connects deposit data, market signals, and campaign execution into one operating view across the network.",
             },
             {
-                "title": "Step 4 — Clientdelight (Compounding)",
-                "body":  "Predictive analytics that identify churn risk and cross-sell opportunities across your full customer base. One Verlocity client grew $660M in new deposits over two years using this approach.",
+                "title": "Predictive ROI",
+                "body":  "Forecasts the return on each marketing dollar before it's spent, then tracks performance against that forecast — accountability built into the system, not added after.",
             },
         ],
     }
@@ -1218,18 +1273,20 @@ def build_deck(data, logo_bytes):
         prs.slide_layouts.add_slide()
 
     build_cover(prs, D, logo_bytes)
-    build_network(prs, D, narr, logo_bytes)
-    build_branches(prs, D, narr, logo_bytes)
-    build_financial(prs, D, narr, logo_bytes)
-    build_gap(prs, D, narr)
+    build_network(prs, D, narr, logo_bytes, page_num=1)
+    build_branches(prs, D, narr, logo_bytes, page_num=2)
+    build_financial(prs, D, narr, logo_bytes, page_num=3)
+    build_gap(prs, D, narr, page_num=4)
     # Persona slide — before next steps
     personas = data.get("personas")
+    next_page = 5
     if personas and len(personas) >= 1:
         print(f"  Adding persona slide ({len(personas)} personas)...")
-        build_persona_slide(prs, personas, bankName, logo_bytes)
+        build_persona_slide(prs, personas, bankName, logo_bytes, page_num=5)
+        next_page = 6
     else:
         print("  Skipping persona slide — no personas available")
-    build_next_steps(prs, D, narr, logo_bytes)
+    build_next_steps(prs, D, narr, logo_bytes, page_num=next_page)
 
     return prs
 
