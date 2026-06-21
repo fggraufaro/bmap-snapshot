@@ -774,108 +774,66 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
         add_text(slide, val, kx, ky+0.06, 1.62, 0.42, size=19, bold=True, color=vc, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, kx, ky+0.52, 1.62, 0.20, size=6.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
-    # ── NATIVE VECTOR DOUGHNUT CHART (modernized) ────────────────
-    chart_data = ChartData()
-    chart_data.categories = ["Invest", "Analyze", "Defend", "Justify"]
-    zone_counts = (d["invest"], d["analyze"], d["defend"], d["justify"])
-    chart_data.add_series("Zones", zone_counts)
+    # ── ZONE TABLE (replaces doughnut chart) ─────────────────────
+    # The donut chart's custom hole-size and zero-label-suppression XML
+    # patches rendered fine in LibreOffice but failed in real PowerPoint —
+    # PowerPoint ignored the hand-written c:holeSize element (rendered as a
+    # full pie) and the c:dLbl delete (the "0" label still showed). Rather
+    # than keep patching fragile raw-XML chart hacks, this is a plain table
+    # built from the same add_rect/add_text primitives used elsewhere in
+    # the deck — guaranteed to render identically everywhere, and it
+    # surfaces deposits-per-zone, which is the more material number than
+    # a branch-count chart alone.
+    add_text(slide, "Zones", 6.0, 1.92, 3.8, 0.30, size=14, bold=True, color=NAVY)
 
-    chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.DOUGHNUT,
-        Inches(6.0), Inches(1.55), Inches(3.8), Inches(2.9),
-        chart_data
-    )
-    chart = chart_frame.chart
-
-    # Native legend dropped — its color swatches render too small/low-contrast
-    # to read clearly. Replaced with a custom legend row below (see after
-    # chart setup) that matches the rest of the deck's design language.
-    chart.has_legend = False
-
-    # Updated, more saturated zone palette — distinct from the flat originals
     ZONE_VIVID = {
-        "Invest":  rgb("2E8B3D"),
-        "Analyze": rgb("2E78C2"),
-        "Defend":  rgb("D98C1A"),
-        "Justify": rgb("C03A3A"),
+        "Invest":  (INVEST,  INVEST_L,  d["invest"],  d["depInvest"]),
+        "Analyze": (ANALYZE, ANALYZE_L, d["analyze"], d["depAnalyze"]),
+        "Defend":  (DEFEND,  DEFEND_L,  d["defend"],  d["depDefend"]),
+        "Justify": (JUSTIFY, JUSTIFY_L, d["justify"], d["depJustify"]),
     }
-    vivid = [ZONE_VIVID["Invest"], ZONE_VIVID["Analyze"], ZONE_VIVID["Defend"], ZONE_VIVID["Justify"]]
-    for i, point in enumerate(chart.series[0].points):
-        point.format.fill.solid()
-        point.format.fill.fore_color.rgb = vivid[i]
-        point.format.line.color.rgb = WHITE
-        point.format.line.width = Pt(2.25)
+    total_dep_zones = sum(v[3] for v in ZONE_VIVID.values())
+    total_branches  = sum(v[2] for v in ZONE_VIVID.values())
 
-    # Data labels — show value on each slice for a less "flat" read.
-    # Zero-value zones get NO label: a "0" crammed onto a hairline slice
-    # is what caused the overlapping/colliding numbers.
-    plot = chart.plots[0]
-    plot.has_data_labels = True
-    dl = plot.data_labels
-    dl.show_value = True
-    dl.show_percentage = False
-    dl.show_category_name = False
-    dl.font.size = Pt(10)
-    dl.font.bold = True
-    dl.font.color.rgb = WHITE
+    tx, ty, tw = 6.0, 2.26, 3.8
+    headers = ["ZONE", "BRANCHES", "DEPOSITS", "% OF TOTAL"]
+    col_w = [1.15, 0.85, 1.0, 0.8]
 
-    from pptx.oxml.ns import qn as _qn3
-    from lxml import etree as _et3
-    for i, point in enumerate(chart.series[0].points):
-        if zone_counts[i] == 0:
-            dlbl = _et3.SubElement(point._element, _qn3('c:dLbl'))
-            idx_el = _et3.SubElement(dlbl, _qn3('c:idx'))
-            idx_el.set('val', str(i))
-            delete_el = _et3.SubElement(dlbl, _qn3('c:delete'))
-            delete_el.set('val', '1')
-            # c:dLbl must come before other point-level children in series XML order
-            point._element.insert(0, dlbl)
+    add_rect(slide, tx, ty, tw, 0.32, NAVY)
+    cx = tx
+    for i, htext in enumerate(headers):
+        add_text(slide, htext, cx+0.06, ty+0.04, col_w[i]-0.06, 0.22, size=7.5, bold=True,
+                  color=WHITE, align=PP_ALIGN.LEFT if i==0 else PP_ALIGN.CENTER)
+        cx += col_w[i]
 
-    # Doughnut hole size — slim ring reads more modern than a thick donut
-    try:
-        from pptx.oxml.ns import qn as _qn2
-        ser_xml = chart.series[0]._element
-        hole = ser_xml.find(_qn2('c:holeSize'))
-        plot_xml = plot._element
-        hole = plot_xml.find(_qn2('c:holeSize'))
-        if hole is None:
-            from lxml import etree as _et2
-            hole = _et2.SubElement(plot_xml, _qn2('c:holeSize'))
-        hole.set('val', '68')
-    except Exception:
-        pass
+    row_h = 0.43
+    ry = ty + 0.32
+    for name, (c, c_light, count, dep) in ZONE_VIVID.items():
+        add_rect(slide, tx, ry, tw, row_h, c_light)
+        add_rect(slide, tx, ry, 0.07, row_h, c)
+        cx = tx
+        add_text(slide, name, cx+0.15, ry+0.10, col_w[0]-0.15, 0.22, size=9.5, bold=True, color=c)
+        cx += col_w[0]
+        add_text(slide, str(count), cx, ry+0.10, col_w[1], 0.22, size=10.5, bold=True,
+                  color=NAVY, align=PP_ALIGN.CENTER)
+        cx += col_w[1]
+        dep_label = f"${dep/1e6:.0f}M" if dep > 0 else "—"
+        add_text(slide, dep_label, cx, ry+0.10, col_w[2], 0.22, size=9.5,
+                  color=NAVY, align=PP_ALIGN.CENTER)
+        cx += col_w[2]
+        pct = f"{dep/total_dep_zones*100:.0f}%" if total_dep_zones and dep > 0 else "—"
+        add_text(slide, pct, cx, ry+0.10, col_w[3], 0.22, size=9.5,
+                  color=GRAY3, align=PP_ALIGN.CENTER)
+        ry += row_h
 
-    # Remove graphic frame border via XML
-    from pptx.oxml.ns import qn as _qn
-    from lxml import etree as _et
-    sp_pr = chart_frame.element.find('.//' + _qn('c:spPr'))
-    if sp_pr is None:
-        sp_pr = _et.SubElement(chart_frame.element, _qn('c:spPr'))
-    ln = sp_pr.find(_qn('a:ln'))
-    if ln is None:
-        ln = _et.SubElement(sp_pr, _qn('a:ln'))
-    if ln.find(_qn('a:noFill')) is None:
-        _et.SubElement(ln, _qn('a:noFill'))
-
-    # Custom legend — small colored squares + labels, higher contrast and
-    # bigger swatches than PowerPoint's native chart legend renders.
-    legend_items = [("Invest", ZONE_VIVID["Invest"]), ("Analyze", ZONE_VIVID["Analyze"]),
-                     ("Defend", ZONE_VIVID["Defend"]), ("Justify", ZONE_VIVID["Justify"])]
-    leg_y = 4.58
-    leg_x = 6.05
-    for name, c in legend_items:
-        add_rect(slide, leg_x, leg_y, 0.16, 0.16, c)
-        add_text(slide, name, leg_x + 0.22, leg_y - 0.04, 0.95, 0.24,
-                 size=9, bold=False, color=NAVY)
-        leg_x += 0.22 + 0.78
-
-    # Center KPI callout — sits inside the doughnut hole for visual depth
-    # Chart spans x:[6.0,9.8] y:[1.55,4.45] → center ≈ (7.9, 3.0)
-    total_branches = d["invest"] + d["analyze"] + d["defend"] + d["justify"]
-    add_text(slide, str(total_branches), 6.95, 2.67, 1.9, 0.46,
-             size=22, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-    add_text(slide, "BRANCHES", 6.95, 3.11, 1.9, 0.20,
-             size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+    add_rect(slide, tx, ry, tw, 0.28, rgb("EEF0F3"))
+    add_text(slide, "TOTAL", tx+0.15, ry+0.04, col_w[0]-0.15, 0.20, size=8.5, bold=True, color=NAVY)
+    add_text(slide, str(total_branches), tx+col_w[0], ry+0.04, col_w[1], 0.20, size=9.5,
+              bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    add_text(slide, f"${total_dep_zones/1e6:.0f}M", tx+col_w[0]+col_w[1], ry+0.04, col_w[2], 0.20,
+              size=8.5, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    add_text(slide, "100%", tx+col_w[0]+col_w[1]+col_w[2], ry+0.04, col_w[3], 0.20,
+              size=8.5, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
 
 
 
@@ -1244,6 +1202,10 @@ def build_deck(data, logo_bytes):
     analyze  = sum(1 for r in rows if r.get("opportunity_zone")=="Analyze")
     defend   = sum(1 for r in rows if r.get("opportunity_zone")=="Defend")
     justify  = sum(1 for r in rows if r.get("opportunity_zone")=="Justify")
+    dep_invest  = sum(sf(r.get("latest_dep")) for r in rows if r.get("opportunity_zone")=="Invest")
+    dep_analyze = sum(sf(r.get("latest_dep")) for r in rows if r.get("opportunity_zone")=="Analyze")
+    dep_defend  = sum(sf(r.get("latest_dep")) for r in rows if r.get("opportunity_zone")=="Defend")
+    dep_justify = sum(sf(r.get("latest_dep")) for r in rows if r.get("opportunity_zone")=="Justify")
     bankYoY  = avg("yoy_deposits")*100
     compYoY  = avg("avg_comp_yoy")*100
     gap      = bankYoY - compYoY
@@ -1270,6 +1232,8 @@ def build_deck(data, logo_bytes):
         "gapSubtitle": f"Deposit growth vs. peer average — {fin.get('period','Q4 2025')}",
         "invest":  invest,  "analyze": analyze,
         "defend":  defend,  "justify": justify,
+        "depInvest":  dep_invest,  "depAnalyze": dep_analyze,
+        "depDefend":  dep_defend,  "depJustify": dep_justify,
         "branchList": _build_branch_list(br, sf),
         "metrics": [
             {"label":"ROA",           "value":f"{sf(fin.get('roa')):.2f}%",              "bench":">1.0%",    "ok": sf(fin.get("roa"))>=1},
