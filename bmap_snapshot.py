@@ -660,13 +660,13 @@ IMPORTANT RULES:
 - Close bars end with a genuine question or invitation to discuss — never a pressure tactic or implied cost of inaction.
 - "Peer avg" means competitor deposit growth in the bank's own markets.
 - nextsteps headline: make it about what the Verlocity platform delivers as a whole, not just BMAP.
-- nextsteps spoken: 2 sentences, factual tone. Note that BMAP is the data foundation the other three capabilities build on.
+- nextsteps spoken: 300-330 characters max, factual tone. Note that BMAP is the data foundation the other three capabilities build on.
 - nextsteps bullets: each bullet names one of the four capabilities and the concrete outcome it drives.
 - nextsteps close: invite a conversation about next steps — direct and respectful, not a hard sell.
 
 Return ONLY valid JSON — no markdown, no explanation:
 {"slides":[
-  {"id":"network","headline":"strong claim max 9 words","spoken":"2 sentences Tom says walking in. Specific numbers. Creates urgency.","bullets":["data point with number","competitive threat — no competitor name","gap or risk that needs Verlocity to solve"],"close":"invitation to dig deeper — not a prescription"},
+  {"id":"network","headline":"strong claim max 9 words","spoken":"ONE sentence, 300-330 characters max. The single sharpest number and comparison Tom would say walking in — do not stack multiple metrics. Factual tone, must read naturally aloud in one breath.","bullets":["data point with number","competitive threat — no competitor name","gap or risk that needs Verlocity to solve"],"close":"invitation to dig deeper — not a prescription"},
   {"id":"priority","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"financial","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"nextsteps","headline":"...","spoken":"...","bullets":[...],"close":"..."}
@@ -688,7 +688,22 @@ Return ONLY valid JSON — no markdown, no explanation:
     except Exception as e:
         print(f"  ⚠  JSON parse failed ({e}) — using empty narratives")
     N = lambda k: narr.get(k, {"headline":"","spoken":"","bullets":[],"close":""})
-    return {k: N(k) for k in ["network","priority","financial","nextsteps"]}
+    result = {k: N(k) for k in ["network","priority","financial","nextsteps"]}
+
+    # Safety net: the "spoken" box is 5.6"w x 0.62"h at 9.5pt italic Calibri,
+    # which holds ~330 characters before autofit shrinking hits its practical
+    # floor and text starts overflowing instead of shrinking. The prompt asks
+    # for 300-330 chars, but the model doesn't always follow that exactly —
+    # truncate here so a box never receives more than it can actually hold,
+    # regardless of what comes back from the API.
+    SPOKEN_CHAR_LIMIT = 330
+    for k in result:
+        spoken = result[k].get("spoken", "")
+        if len(spoken) > SPOKEN_CHAR_LIMIT:
+            print(f"  ⚠  '{k}' spoken line was {len(spoken)} chars — truncating to {SPOKEN_CHAR_LIMIT}")
+            result[k]["spoken"] = truncate_label(spoken, SPOKEN_CHAR_LIMIT)
+
+    return result
 
 # ═══════════════════════════════════════════════════════════════
 # SLIDE BUILDERS
@@ -774,66 +789,100 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
         add_text(slide, val, kx, ky+0.06, 1.62, 0.42, size=19, bold=True, color=vc, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, kx, ky+0.52, 1.62, 0.20, size=6.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
-    # ── ZONE TABLE (replaces doughnut chart) ─────────────────────
-    # The donut chart's custom hole-size and zero-label-suppression XML
-    # patches rendered fine in LibreOffice but failed in real PowerPoint —
-    # PowerPoint ignored the hand-written c:holeSize element (rendered as a
-    # full pie) and the c:dLbl delete (the "0" label still showed). Rather
-    # than keep patching fragile raw-XML chart hacks, this is a plain table
-    # built from the same add_rect/add_text primitives used elsewhere in
-    # the deck — guaranteed to render identically everywhere, and it
-    # surfaces deposits-per-zone, which is the more material number than
-    # a branch-count chart alone.
+    # ── ZONE CHART — horizontal paired bars, % branches vs % deposits ──
+    # Why this replaces the table: a table that lists every zone works at
+    # 4 branches but says nothing useful at 100+ branches, and it duplicates
+    # facts the narrative paragraph already states. This chart instead
+    # surfaces the thing a table can't show at a glance: the MISMATCH between
+    # how many branches sit in a zone and how much money sits there — e.g.
+    # a zone with few branches but most of the deposits, or vice versa. That
+    # mismatch is the actual strategic signal, and it reads the same way
+    # whether the bank has 4 branches or 400, because both series are
+    # normalized to % of total rather than raw counts/dollars.
+    #
+    # Native XL_CHART_TYPE (not a hand-built donut/table) — the donut chart
+    # tried earlier failed in real PowerPoint (see note on the old table
+    # below); BAR_CLUSTERED is a standard chart type with no custom XML
+    # patches needed, so it renders identically everywhere.
     add_text(slide, "Zones", 6.0, 1.92, 3.8, 0.30, size=14, bold=True, color=NAVY)
 
     ZONE_VIVID = {
-        "Invest":  (INVEST,  INVEST_L,  d["invest"],  d["depInvest"]),
-        "Analyze": (ANALYZE, ANALYZE_L, d["analyze"], d["depAnalyze"]),
-        "Defend":  (DEFEND,  DEFEND_L,  d["defend"],  d["depDefend"]),
-        "Justify": (JUSTIFY, JUSTIFY_L, d["justify"], d["depJustify"]),
+        "Invest":  (INVEST,  d["invest"],  d["depInvest"]),
+        "Analyze": (ANALYZE, d["analyze"], d["depAnalyze"]),
+        "Defend":  (DEFEND,  d["defend"],  d["depDefend"]),
+        "Justify": (JUSTIFY, d["justify"], d["depJustify"]),
     }
-    total_dep_zones = sum(v[3] for v in ZONE_VIVID.values())
-    total_branches  = sum(v[2] for v in ZONE_VIVID.values())
+    total_branches  = sum(v[1] for v in ZONE_VIVID.values()) or 1
+    total_dep_zones = sum(v[2] for v in ZONE_VIVID.values()) or 1
 
-    tx, ty, tw = 6.0, 2.26, 3.8
-    headers = ["ZONE", "BRANCHES", "DEPOSITS", "% OF TOTAL"]
-    col_w = [1.15, 0.85, 1.0, 0.8]
+    # Order top-to-bottom as Invest/Analyze/Defend/Justify; chart_data
+    # categories render bottom-to-top in a horizontal bar by default, so
+    # reverse the order going in to get Invest at the top visually.
+    zone_order = ["Justify", "Defend", "Analyze", "Invest"]
+    pct_branches = [round(ZONE_VIVID[z][1] / total_branches * 100, 1) for z in zone_order]
+    pct_deposits = [round(ZONE_VIVID[z][2] / total_dep_zones * 100, 1) for z in zone_order]
 
-    add_rect(slide, tx, ty, tw, 0.32, NAVY)
-    cx = tx
-    for i, htext in enumerate(headers):
-        add_text(slide, htext, cx+0.06, ty+0.04, col_w[i]-0.06, 0.22, size=7.5, bold=True,
-                  color=WHITE, align=PP_ALIGN.LEFT if i==0 else PP_ALIGN.CENTER)
-        cx += col_w[i]
+    chart_data = ChartData()
+    chart_data.categories = zone_order
+    chart_data.add_series("% of Branches", pct_branches)
+    chart_data.add_series("% of Deposits", pct_deposits)
 
-    row_h = 0.43
-    ry = ty + 0.32
-    for name, (c, c_light, count, dep) in ZONE_VIVID.items():
-        add_rect(slide, tx, ry, tw, row_h, c_light)
-        add_rect(slide, tx, ry, 0.07, row_h, c)
-        cx = tx
-        add_text(slide, name, cx+0.15, ry+0.10, col_w[0]-0.15, 0.22, size=9.5, bold=True, color=c)
-        cx += col_w[0]
-        add_text(slide, str(count), cx, ry+0.10, col_w[1], 0.22, size=10.5, bold=True,
-                  color=NAVY, align=PP_ALIGN.CENTER)
-        cx += col_w[1]
-        dep_label = f"${dep/1e6:.0f}M" if dep > 0 else "—"
-        add_text(slide, dep_label, cx, ry+0.10, col_w[2], 0.22, size=9.5,
-                  color=NAVY, align=PP_ALIGN.CENTER)
-        cx += col_w[2]
-        pct = f"{dep/total_dep_zones*100:.0f}%" if total_dep_zones and dep > 0 else "—"
-        add_text(slide, pct, cx, ry+0.10, col_w[3], 0.22, size=9.5,
-                  color=GRAY3, align=PP_ALIGN.CENTER)
-        ry += row_h
+    chart_frame = slide.shapes.add_chart(
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        Inches(6.0), Inches(2.26), Inches(3.8), Inches(2.55),
+        chart_data
+    )
+    chart = chart_frame.chart
 
-    add_rect(slide, tx, ry, tw, 0.28, rgb("EEF0F3"))
-    add_text(slide, "TOTAL", tx+0.15, ry+0.04, col_w[0]-0.15, 0.20, size=8.5, bold=True, color=NAVY)
-    add_text(slide, str(total_branches), tx+col_w[0], ry+0.04, col_w[1], 0.20, size=9.5,
-              bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-    add_text(slide, f"${total_dep_zones/1e6:.0f}M", tx+col_w[0]+col_w[1], ry+0.04, col_w[2], 0.20,
-              size=8.5, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-    add_text(slide, "100%", tx+col_w[0]+col_w[1]+col_w[2], ry+0.04, col_w[3], 0.20,
-              size=8.5, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+    chart.has_legend = True
+    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
+    chart.legend.font.size = Pt(8)
+    chart.legend.font.color.rgb = GRAY3
+    chart.has_title = False
+
+    # Branch-count series: solid zone color. Deposit series: lighter tint
+    # of the same zone color per category — done per-point since each
+    # category needs its own zone color, not one color per series.
+    series_branches, series_deposits = chart.series[0], chart.series[1]
+    for i, z in enumerate(zone_order):
+        c = ZONE_C[z]
+        series_branches.points[i].format.fill.solid()
+        series_branches.points[i].format.fill.fore_color.rgb = c
+        series_branches.points[i].format.line.fill.background()
+
+        cl = ZONE_L[z]
+        series_deposits.points[i].format.fill.solid()
+        series_deposits.points[i].format.fill.fore_color.rgb = cl
+        series_deposits.points[i].format.line.fill.background()
+
+    va = chart.value_axis
+    va.tick_labels.font.size = Pt(7.5)
+    va.tick_labels.font.color.rgb = GRAY3
+    va.has_major_gridlines = False
+    va.minimum_scale = 0
+
+    ca = chart.category_axis
+    ca.tick_labels.font.size = Pt(9.5)
+    ca.tick_labels.font.color.rgb = NAVY
+    ca.tick_labels.font.bold = True
+
+    # Plot-level data labels (works across series; per-point dLbl XML like
+    # the old donut attempt is what broke in real PowerPoint, so this sticks
+    # to chart-level label settings only)
+    plot = chart.plots[0]
+    plot.has_data_labels = True
+    dl = plot.data_labels
+    dl.number_format = '0"%"'
+    dl.number_format_is_linked = False
+    dl.font.size = Pt(7.5)
+    dl.font.color.rgb = NAVY
+
+    # Small caption under the chart with the raw totals, so the % figures
+    # have an anchor — this is the one piece of raw-number context worth
+    # keeping now that the table itself is gone.
+    add_text(slide, f"{total_branches} branches  ·  ${total_dep_zones/1e6:.0f}M total deposits",
+              6.0, 4.86, 3.8, 0.22, size=8, italic=True, color=GRAY3, align=PP_ALIGN.LEFT)
 
 
 
