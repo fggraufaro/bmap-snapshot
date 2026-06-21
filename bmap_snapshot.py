@@ -657,16 +657,16 @@ IMPORTANT RULES:
 - Never name competitors directly. Refer to them as "your primary competitor" or "a regional competitor".
 - Never prescribe specific budget reallocation amounts or staff actions.
 - Bullets reveal WHAT the data shows, not HOW to fix it.
-- Close bars end with a genuine question or invitation to discuss — never a pressure tactic or implied cost of inaction.
+- Close bars end with a genuine question or invitation to discuss — never a pressure tactic or implied cost of inaction. 160-190 characters max, one sentence — this is a small dark bar at the bottom of the slide, not room for a paragraph.
 - "Peer avg" means competitor deposit growth in the bank's own markets.
 - nextsteps headline: make it about what the Verlocity platform delivers as a whole, not just BMAP.
 - nextsteps spoken: 300-330 characters max, factual tone. Note that BMAP is the data foundation the other three capabilities build on.
 - nextsteps bullets: each bullet names one of the four capabilities and the concrete outcome it drives.
-- nextsteps close: invite a conversation about next steps — direct and respectful, not a hard sell.
+- nextsteps close: invite a conversation about next steps — direct and respectful, not a hard sell. 160-190 characters max, one sentence.
 
 Return ONLY valid JSON — no markdown, no explanation:
 {"slides":[
-  {"id":"network","headline":"strong claim max 9 words","spoken":"ONE sentence, 300-330 characters max. The single sharpest number and comparison Tom would say walking in — do not stack multiple metrics. Factual tone, must read naturally aloud in one breath.","bullets":["data point with number","competitive threat — no competitor name","gap or risk that needs Verlocity to solve"],"close":"invitation to dig deeper — not a prescription"},
+  {"id":"network","headline":"strong claim max 9 words","spoken":"ONE sentence, 300-330 characters max. The single sharpest number and comparison Tom would say walking in — do not stack multiple metrics. Factual tone, must read naturally aloud in one breath.","bullets":["data point with number","competitive threat — no competitor name","gap or risk that needs Verlocity to solve"],"close":"ONE sentence, 160-190 characters max. A genuine question or invitation to dig deeper — not a prescription, not a directive."},
   {"id":"priority","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"financial","headline":"...","spoken":"...","bullets":[...],"close":"..."},
   {"id":"nextsteps","headline":"...","spoken":"...","bullets":[...],"close":"..."}
@@ -690,18 +690,33 @@ Return ONLY valid JSON — no markdown, no explanation:
     N = lambda k: narr.get(k, {"headline":"","spoken":"","bullets":[],"close":""})
     result = {k: N(k) for k in ["network","priority","financial","nextsteps"]}
 
-    # Safety net: the "spoken" box is 5.6"w x 0.62"h at 9.5pt italic Calibri,
-    # which holds ~330 characters before autofit shrinking hits its practical
-    # floor and text starts overflowing instead of shrinking. The prompt asks
-    # for 300-330 chars, but the model doesn't always follow that exactly —
-    # truncate here so a box never receives more than it can actually hold,
+    # Safety net: each text box on the slide has a fixed size, so it has a
+    # hard ceiling on how many characters it can hold before autofit
+    # shrinking hits its practical floor and text overflows instead of
+    # shrinking cleanly. The prompt asks the model to stay under these
+    # limits, but it doesn't always comply exactly — truncating here
+    # guarantees a box never receives more than it can actually hold,
     # regardless of what comes back from the API.
-    SPOKEN_CHAR_LIMIT = 330
+    #
+    # Limits below are per FIELD, applied to every slide ("by slide by box"
+    # in practice, since every slide uses the same box sizes today — if a
+    # future slide type uses a differently-sized box for one of these
+    # fields, give that field its own per-slide-id entry here rather than
+    # changing the box size without updating the limit).
+    #
+    #   field    box size (w x h)      max chars before overflow risk
+    #   spoken   5.6" x 0.62", 9.5pt   ~330
+    #   close    5.4" x 0.46", 9.5pt   ~224 — smaller box, tighter limit
+    FIELD_CHAR_LIMITS = {
+        "spoken": 330,
+        "close":  210,   # slight safety margin under the ~224 hard ceiling
+    }
     for k in result:
-        spoken = result[k].get("spoken", "")
-        if len(spoken) > SPOKEN_CHAR_LIMIT:
-            print(f"  ⚠  '{k}' spoken line was {len(spoken)} chars — truncating to {SPOKEN_CHAR_LIMIT}")
-            result[k]["spoken"] = truncate_label(spoken, SPOKEN_CHAR_LIMIT)
+        for field, limit in FIELD_CHAR_LIMITS.items():
+            text = result[k].get(field, "")
+            if len(text) > limit:
+                print(f"  ⚠  '{k}.{field}' was {len(text)} chars — truncating to {limit}")
+                result[k][field] = truncate_label(text, limit)
 
     return result
 
