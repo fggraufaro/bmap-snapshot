@@ -403,10 +403,17 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
     return shape
 
 def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
-             align=PP_ALIGN.LEFT, italic=False, font="Calibri", valign="top"):
+             align=PP_ALIGN.LEFT, italic=False, font="Calibri", valign="top",
+             shrink_to_fit=False):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = tb.text_frame
     tf.word_wrap = True
+    if shrink_to_fit:
+        from pptx.enum.text import MSO_AUTO_SIZE
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+    from pptx.enum.text import MSO_ANCHOR
+    tf.vertical_anchor = {"top": MSO_ANCHOR.TOP, "bottom": MSO_ANCHOR.BOTTOM,
+                           "center": MSO_ANCHOR.MIDDLE}.get(valign, MSO_ANCHOR.TOP)
     p = tf.paragraphs[0]
     p.alignment = align
     run = p.add_run()
@@ -443,12 +450,16 @@ def add_narrative(slide, n, y0):
     add_text(slide, n.get("headline",""), 0.45, y0, 5.6, 0.78,
              size=24, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.45, y0+0.84, 5.6, 0.04, TEAL)
-    add_text(slide, n.get("spoken",""), 0.45, y0+0.96, 5.6, 0.60,
-             size=9.5, italic=True, color=NAVY_SOFT)
+    # Spoken line: taller box + shrink-to-fit so longer AI text never
+    # overlaps the bullets below it instead of just clipping invisibly.
+    add_text(slide, n.get("spoken",""), 0.45, y0+0.96, 5.6, 0.62,
+             size=9.5, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
     bullets = n.get("bullets", [])
     if bullets:
-        tb = slide.shapes.add_textbox(Inches(0.45), Inches(y0+1.62), Inches(5.6), Inches(2.0))
+        tb = slide.shapes.add_textbox(Inches(0.45), Inches(y0+1.66), Inches(5.6), Inches(1.92))
         tf = tb.text_frame; tf.word_wrap = True
+        from pptx.enum.text import MSO_AUTO_SIZE
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
         for i, b in enumerate(bullets):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = f"• {b}"
@@ -456,7 +467,7 @@ def add_narrative(slide, n, y0):
             p.space_after = Pt(5)
     add_rect(slide, 0.45, y0+3.68, 5.6, 0.46, NAVY)
     add_text(slide, n.get("close",""), 0.56, y0+3.68, 5.4, 0.46,
-             size=9.5, bold=True, color=WHITE)
+             size=9.5, bold=True, color=WHITE, valign="center", shrink_to_fit=True)
 
 def fetch_logo():
     try:
@@ -766,20 +777,20 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
     # ── NATIVE VECTOR DOUGHNUT CHART (modernized) ────────────────
     chart_data = ChartData()
     chart_data.categories = ["Invest", "Analyze", "Defend", "Justify"]
-    chart_data.add_series("Zones", (d["invest"], d["analyze"], d["defend"], d["justify"]))
+    zone_counts = (d["invest"], d["analyze"], d["defend"], d["justify"])
+    chart_data.add_series("Zones", zone_counts)
 
     chart_frame = slide.shapes.add_chart(
         XL_CHART_TYPE.DOUGHNUT,
-        Inches(6.0), Inches(1.7), Inches(3.8), Inches(3.1),
+        Inches(6.0), Inches(1.55), Inches(3.8), Inches(2.9),
         chart_data
     )
     chart = chart_frame.chart
 
-    chart.has_legend = True
-    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-    chart.legend.include_in_layout = False
-    chart.legend.font.size = Pt(9)
-    chart.legend.font.color.rgb = NAVY
+    # Native legend dropped — its color swatches render too small/low-contrast
+    # to read clearly. Replaced with a custom legend row below (see after
+    # chart setup) that matches the rest of the deck's design language.
+    chart.has_legend = False
 
     # Updated, more saturated zone palette — distinct from the flat originals
     ZONE_VIVID = {
@@ -795,7 +806,9 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
         point.format.line.color.rgb = WHITE
         point.format.line.width = Pt(2.25)
 
-    # Data labels — show value on each slice for a less "flat" read
+    # Data labels — show value on each slice for a less "flat" read.
+    # Zero-value zones get NO label: a "0" crammed onto a hairline slice
+    # is what caused the overlapping/colliding numbers.
     plot = chart.plots[0]
     plot.has_data_labels = True
     dl = plot.data_labels
@@ -805,6 +818,18 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
     dl.font.size = Pt(10)
     dl.font.bold = True
     dl.font.color.rgb = WHITE
+
+    from pptx.oxml.ns import qn as _qn3
+    from lxml import etree as _et3
+    for i, point in enumerate(chart.series[0].points):
+        if zone_counts[i] == 0:
+            dlbl = _et3.SubElement(point._element, _qn3('c:dLbl'))
+            idx_el = _et3.SubElement(dlbl, _qn3('c:idx'))
+            idx_el.set('val', str(i))
+            delete_el = _et3.SubElement(dlbl, _qn3('c:delete'))
+            delete_el.set('val', '1')
+            # c:dLbl must come before other point-level children in series XML order
+            point._element.insert(0, dlbl)
 
     # Doughnut hole size — slim ring reads more modern than a thick donut
     try:
@@ -832,12 +857,24 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
     if ln.find(_qn('a:noFill')) is None:
         _et.SubElement(ln, _qn('a:noFill'))
 
+    # Custom legend — small colored squares + labels, higher contrast and
+    # bigger swatches than PowerPoint's native chart legend renders.
+    legend_items = [("Invest", ZONE_VIVID["Invest"]), ("Analyze", ZONE_VIVID["Analyze"]),
+                     ("Defend", ZONE_VIVID["Defend"]), ("Justify", ZONE_VIVID["Justify"])]
+    leg_y = 4.58
+    leg_x = 6.05
+    for name, c in legend_items:
+        add_rect(slide, leg_x, leg_y, 0.16, 0.16, c)
+        add_text(slide, name, leg_x + 0.22, leg_y - 0.04, 0.95, 0.24,
+                 size=9, bold=False, color=NAVY)
+        leg_x += 0.22 + 0.78
+
     # Center KPI callout — sits inside the doughnut hole for visual depth
-    # Chart spans x:[6.0,9.8] y:[1.7,4.8] → center ≈ (7.9, 3.25)
+    # Chart spans x:[6.0,9.8] y:[1.55,4.45] → center ≈ (7.9, 3.0)
     total_branches = d["invest"] + d["analyze"] + d["defend"] + d["justify"]
-    add_text(slide, str(total_branches), 6.95, 2.92, 1.9, 0.46,
+    add_text(slide, str(total_branches), 6.95, 2.67, 1.9, 0.46,
              size=22, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-    add_text(slide, "BRANCHES", 6.95, 3.36, 1.9, 0.20,
+    add_text(slide, "BRANCHES", 6.95, 3.11, 1.9, 0.20,
              size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
 
@@ -945,9 +982,8 @@ def build_gap(prs, d, narr, page_num=4):
 
     # 3 stat tiles
     tile_c = rgb("F87171") if d["gapNeg"] else TEAL
-    tile_bank_label = truncate_label(d["bankName"], 18)
     tiles = [
-        (f"{d['bankYoY']}%", f"{tile_bank_label.upper()} YoY", tile_c),
+        (f"{d['bankYoY']}%", f"{d['bankName'].upper()} YoY", tile_c),
         (f"{d['peerYoY']}%", "PEER AVG",      GRAY3),
         (d["gap"],           "GAP",            AMBER),
     ]
@@ -955,13 +991,19 @@ def build_gap(prs, d, narr, page_num=4):
         tx = 0.28 + i*1.78
         add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("162436"), rgb("1E3A5F"), Pt(0.5))
         add_rect(slide, tx, 2.96, 1.62, 0.06, c)
-        add_text(slide, val, tx, 3.06, 1.62, 0.58, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, tx, 3.70, 1.62, 0.26, size=7,  bold=True, color=rgb("3A5A7A"), align=PP_ALIGN.CENTER)
+        # First tile carries the full bank name — give it a smaller font
+        # and 2-line-capable box instead of truncating mid-name.
+        lbl_size = 6 if i == 0 and len(d["bankName"]) > 14 else 7
+        add_text(slide, val, tx, 3.02, 1.62, 0.52, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, tx+0.04, 3.58, 1.54, 0.42, size=lbl_size, bold=True,
+                 color=rgb("3A5A7A"), align=PP_ALIGN.CENTER)
 
     # ── NATIVE VECTOR BAR CHART ──────────────────────────────────
-    bank_label = truncate_label(d["bankName"], 22)
+    # Full bank name — category axis wraps naturally within column width,
+    # no truncation needed (truncating to ~20 chars was cutting names like
+    # "Citizens Independent Bank" mid-name even at a word boundary).
     chart_data = ChartData()
-    chart_data.categories = [bank_label, "Peer Avg"]
+    chart_data.categories = [d["bankName"], "Peer Avg"]
     chart_data.add_series("Deposit YoY %", (float(d["bankYoY"]), float(d["peerYoY"])))
 
     chart_frame = slide.shapes.add_chart(
@@ -988,7 +1030,7 @@ def build_gap(prs, d, narr, page_num=4):
 
     ca = chart.category_axis
     ca.tick_labels.font.color.rgb = WHITE
-    ca.tick_labels.font.size = Pt(13)
+    ca.tick_labels.font.size = Pt(13) if len(d["bankName"]) <= 16 else Pt(10)
     ca.tick_labels.font.bold = True
 
     # Footer
