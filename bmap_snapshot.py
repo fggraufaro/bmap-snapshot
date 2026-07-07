@@ -23,6 +23,7 @@ Output: BMAP_Snapshot_<BankName>_<date>.pptx  (or a folder for batch)
 """
 
 import argparse
+import base64
 import csv
 import io
 import json
@@ -33,6 +34,8 @@ import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
+
+from verlocity_assets import LOGO_B64
 
 # ── Third-party ────────────────────────────────────────────────
 try:
@@ -64,7 +67,6 @@ except ImportError:
 SUPA_URL  = "https://tuiiywphoynbmkxpoyps.supabase.co"
 SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1aWl5d3Bob3luYm1reHBveXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MDg0NTMsImV4cCI6MjA3Mjk4NDQ1M30.8-JAz4WQRE3Fi6uH7xiYNTns92g-nV1A9pbUvSK549M"
 ANTH_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")  # set env var or paste here
-LOGO_URL  = "https://fggraufaro.github.io/bmap-tools/Verlocity-Logo.png"
 OUT_DIR   = Path(".")
 
 # ═══════════════════════════════════════════════════════════════
@@ -72,9 +74,12 @@ OUT_DIR   = Path(".")
 # ═══════════════════════════════════════════════════════════════
 def rgb(h): return RGBColor(int(h[0:2],16), int(h[2:4],16), int(h[4:6],16))
 
-NAVY    = rgb("1A2332")
-NAVY_SOFT = rgb("3D4D63")  # darker than GRAY3 — used for narrative body copy, keeps contrast on white
-TEAL    = rgb("1D9E75")
+NAVY    = rgb("083D5F")  # Primary Dark Blue
+NAVY_SOFT = rgb("2B6790")  # lighter tint of new NAVY — used for narrative body copy, keeps contrast on white
+TEAL    = rgb("02A7C2")  # Primary Light Blue
+JETBLACK = rgb("213141")  # brand secondary — available for future body-text refinement
+EMERALD  = rgb("66CC99")  # brand secondary
+LEMONLIME = rgb("CDD61A")  # brand secondary
 AMBER   = rgb("F5A623")
 WHITE   = rgb("FFFFFF")
 GRAY1   = rgb("F5F5F2")
@@ -403,7 +408,7 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
     return shape
 
 def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
-             align=PP_ALIGN.LEFT, italic=False, font="Calibri", valign="top",
+             align=PP_ALIGN.LEFT, italic=False, font="Inter", valign="top",
              shrink_to_fit=False):
     tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = tb.text_frame
@@ -439,7 +444,7 @@ def add_chrome(slide, page_num, label, logo_bytes):
     add_rect(slide, 0, 0, 0.28, 5.625, NAVY)
     add_rect(slide, 0.28, 0, 0.08, 5.625, TEAL)
     if logo_bytes:
-        slide.shapes.add_picture(io.BytesIO(logo_bytes), Inches(0.42), Inches(5.04), Inches(1.55), Inches(0.36))
+        add_logo(slide, 0.42, 5.10, 0.30, logo_bytes)
     if label:
         pill = add_rect(slide, 8.16, 0.14, 1.76, 0.30, TEAL)
         add_text(slide, label, 8.16, 0.14, 1.76, 0.30, size=7.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
@@ -463,18 +468,30 @@ def add_narrative(slide, n, y0):
         for i, b in enumerate(bullets):
             p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
             p.text = f"• {b}"
-            p.font.size = Pt(9.5); p.font.color.rgb = NAVY; p.font.name = "Calibri"
+            p.font.size = Pt(9.5); p.font.color.rgb = NAVY; p.font.name = "Inter"
             p.space_after = Pt(5)
     add_rect(slide, 0.45, y0+3.68, 5.6, 0.46, NAVY)
     add_text(slide, n.get("close",""), 0.56, y0+3.68, 5.4, 0.46,
              size=9.5, bold=True, color=WHITE, valign="center", shrink_to_fit=True)
 
+# Actual logo asset is 1036×420px — update this if the logo file is ever replaced.
+LOGO_ASPECT = 1036 / 420
+
+def add_logo(slide, x, y, height, logo_bytes):
+    """Place the logo at a given height, deriving width from the real aspect ratio
+    so it is never stretched. Use this everywhere instead of calling add_picture
+    directly with hardcoded width+height."""
+    if not logo_bytes:
+        return None
+    width = height * LOGO_ASPECT
+    return slide.shapes.add_picture(io.BytesIO(logo_bytes), Inches(x), Inches(y), Inches(width), Inches(height))
+
 def fetch_logo():
+    """Decode the embedded Verlocity logo — no network call, no dependency on an external URL."""
     try:
-        with urllib.request.urlopen(LOGO_URL, timeout=10) as r:
-            return r.read()
+        return base64.b64decode(LOGO_B64)
     except Exception as e:
-        print(f"  ⚠  Logo fetch failed ({e}) — slides will have no logo")
+        print(f"  ⚠  Logo decode failed ({e}) — slides will have no logo")
         return None
 
 # ═══════════════════════════════════════════════════════════════
@@ -733,7 +750,7 @@ def build_cover(prs, d, logo_bytes):
 
     # Logo top
     if logo_bytes:
-        slide.shapes.add_picture(io.BytesIO(logo_bytes), Inches(1.2), Inches(0.28), Inches(2.45), Inches(0.54))
+        add_logo(slide, 1.2, 0.28, 0.54, logo_bytes)
 
     # Teal rule
     add_rect(slide, 1.2, 0.96, 8.6, 0.05, TEAL)
@@ -777,7 +794,7 @@ def build_cover(prs, d, logo_bytes):
 
     # Logo bottom-left + footer
     if logo_bytes:
-        slide.shapes.add_picture(io.BytesIO(logo_bytes), Inches(0.42), Inches(5.04), Inches(1.55), Inches(0.36))
+        add_logo(slide, 0.42, 5.10, 0.30, logo_bytes)
     add_text(slide,
         f"Confidential  ·  Verlocity Princeton Partners Group  ·  {datetime.now().year}",
         1.2, 5.3, 8.5, 0.2, size=7.5, color=GRAY3, align=PP_ALIGN.CENTER)
@@ -1000,7 +1017,7 @@ def build_gap(prs, d, narr, page_num=4):
     add_text(slide, "GAP VS PEER AVERAGE", 0.28, 2.08, 5.2, 0.34,
              size=13, bold=True, color=WHITE)
     add_text(slide, d["gapSubtitle"], 0.28, 2.50, 5.2, 0.26,
-             size=9.5, italic=True, color=rgb("4A6A8A"))
+             size=9.5, italic=True, color=rgb("3884B7"))
 
     # 3 stat tiles
     tile_c = rgb("F87171") if d["gapNeg"] else TEAL
@@ -1011,14 +1028,14 @@ def build_gap(prs, d, narr, page_num=4):
     ]
     for i, (val, lbl, c) in enumerate(tiles):
         tx = 0.28 + i*1.78
-        add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("162436"), rgb("1E3A5F"), Pt(0.5))
+        add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("043E63"), rgb("0C548C"), Pt(0.5))
         add_rect(slide, tx, 2.96, 1.62, 0.06, c)
         # First tile carries the full bank name — give it a smaller font
         # and 2-line-capable box instead of truncating mid-name.
         lbl_size = 6 if i == 0 and len(d["bankName"]) > 14 else 7
         add_text(slide, val, tx, 3.02, 1.62, 0.52, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, tx+0.04, 3.58, 1.54, 0.42, size=lbl_size, bold=True,
-                 color=rgb("3A5A7A"), align=PP_ALIGN.CENTER)
+                 color=rgb("2874A7"), align=PP_ALIGN.CENTER)
 
     # ── NATIVE VECTOR BAR CHART ──────────────────────────────────
     # Full bank name — category axis wraps naturally within column width,
@@ -1058,8 +1075,8 @@ def build_gap(prs, d, narr, page_num=4):
     # Footer
     add_text(slide,
         f"Verlocity Princeton Partners Group   ·   BMAP Intelligence   ·   {d['bankName']}",
-        0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("8DA3BC"))
-    add_text(slide, str(page_num), 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("8DA3BC"), align=PP_ALIGN.RIGHT)
+        0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("7BBDE9"))
+    add_text(slide, str(page_num), 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("7BBDE9"), align=PP_ALIGN.RIGHT)
 
 
 def build_next_steps(prs, d, narr, logo_bytes, page_num=6):
@@ -1142,11 +1159,8 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
     Slide: Top 3 Audience Personas — bridge to AudienceFinder.
     Layout: dark navy header, 3 side-by-side persona cards, audiencefinder CTA bar.
     """
-    GREEN   = rgb("2ECC71")
-    TEAL    = rgb("028090")
     CARD_BG = rgb("F7F8FA")
     CARD_BD = rgb("DDE3EA")
-    ACCENT  = rgb("00A896")
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
@@ -1160,11 +1174,11 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
     add_text(slide, "YOUR MARKET IS TELLING YOU WHO TO TALK TO",
              0.42, 0.08, 7.5, 0.38, size=13, bold=True, color=WHITE)
     add_text(slide, f"Top 3 audience segments across Invest + Analyze branches · {bank_name}",
-             0.42, 0.52, 7.5, 0.30, size=8.5, color=rgb("8BAECC"), italic=True)
+             0.42, 0.52, 7.5, 0.30, size=8.5, color=rgb("7BBDE9"), italic=True)
 
     # AudienceFinder label top right (plain text, no button)
     add_text(slide, "POWERED BY AUDIENCEFINDER", 7.50, 0.18, 2.30, 0.28,
-             size=7, bold=True, color=rgb("00A896"), align=PP_ALIGN.RIGHT)
+             size=7, bold=True, color=TEAL, align=PP_ALIGN.RIGHT)
 
     # 3 persona cards side by side
     card_w = 2.90
@@ -1172,7 +1186,10 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
     card_y = 1.15
     gaps   = [0.42, 3.46, 6.50]  # x positions for 3 cards
 
-    persona_colors = [rgb("1A6B8A"), rgb("1A7A5E"), rgb("6B3FA0")]  # teal, green, purple
+    # On-brand accent triplet — Primary Light Blue, a deepened Emerald and a deepened
+    # Lemon Lime (both darkened from the brand secondary hexes for legible white text
+    # on the badge/strip) — replaces the old arbitrary teal/green/purple set.
+    persona_colors = [TEAL, rgb("428563"), rgb("5C600C")]
     icons = ["◎", "◉", "●"]  # simple circle icons
 
     for i, (cx, p) in enumerate(zip(gaps, personas[:3])):
@@ -1199,7 +1216,7 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
         occ_str    = p.get("occupation","")
         demo_line  = f"{age_str}  ·  {income_str}"
         add_text(slide, demo_line, cx + 0.12, card_y + 0.52, card_w - 0.24, 0.22,
-                 size=8, color=rgb("446688"), bold=False)
+                 size=8, color=rgb("3280B5"), bold=False)
 
         # Occupation
         add_text(slide, occ_str[:45], cx + 0.12, card_y + 0.74, card_w - 0.24, 0.20,
@@ -1234,15 +1251,9 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
              "reach them before your competitors do.",
              0.42, 4.88, 9.20, 0.56, size=8.5, color=WHITE, italic=True, valign="center")
 
-    # Logo bottom left
+    # Logo bottom left — same consistent size/position as every other slide's footer logo
     if logo_bytes:
-        try:
-            import io
-            logo_stream = io.BytesIO(logo_bytes)
-            slide.shapes.add_picture(logo_stream, Inches(0.35), Inches(4.90),
-                                     width=Inches(0.90), height=Inches(0.45))
-        except Exception:
-            pass
+        add_logo(slide, 0.42, 5.10, 0.30, logo_bytes)
 
     # Page number
     add_text(slide, str(page_num), 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
