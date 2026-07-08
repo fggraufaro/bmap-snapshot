@@ -1749,12 +1749,23 @@ DEMOGRAPHIC SIGNALS (Census ACS 2024, averaged across target branch ZIPs):
 
     system = """You are Verlocity's Audience Intelligence Director. Your job is to identify the 3 most valuable deposit-growth personas for a community bank based on their specific market demographics and current economic context.
 
+CONSISTENCY WITH VERLOCITY'S OTHER AUDIENCE TOOLS:
+Verlocity's AudienceFinder tool independently produces a first-level, demographic-grounded
+audience read for the same banks from the same underlying signals (household income, home
+value/ZHVI trend, population trend, BMAP opportunity zone). These personas are a different,
+richer artifact — real names, web-searched current context — but they must not contradict
+what that first-level read would say about the same branches. Concretely: if the demographic
+signals point to an established, higher-income, slow-growth market, don't invent a young/growth
+persona for it; if they point to a growing middle-income market, don't invent an affluent one.
+Let the provided demographic signals set the ceiling and floor for who these people plausibly
+are — web search should add real current color on top of that, not override it.
+
 PERSONA PHILOSOPHY:
 - These are real people, not demographic buckets. Give them names that feel human ("The Worcester Accumulator", "The Gulf Coast Professional")  
-- Ground every insight in the actual data provided
-- Use web search to add current market context — what's happening economically in this specific metro that creates a banking moment RIGHT NOW
+- Ground every insight in the actual data provided — the demographic signals are the anchor; do not state a fact about income, growth, or home values that isn't consistent with what was given
+- Use web search to add current market context — what's happening economically in this specific metro that creates a banking moment RIGHT NOW — but do not invent specific local employers, events, or statistics you did not actually find
 - Banking moments must be specific and actionable — not "savings account" but "CD ladder to lock in rates before Fed cuts"
-- Why Now must reference something current and real — a rate environment shift, local employer, demographic wave
+- Why Now must reference something current and real — a rate environment shift, local employer, demographic wave — grounded in either the provided data or an actual search result, not invented
 
 Return ONLY a JSON array of exactly 3 objects, each with:
 {
@@ -2668,39 +2679,38 @@ def _build_branch_list(br, sf):
 # PERSONA SLIDE
 # ═══════════════════════════════════════════════════════════════
 
-def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
+def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
     """
     Slide: Top 3 Audience Personas — bridge to AudienceFinder.
-    Layout: dark navy header, 3 side-by-side persona cards, audiencefinder CTA bar.
+    Same template as every other slide: white body, top-right logo, teal-rule
+    headline, bottom gradient banner. No separate navy header treatment.
     """
     CARD_BG = rgb("F7F8FA")
     CARD_BD = rgb("DDE3EA")
 
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-    # Header background
-    add_rect(slide, 0, 0, 10.0, 1.05, NAVY)
+    # Same chrome as every other slide — top-right logo + bottom gradient banner
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # Slide title
+    # Headline block — same pattern as add_narrative's headline/rule/subtitle,
+    # but full-width since this slide's cards span the whole page, not a
+    # left-column layout.
     add_text(slide, "YOUR MARKET IS TELLING YOU WHO TO TALK TO",
-             0.42, 0.08, 7.5, 0.38, size=13, bold=True, color=WHITE)
+             0.7, 0.44, 7.6, 0.40, size=20, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
     add_text(slide, f"Top 3 audience segments across Invest + Analyze branches · {bank_name}",
-             0.42, 0.52, 7.5, 0.30, size=8.5, color=rgb("7BBDE9"), italic=True)
+             0.7, 0.94, 7.6, 0.26, size=9.5, italic=True, color=NAVY_SOFT)
 
-    # Logo top-right — white knockout variant since this header is navy
-    logo_white_bytes = fetch_logo_white()
-    if logo_white_bytes:
-        add_transparent_logo(slide, 8.70, 0.08, 0.30, logo_white_bytes)
-
-    # AudienceFinder label — sits below the logo, right-aligned, same corner
-    add_text(slide, "POWERED BY AUDIENCEFINDER", 7.20, 0.42, 2.60, 0.22,
-             size=7, bold=True, color=rgb("7BBDE9"), align=PP_ALIGN.RIGHT)
+    # AudienceFinder label — small, top-right, clear of the logo above it
+    add_text(slide, "POWERED BY AUDIENCEFINDER", 6.0, 0.10, 2.55, 0.20,
+             size=7, bold=True, color=TEAL, align=PP_ALIGN.RIGHT)
 
     # 3 persona cards side by side
     card_w = 2.90
-    card_h = 3.60
-    card_y = 1.15
-    gaps   = [0.42, 3.46, 6.50]  # x positions for 3 cards
+    card_h = 3.30
+    card_y = 1.30
+    gaps   = [0.7, 3.635, 6.57]  # x positions for 3 cards, centered as a group like the cover tiles
 
     # On-brand accent triplet — Primary Light Blue, a deepened Emerald and a deepened
     # Lemon Lime (both darkened from the brand secondary hexes for legible white text
@@ -2744,31 +2754,27 @@ def build_persona_slide(prs, personas, bank_name, logo_bytes, page_num=5):
         # Insight
         add_text(slide, "INSIGHT", cx + 0.12, card_y + 1.10, card_w - 0.24, 0.18,
                  size=6.5, bold=True, color=accent_c)
-        add_text(slide, p.get("insight",""), cx + 0.12, card_y + 1.28, card_w - 0.24, 0.68,
+        add_text(slide, p.get("insight",""), cx + 0.12, card_y + 1.28, card_w - 0.24, 0.60,
                  size=8, color=NAVY)
 
         # Banking moment
-        add_text(slide, "BANKING MOMENT", cx + 0.12, card_y + 2.02, card_w - 0.24, 0.18,
+        add_text(slide, "BANKING MOMENT", cx + 0.12, card_y + 1.90, card_w - 0.24, 0.18,
                  size=6.5, bold=True, color=accent_c)
-        add_text(slide, p.get("moment",""), cx + 0.12, card_y + 2.20, card_w - 0.24, 0.42,
+        add_text(slide, p.get("moment",""), cx + 0.12, card_y + 2.08, card_w - 0.24, 0.40,
                  size=8, color=NAVY)
 
         # Why now
-        add_rect(slide, cx + 0.12, card_y + 2.68, card_w - 0.24, 0.02, CARD_BD)
-        add_text(slide, "WHY NOW", cx + 0.12, card_y + 2.76, card_w - 0.24, 0.16,
+        add_rect(slide, cx + 0.12, card_y + 2.50, card_w - 0.24, 0.02, CARD_BD)
+        add_text(slide, "WHY NOW", cx + 0.12, card_y + 2.58, card_w - 0.24, 0.16,
                  size=6.5, bold=True, color=GRAY3)
-        add_text(slide, p.get("why_now",""), cx + 0.12, card_y + 2.92, card_w - 0.24, 0.50,
+        add_text(slide, p.get("why_now",""), cx + 0.12, card_y + 2.74, card_w - 0.24, 0.50,
                  size=7.5, color=GRAY3, italic=True)
 
-    # Bottom CTA bar
-    add_rect(slide, 0.28, 4.88, 9.52, 0.56, NAVY)
+    # CTA line sits just above the banner, same treatment as the cover's confidential line
     add_text(slide,
              "AudienceFinder builds precision digital audiences around these 3 segments — "
              "reach them before your competitors do.",
-             0.42, 4.88, 9.20, 0.56, size=8.5, color=WHITE, italic=True, valign="center")
-
-    # Page number
-    add_text(slide, str(page_num), 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
+             0.7, 4.75, 8.6, 0.30, size=9, italic=True, color=NAVY, align=PP_ALIGN.CENTER)
 
     return slide
 
@@ -2877,7 +2883,7 @@ def build_deck(data, logo_bytes):
     next_page = 5
     if personas and len(personas) >= 1:
         print(f"  Adding persona slide ({len(personas)} personas)...")
-        build_persona_slide(prs, personas, bankName, logo_bytes, page_num=5)
+        build_persona_slide(prs, personas, bankName, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
         next_page = 6
     else:
         print("  Skipping persona slide — no personas available")
