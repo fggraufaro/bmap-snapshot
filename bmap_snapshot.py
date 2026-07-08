@@ -1561,14 +1561,16 @@ def truncate_label(text, max_len):
         cut = cut[:cut.rindex(" ")]
     return cut.rstrip() + "…"
 
-def add_chrome(slide, page_num, label, logo_bytes):
-    """Verlocity logo + section label + page number"""
-    if logo_bytes:
-        add_logo(slide, 0.14, 5.10, 0.30, logo_bytes)
+def add_chrome(slide, page_num, label, logo_bytes, transparent_logo_bytes=None, chevron_bytes=None):
+    """Verlocity logo + section label + page number — same top-right logo /
+    bottom gradient banner treatment as the cover slide."""
+    if transparent_logo_bytes:
+        add_transparent_logo(slide, 8.62, 0.10, 0.42, transparent_logo_bytes)
     if label:
-        pill = add_rect(slide, 8.16, 0.14, 1.76, 0.30, TEAL)
-        add_text(slide, label, 8.16, 0.14, 1.76, 0.30, size=7.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-    add_text(slide, str(page_num), 9.50, 5.28, 0.38, 0.20, size=9, color=GRAY3, align=PP_ALIGN.RIGHT)
+        pill = add_rect(slide, 0.14, 0.14, 1.76, 0.30, TEAL)
+        add_text(slide, label, 0.14, 0.14, 1.76, 0.30, size=7.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+    add_section_footer_banner(slide, chevron_bytes)
+    add_text(slide, str(page_num), 9.30, 5.30, 0.55, 0.20, size=9, color=WHITE, align=PP_ALIGN.RIGHT)
 
 def add_narrative(slide, n, y0):
     """Left narrative column: headline / rule / spoken / bullets / close bar"""
@@ -1677,11 +1679,11 @@ def add_gradient_banner(slide, x, y, w, h):
     prstGeom.addnext(grad_el)
     return shape
 
-def add_section_footer_banner(slide, logo_bytes, chevron_bytes):
+def add_section_footer_banner(slide, chevron_bytes):
     """The section-divider footer treatment from the webinar master, scaled to bmap's
     10x5.625 canvas (webinar master is 13.333x7.5 — same 0.75 scale factor both axes)."""
     add_gradient_banner(slide, 0, 5.149, 10.0, 0.476)
-    add_chevron_mark(slide, -0.065, 5.150, 0.476, chevron_bytes)
+    add_chevron_mark(slide, 0, 5.150, 0.476, chevron_bytes)
     add_text(slide, "Verlocity.ai", 0.566, 5.297, 2.2, 0.189,
              size=7, bold=True, italic=True, color=WHITE, font="Inter")
 
@@ -1941,17 +1943,17 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
     if transparent_logo_bytes:
         add_transparent_logo(slide, 8.34, 0.072, 0.701, transparent_logo_bytes)
     elif logo_bytes:
-        add_logo(slide, 1.2, 0.28, 0.54, logo_bytes)
+        add_logo(slide, 0.7, 0.28, 0.54, logo_bytes)
 
     # Teal rule
-    add_rect(slide, 1.2, 0.96, 8.6, 0.05, TEAL)
+    add_rect(slide, 0.7, 0.96, 8.6, 0.05, TEAL)
 
     # Bank name
-    add_text(slide, d["bankName"], 1.2, 1.1, 8.5, 0.88,
+    add_text(slide, d["bankName"], 0.7, 1.1, 8.6, 0.88,
              size=36, bold=True, color=NAVY, align=PP_ALIGN.LEFT)
-    add_text(slide, "BMAP Market Snapshot", 1.2, 2.04, 8.5, 0.34,
+    add_text(slide, "BMAP Market Snapshot", 0.7, 2.04, 8.6, 0.34,
              size=16, color=NAVY)
-    add_text(slide, d["date"], 1.2, 2.42, 8.5, 0.26, size=11, color=GRAY3)
+    add_text(slide, d["date"], 0.7, 2.42, 8.6, 0.26, size=11, color=GRAY3)
 
     # 4 KPI tiles
     kpis = [
@@ -1962,7 +1964,7 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
     ]
     gap_neg = d["gapNeg"]
     for i, (val, lbl) in enumerate(kpis):
-        kx = 1.2 + i*2.14
+        kx = 0.7 + i*2.14
         add_rect(slide, kx, 2.82, 2.0, 0.88, GRAY1, GRAY2, Pt(0.5))
         c = JUSTIFY if (i==3 and gap_neg) else NAVY
         add_text(slide, val, kx, 2.88, 2.0, 0.48,
@@ -1978,7 +1980,7 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
         (str(d["justify"]), "JUSTIFY",  JUSTIFY, JUSTIFY_L),
     ]
     for i, (val, lbl, c, bg) in enumerate(zones):
-        zx = 1.2 + i*2.14
+        zx = 0.7 + i*2.14
         add_rect(slide, zx, 3.82, 2.0, 0.72, bg, c, Pt(0.8))
         add_text(slide, val, zx, 3.86, 2.0, 0.36, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, zx, 4.22, 2.0, 0.24, size=8,  bold=True, color=c, align=PP_ALIGN.CENTER)
@@ -1986,16 +1988,16 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
     # Confidential line sits just above the new banner
     add_text(slide,
         f"Confidential  ·  Verlocity Princeton Partners Group  ·  {datetime.now().year}",
-        1.2, 4.98, 8.5, 0.2, size=7.5, color=GRAY3, align=PP_ALIGN.CENTER)
+        0.7, 4.98, 8.6, 0.2, size=7.5, color=GRAY3, align=PP_ALIGN.CENTER)
 
     # Section-footer banner — gradient + chevron + Verlocity.ai, replaces the old
     # small bottom-left logo treatment
-    add_section_footer_banner(slide, logo_bytes, chevron_bytes)
+    add_section_footer_banner(slide, chevron_bytes)
 
 
-def build_network(prs, d, narr, logo_bytes, page_num=1):
+def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=None, chevron_bytes=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "MARKET OVERVIEW", logo_bytes)
+    add_chrome(slide, page_num, "MARKET OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
     add_narrative(slide, narr["network"], 0.14)
 
     # 4 KPI tiles right
@@ -2112,9 +2114,9 @@ def build_network(prs, d, narr, logo_bytes, page_num=1):
 
 
 
-def build_branches(prs, d, narr, logo_bytes, page_num=2):
+def build_branches(prs, d, narr, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "PRIORITY MARKETS", logo_bytes)
+    add_chrome(slide, page_num, "PRIORITY MARKETS", logo_bytes, transparent_logo_bytes, chevron_bytes)
     add_narrative(slide, narr["priority"], 0.14)
 
     for i, b in enumerate(d["branchList"][:5]):
@@ -2140,9 +2142,9 @@ def build_branches(prs, d, narr, logo_bytes, page_num=2):
                  size=7, bold=True, color=zc, align=PP_ALIGN.CENTER)
 
 
-def build_financial(prs, d, narr, logo_bytes, page_num=3):
+def build_financial(prs, d, narr, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "FINANCIAL HEALTH", logo_bytes)
+    add_chrome(slide, page_num, "FINANCIAL HEALTH", logo_bytes, transparent_logo_bytes, chevron_bytes)
     add_narrative(slide, narr["financial"], 0.14)
 
     # Column headers
@@ -2269,9 +2271,9 @@ def build_gap(prs, d, narr, page_num=4):
     add_text(slide, str(page_num), 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("7BBDE9"), align=PP_ALIGN.RIGHT)
 
 
-def build_next_steps(prs, d, narr, logo_bytes, page_num=6):
+def build_next_steps(prs, d, narr, logo_bytes, page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "THE VERLOCITY PLATFORM", logo_bytes)
+    add_chrome(slide, page_num, "THE VERLOCITY PLATFORM", logo_bytes, transparent_logo_bytes, chevron_bytes)
     add_narrative(slide, narr["nextsteps"], 0.14)
 
     # Product labels above cards — all four presented as live capabilities
@@ -2543,9 +2545,9 @@ def build_deck(data, logo_bytes):
     transparent_logo_bytes = fetch_transparent_logo()
     chevron_bytes = fetch_chevron_mark()
     build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
-    build_network(prs, D, narr, logo_bytes, page_num=1)
-    build_branches(prs, D, narr, logo_bytes, page_num=2)
-    build_financial(prs, D, narr, logo_bytes, page_num=3)
+    build_network(prs, D, narr, logo_bytes, page_num=1, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_branches(prs, D, narr, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_financial(prs, D, narr, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_gap(prs, D, narr, page_num=4)
     # Persona slide — before next steps
     personas = data.get("personas")
@@ -2556,7 +2558,7 @@ def build_deck(data, logo_bytes):
         next_page = 6
     else:
         print("  Skipping persona slide — no personas available")
-    build_next_steps(prs, D, narr, logo_bytes, page_num=next_page)
+    build_next_steps(prs, D, narr, logo_bytes, page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
