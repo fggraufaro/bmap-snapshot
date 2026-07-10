@@ -2591,12 +2591,22 @@ def _generate_audience_brief(institution_name, br, data):
         txt = "".join(b.text for b in response.content if hasattr(b, "text") and b.text)
         clean = txt.replace("```json", "").replace("```", "").strip()
         s = clean.find("{")
-        e = clean.rfind("}") + 1
-        if s >= 0 and e > s:
-            brief = json.loads(clean[s:e])
-            if brief.get("paragraph"):
-                print(f"  ✓ Generated audience brief for {institution_name}")
-                return brief
+        if s >= 0:
+            # Parse only the FIRST valid JSON object and ignore anything after
+            # it. The previous approach (slicing to the LAST '}' in the whole
+            # response) assumed there was exactly one JSON blob — it broke
+            # here because the model echoed/duplicated the JSON object, so
+            # the last '}' belonged to a second copy, and the slice between
+            # them concatenated both into a string with "extra data" after
+            # the first complete object. raw_decode stops at the first valid
+            # object regardless of what follows.
+            try:
+                brief, _end = json.JSONDecoder().raw_decode(clean[s:])
+                if brief.get("paragraph"):
+                    print(f"  ✓ Generated audience brief for {institution_name}")
+                    return brief
+            except json.JSONDecodeError:
+                pass
         # Diagnostic detail so an empty/malformed response is never a dead end
         # again — block types and stop_reason tell you WHY txt came back empty
         # (e.g. stop_reason="max_tokens" with only a thinking block present).
