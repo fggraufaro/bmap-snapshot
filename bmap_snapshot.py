@@ -2518,7 +2518,7 @@ def _generate_audience_brief(institution_name, br, data):
     branch_ctx = "\n".join(f"- {branch_line(b)}" for b in target_br)
     context = f"Priority markets for {institution_name}:\n{branch_ctx}"
 
-    fallback = _audience_brief_fallback(institution_name, target_br)
+    fallback = _audience_brief_fallback(institution_name, target_br, reason="no_key")
 
     if not ANTH_KEY:
         print("  ⚠  No ANTHROPIC_API_KEY — using data-only fallback audience brief")
@@ -2585,20 +2585,24 @@ def _generate_audience_brief(institution_name, br, data):
                 print(f"  ✓ Generated audience brief for {institution_name}")
                 return brief
         print(f"  Could not parse audience brief JSON for {institution_name}. Response: {txt[:200]}")
-        return fallback
+        return _audience_brief_fallback(institution_name, target_br, reason="parse_failed")
     except Exception as e:
         print(f"  ⚠️⚠️⚠️  Audience brief generation FAILED for {institution_name}: {e}. "
               f"Using data-only fallback — slide will show real numbers but no AI narrative.")
-        return fallback
+        return _audience_brief_fallback(institution_name, target_br, reason=f"api_error: {e}")
 
 
-def _audience_brief_fallback(institution_name, target_br):
+def _audience_brief_fallback(institution_name, target_br, reason="unknown"):
     """
     Data-only fallback when Claude is unavailable or fails — deliberately does NOT
     pretend to be an AI-generated insight. Previously this silently fell back to a
     hardcoded generic persona template that was indistinguishable from real output;
     that's exactly what caused the "always generic" bug. This version is honest
     about being a fallback and only states numbers actually in the data.
+
+    'reason' makes the slide itself diagnostic — previously all three failure paths
+    (no key / API error / bad JSON) produced identical text, so there was no way to
+    tell which one happened without pulling Railway logs.
     """
     def sf(key):
         vals = [float(v) for b in target_br if (v := b.get(key)) not in (None, "")]
@@ -2609,9 +2613,18 @@ def _audience_brief_fallback(institution_name, target_br):
     avg_zhvi_yoy = sf("zhvi_yoy_pct")
     n = len(target_br)
 
+    if reason == "no_key":
+        reason_text = "the ANTHROPIC_API_KEY environment variable is not set for this service"
+    elif reason == "parse_failed":
+        reason_text = "Claude responded but the reply wasn't valid JSON (check Railway logs for the raw response)"
+    elif reason.startswith("api_error:"):
+        reason_text = f"the Claude API call failed ({reason[len('api_error: '):][:120]})"
+    else:
+        reason_text = "of an unknown error — check Railway logs"
+
     paragraph = (
-        f"AI-generated audience narrative unavailable for this run — check the "
-        f"ANTHROPIC_API_KEY configuration. What we can show from the data directly: "
+        f"AI-generated audience narrative unavailable for this run because {reason_text}. "
+        f"What we can show from the data directly: "
         f"{n} priority branch{'es' if n != 1 else ''}"
         f"{f', averaging ${avg_income/1000:.0f}k household income' if avg_income else ''}"
         f"{f' and ${avg_zhvi/1000:.0f}k home values' if avg_zhvi else ''}"
@@ -3394,10 +3407,11 @@ def build_gap(prs, d, narr, page_num=4):
 
 def build_next_steps(prs, d, narr, logo_bytes, page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Closing slide — the growth flywheel (Foundation/Activation/Momentum, ROI
-    center). The wheel graphic is generic and identical across every bank —
-    it describes Verlocity's platform architecture, not this bank's data.
-    Only the headline, subtitle, and closing line are personalized.
+    Closing slide — flywheel on the left, three stage cards on the right
+    (Foundation/Activation/Momentum), styled like the deck's other right-
+    column capability cards. The wheel graphic and the three descriptions
+    are generic and identical across every bank; only the headline,
+    subtitle, and closing line are personalized.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
@@ -3406,27 +3420,64 @@ def build_next_steps(prs, d, narr, logo_bytes, page_num=6, transparent_logo_byte
 
     # Headline block — same pattern as the rest of the deck
     add_text(slide, "A System Built to Compound",
-             0.7, 0.30, 6.9, 0.55, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.7, 0.90, 8.6, 0.04, TEAL)
+             0.7, 0.30, 8.6, 0.50, size=22, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
     add_text(slide, f"How BMAP, AudienceFinder, and MediaPredict work together for {bank_name}",
-             0.7, 0.98, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
+             0.7, 0.94, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
 
-    # Flywheel graphic — centered, generic across all banks
+    # Flywheel graphic — left column, generic across all banks
     flywheel_bytes = fetch_flywheel()
     if flywheel_bytes:
-        fw_h = 3.10
-        fw_w = fw_h * FLYWHEEL_ASPECT
-        fw_x = (10.0 - fw_w) / 2
+        fw_w = 3.55
+        fw_h = fw_w / FLYWHEEL_ASPECT
+        fw_x = 0.7 + (5.3 - fw_w) / 2
         fw_y = 1.34
         slide.shapes.add_picture(io.BytesIO(flywheel_bytes), Inches(fw_x), Inches(fw_y),
                                   Inches(fw_w), Inches(fw_h))
 
-    # Closing line — an offer, not a pitch. Personalized with the bank's name only.
-    add_text(slide,
-             f"We'd welcome the chance to walk through what this could look like for "
-             f"{bank_name} — happy to bring a working session to your team.",
-             0.9, 4.66, 8.2, 0.40, size=10, italic=True, color=NAVY,
+    # Closing line — sits in the left column below the wheel. Short by design;
+    # there's only a narrow strip of clearance left above the banner here.
+    add_text(slide, f"Happy to walk through what this looks like for {bank_name}.",
+             0.7, fw_y + fw_h + 0.06, 5.3, 0.22, size=9, italic=True, color=NAVY,
              align=PP_ALIGN.CENTER, shrink_to_fit=True)
+
+    # Three stage cards — right column, same visual language as the other
+    # capability cards elsewhere in the deck (numbered badge, colored pill,
+    # title, body), but explaining the wheel's three outer rings instead of
+    # the four platform modules.
+    stages = [
+        ("FOUNDATION", rgb("478F6B"), "Market & Brand Truth",
+         "BMAP scores every branch to separate real growth from risk; Brand Reality "
+         "checks that read against market perception. The ground truth everything "
+         "else builds on."),
+        ("ACTIVATION", rgb("02A7C2"), "Forecasted, Not Just Targeted",
+         "AudienceFinder builds campaigns from BMAP's branch scoring. MediaPredict "
+         "forecasts the return before it runs, then tracks against that forecast — "
+         "accountability built in."),
+        ("MOMENTUM", rgb("083D5F"), "Compounding the Win",
+         "CRM & Engagement nurtures the relationship; Retention & Deepening grows "
+         "wallet share. What Momentum produces feeds the next cycle of Foundation — "
+         "a wheel, not a funnel."),
+    ]
+    card_x, card_w = 6.22, 3.6
+    card_h, gap = 1.14, 0.12
+    for i, (label, color, title, body) in enumerate(stages):
+        cy = 1.34 + i * (card_h + gap)
+        add_rect(slide, card_x, cy, card_w, card_h, GRAY1, GRAY2, Pt(0.4))
+        add_rect(slide, card_x, cy, 0.06, card_h, color)
+        add_rect(slide, card_x + 0.12, cy + 0.14, 0.36, 0.34, color)
+        badge_tb = add_text(slide, str(i+1).zfill(2), card_x + 0.12, cy + 0.145, 0.36, 0.34,
+                 size=8.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        badge_tb.text_frame.margin_left = 0
+        badge_tb.text_frame.margin_right = 0
+        badge_tb.text_frame.word_wrap = False
+        add_rect(slide, card_x + 0.54, cy + 0.15, 1.15, 0.18, color)
+        add_text(slide, label, card_x + 0.54, cy + 0.15, 1.15, 0.18,
+                 size=6.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, title, card_x + 0.54, cy + 0.35, card_w - 0.66, 0.22,
+                 size=10, bold=True, color=NAVY)
+        add_text(slide, body, card_x + 0.54, cy + 0.57, card_w - 0.66, card_h - 0.63,
+                 size=7.5, color=GRAY3, shrink_to_fit=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3493,10 +3544,6 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
     add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
     add_text(slide, f"First-level audience read across priority branches · {bank_name}",
              0.7, 0.87, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
-
-    # AudienceFinder label — sits below the logo, not competing with the headline
-    add_text(slide, "POWERED BY AUDIENCEFINDER", 6.9, 0.40, 2.6, 0.18,
-             size=7, bold=True, color=TEAL, align=PP_ALIGN.RIGHT)
 
     brief = brief or {}
     paragraph  = brief.get("paragraph", "")
