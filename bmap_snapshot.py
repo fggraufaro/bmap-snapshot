@@ -2491,13 +2491,18 @@ def fetch_or_generate_personas(ik, institution_name, br, data):
 
 def _generate_audience_brief(institution_name, br, data):
     """Single first-level Claude call — mirrors the Hub's agRenderPersona() prompt."""
-    rows = data.get("rows", [])
-    target_br = [b for b in rows if b.get("opportunity_zone") in ("Invest", "Analyze")
+    # NOTE: this previously read data.get("rows", []) instead of the br param —
+    # "rows" is the bank-level summary row (just namefull/metro), not branch-level
+    # data, so every branch came back with income/home-value/population all
+    # blank. That's why Claude's response literally said the dataset had no
+    # branch names or demographics — it was telling the truth about what it
+    # was given. Fixed to use the actual branch-level list.
+    target_br = [b for b in br if b.get("opportunity_zone") in ("Invest", "Analyze")
                  and float(b.get("latest_dep") or 0) >= 5e6]
     if not target_br:
-        target_br = [b for b in rows if float(b.get("latest_dep") or 0) >= 5e6]
+        target_br = [b for b in br if float(b.get("latest_dep") or 0) >= 5e6]
     if not target_br:
-        target_br = rows
+        target_br = br
 
     def branch_line(b):
         inc = b.get("household_income")
@@ -2571,7 +2576,7 @@ def _generate_audience_brief(institution_name, br, data):
     try:
         response = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=900,
+            max_tokens=1200,
             system=system,
             messages=[{"role": "user", "content": context}]
         )
@@ -2895,7 +2900,8 @@ def fetch_bank_data(ik):
     print(f"  Fetching branch details...")
     br = supabase("branch_opportunity_base",
         f"inst_key=eq.{ik}&select=uninumbr,namebr,citybr,stalpbr,latest_dep,"
-        "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,priority_tier,campaign"
+        "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,priority_tier,campaign,"
+        "household_income,yoy_income_growth,zhvi,zhvi_yoy_pct,total_population,yoy_pop_growth"
         "&order=opportunity_score.desc&limit=50")
 
     print(f"  Fetching network target...")
