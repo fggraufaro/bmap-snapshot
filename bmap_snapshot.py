@@ -2576,7 +2576,15 @@ def _generate_audience_brief(institution_name, br, data):
     try:
         response = client.messages.create(
             model="claude-sonnet-5",
-            max_tokens=1200,
+            max_tokens=2000,
+            # Sonnet 5 has adaptive thinking ON BY DEFAULT, and thinking tokens
+            # count against max_tokens. With a detailed system prompt like this
+            # one, the model can spend its entire budget thinking and hit
+            # stop_reason="max_tokens" before writing any actual output text —
+            # which is exactly what produced the empty "Response: " in the logs.
+            # This is a direct structured-JSON task, not multi-step reasoning,
+            # so thinking isn't needed here — disable it outright.
+            thinking={"type": "disabled"},
             system=system,
             messages=[{"role": "user", "content": context}]
         )
@@ -2589,7 +2597,13 @@ def _generate_audience_brief(institution_name, br, data):
             if brief.get("paragraph"):
                 print(f"  ✓ Generated audience brief for {institution_name}")
                 return brief
-        print(f"  Could not parse audience brief JSON for {institution_name}. Response: {txt[:200]}")
+        # Diagnostic detail so an empty/malformed response is never a dead end
+        # again — block types and stop_reason tell you WHY txt came back empty
+        # (e.g. stop_reason="max_tokens" with only a thinking block present).
+        block_types = [getattr(b, "type", type(b).__name__) for b in response.content]
+        print(f"  Could not parse audience brief JSON for {institution_name}. "
+              f"stop_reason={response.stop_reason}, blocks={block_types}, "
+              f"response text: {txt[:200]!r}")
         return _audience_brief_fallback(institution_name, target_br, reason="parse_failed")
     except Exception as e:
         print(f"  ⚠️⚠️⚠️  Audience brief generation FAILED for {institution_name}: {e}. "
