@@ -2489,6 +2489,43 @@ def fetch_or_generate_personas(ik, institution_name, br, data):
     return _generate_audience_brief(institution_name, br, data)
 
 
+def _enforce_brief_char_limits(brief):
+    """
+    Hard safety net on top of the prompt's length instructions — the model
+    mostly complies but not always exactly, and this slide's boxes are fixed
+    size (not a scrolling Hub page), so any overflow visually collides with
+    the field below it. Mirrors the FIELD_CHAR_LIMITS pattern already used
+    for the narrative headline/spoken/close fields elsewhere in this file.
+    """
+    LIMITS = {
+        "paragraph": 260,
+        "asymmetric": 160,
+    }
+    PERSONA_LIMITS = {
+        "name": 30, "descriptor": 50, "life_stage": 20,
+        "wealth_signal": 30, "primary_need": 28,
+        "switch_driver": 30, "markets": 50,
+    }
+    BULLET_LIMIT = 100
+
+    for field, limit in LIMITS.items():
+        if brief.get(field) and len(brief[field]) > limit:
+            brief[field] = truncate_label(brief[field], limit)
+
+    for field in ("strong", "watch"):
+        brief[field] = [
+            truncate_label(s, BULLET_LIMIT) if len(s) > BULLET_LIMIT else s
+            for s in (brief.get(field) or [])
+        ]
+
+    for p in brief.get("personas", []) or []:
+        for field, limit in PERSONA_LIMITS.items():
+            if p.get(field) and len(p[field]) > limit:
+                p[field] = truncate_label(p[field], limit)
+
+    return brief
+
+
 def _generate_audience_brief(institution_name, br, data):
     """Single first-level Claude call — mirrors the Hub's agRenderPersona() prompt."""
     # NOTE: this previously read data.get("rows", []) instead of the br param —
@@ -2553,21 +2590,30 @@ def _generate_audience_brief(institution_name, br, data):
         "from that cluster's actual income/home-value/growth numbers — a 'primary_need' of "
         "wealth management only follows if the wealth signal actually shows high income and "
         "high home value; don't invent a need the numbers don't support. "
+        "THIS IS A ONE-SLIDE SUMMARY, NOT THE FULL HUB BRIEF — every field below has a HARD "
+        "character ceiling because it renders into a fixed-size box on a PowerPoint slide, not "
+        "a scrolling web page. If a field runs long, it will visually overlap the field below "
+        "it. Write tight and specific — cut qualifying clauses and cite one strongest number "
+        "per claim, not three. Treat every limit below as a hard maximum, not a target to "
+        "approach:\n"
         "Return ONLY a JSON object with keys: paragraph "
-        "(string, 3-4 sentences — the composite audience read across all priority markets: "
-        "who likely lives there, income/home-value tier, growth trajectory), "
-        "personas (array of 1-2 objects, each with: name — 'The [Descriptor] [Type]' e.g. "
-        "'The Equity Accelerator'; descriptor — one-line archetype description; life_stage — "
-        "age range and life stage; wealth_signal — the actual income/home-value figures this "
-        "is grounded in; primary_need — a banking product need that logically follows from "
-        "the wealth signal; switch_driver — what would make them switch or consolidate, also "
-        "grounded in the data; markets — comma-separated actual branch names), "
-        "strong (array of "
-        "3 strings, format 'Signal — what it means for targeting', the clearest audience "
-        "opportunities visible in the data), watch (array of 2-3 strings, format 'Gap or "
-        "limitation — what to validate before activating', honest about what this first-level "
-        "read can't tell you), asymmetric (string, 2-3 sentences — the single most specific, "
-        "actionable targeting angle this data points to, referencing actual branch "
+        "(string, MAX 260 characters, 2 sentences — the composite audience read: who likely "
+        "lives there, income/home-value tier, growth trajectory), "
+        "personas (array of 1-2 objects — each field below has its own hard cap: "
+        "name MAX 30 characters ('The [Descriptor] [Type]', e.g. 'The Equity Accelerator'); "
+        "descriptor MAX 50 characters, one short phrase; "
+        "life_stage MAX 20 characters, e.g. '35-55, established'; "
+        "wealth_signal MAX 30 characters, the core income/home-value figures only, e.g. "
+        "'$53k-$74k, homes +10% YoY'; "
+        "primary_need MAX 28 characters, e.g. 'Home equity / HELOC'; "
+        "switch_driver MAX 30 characters, e.g. 'Faster equity access'; "
+        "markets MAX 50 characters, comma-separated branch names only, no descriptions), "
+        "strong (array of 3 strings, MAX 100 characters each, format 'Signal — implication', "
+        "the clearest audience opportunities visible in the data), "
+        "watch (array of 2 strings, MAX 100 characters each, format 'Gap — what to validate', "
+        "honest about what this first-level read can't tell you), "
+        "asymmetric (string, MAX 160 characters, 1 sentence — the single most specific, "
+        "actionable targeting angle, referencing actual branch "
         "names/markets). No markdown, no preamble, ONLY valid JSON."
     )
 
@@ -2603,6 +2649,7 @@ def _generate_audience_brief(institution_name, br, data):
             try:
                 brief, _end = json.JSONDecoder().raw_decode(clean[s:])
                 if brief.get("paragraph"):
+                    brief = _enforce_brief_char_limits(brief)
                     print(f"  ✓ Generated audience brief for {institution_name}")
                     return brief
             except json.JSONDecodeError:
