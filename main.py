@@ -6,9 +6,15 @@ Receives inst_key from context-generator.html,
 builds the deck, returns the .pptx as a download.
 
 Endpoints:
-  POST /generate        { inst_key, bank_name? }  → .pptx file
-  POST /generate-batch  { banks: [{inst_key, name}] } → .zip file
-  GET  /health          → { status: ok }
+  POST /generate            { inst_key, bank_name? }  → .pptx file
+  POST /generate-batch      { banks: [{inst_key, name}] } → .zip file
+  POST /generate-brief      { inst_key, bank_name? }  → .pdf file
+  GET  /health               → { status: ok }
+
+  -- added by secure_proxy.py (Hub auth + data proxy) --
+  POST /auth/login           { password }             → { token }
+  GET  /api/<table>          Bearer token required     → Supabase rows
+  POST /api/ai/briefing-note Bearer token required     → AI narrative JSON
 """
 
 import io
@@ -22,9 +28,17 @@ from flask_cors import CORS
 
 import bmap_snapshot as bm
 import bmap_board_brief as bb
+from secure_proxy import secure_proxy_bp
 
 app = Flask(__name__)
-CORS(app)  # Allow calls from context-generator on GitHub Pages
+
+# Locked to the Hub's actual origin — previously CORS(app) allowed
+# requests from any website, not just context-generator on GitHub Pages.
+ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "https://fggraufaro.github.io")
+CORS(app, origins=[ALLOWED_ORIGIN])
+
+app.register_blueprint(secure_proxy_bp)
+
 
 # ── Health check — Railway uses this to confirm the app is up ──
 @app.route("/health", methods=["GET"])
