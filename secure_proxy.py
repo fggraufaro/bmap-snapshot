@@ -55,12 +55,16 @@ SESSION_TTL_SECONDS = 12 * 60 * 60  # 12 hours — re-login next day
 # Only these tables/views are reachable through the proxy. Anything
 # else is refused, even with a valid session token. This mirrors
 # exactly what context-generator.html actually queries today.
+# Each maps to the Postgres schema it actually lives in, so we can
+# send the right Accept-Profile header — PostgREST defaults to
+# 'public' when that header is missing, which is why dim_institutions
+# (in 'ref') and the analytics-schema tables need it set explicitly.
 ALLOWED_TABLES = {
-    "dim_institutions",
-    "branch_opportunity_base",
-    "branch_target_competitors",
-    "bank_financial_snapshot_latest",
-    "vw_network_top_targets",
+    "dim_institutions":                 "ref",
+    "branch_opportunity_base":          "analytics",
+    "branch_target_competitors":        "analytics",
+    "bank_financial_snapshot_latest":   "analytics",
+    "vw_network_top_targets":           "public",
 }
 
 # Very small in-memory rate limiter for the login endpoint.
@@ -148,7 +152,8 @@ def proxy_table(table):
     if request.method == "OPTIONS":
         return _cors_headers(jsonify({}))
 
-    if table not in ALLOWED_TABLES:
+    schema = ALLOWED_TABLES.get(table)
+    if schema is None:
         return jsonify({"error": f"table '{table}' is not exposed via the proxy"}), 403
 
     # Forward the querystring as-is (select=, filters, order, limit —
@@ -162,6 +167,7 @@ def proxy_table(table):
             headers={
                 "apikey": SUPA_SERVICE,
                 "Authorization": f"Bearer {SUPA_SERVICE}",
+                "Accept-Profile": schema,
             },
             timeout=20,
         )
