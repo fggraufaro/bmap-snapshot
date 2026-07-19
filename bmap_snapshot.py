@@ -65,7 +65,10 @@ except ImportError:
 # CONFIG — edit these
 # ═══════════════════════════════════════════════════════════════
 SUPA_URL  = "https://tuiiywphoynbmkxpoyps.supabase.co"
-SUPA_KEY  = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR1aWl5d3Bob3luYm1reHBveXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MDg0NTMsImV4cCI6MjA3Mjk4NDQ1M30.8-JAz4WQRE3Fi6uH7xiYNTns92g-nV1A9pbUvSK549M"
+SUPA_KEY  = os.environ.get("SUPABASE_SERVICE_KEY", "")
+if not SUPA_KEY:
+    print("  ⚠  SUPABASE_SERVICE_KEY is not set — Supabase calls will fail with 401.")
+    print("     Set it in Railway → Variables (Settings → API Keys → secret key in Supabase).")
 ANTH_KEY  = os.environ.get("ANTHROPIC_API_KEY", "")  # set env var or paste here
 OUT_DIR   = Path(".")
 
