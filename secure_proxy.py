@@ -54,17 +54,28 @@ SESSION_TTL_SECONDS = 12 * 60 * 60  # 12 hours — re-login next day
 
 # Only these tables/views are reachable through the proxy. Anything
 # else is refused, even with a valid session token. This mirrors
-# exactly what context-generator.html actually queries today.
-# Each maps to the Postgres schema it actually lives in, so we can
-# send the right Accept-Profile header — PostgREST defaults to
-# 'public' when that header is missing, which is why dim_institutions
-# (in 'ref') and the analytics-schema tables need it set explicitly.
+# exactly what context-generator.html's SCHEMA_MAP + api() calls use,
+# verified directly against the live database (not guessed from code
+# fragments — two of these live outside 'public' and got this wrong
+# on the first pass).
 ALLOWED_TABLES = {
     "dim_institutions":                 "ref",
+    "bank_website":                     "ref",
     "branch_opportunity_base":          "analytics",
     "branch_target_competitors":        "analytics",
     "bank_financial_snapshot_latest":   "analytics",
+    "vw_branch_opportunity_cbsa":       "public",
     "vw_network_top_targets":           "public",
+    "vw_prospecting_score":             "public",
+    "uszips":                           "geo",
+}
+
+# Postgres functions the Hub calls via rpc(). All four live in 'public'.
+ALLOWED_RPCS = {
+    "branches_within_radius",
+    "radius_market_summary",
+    "radius_opportunity_extremes",
+    "radius_zip_detail",
 }
 
 # Very small in-memory rate limiter for the login endpoint.
@@ -176,49 +187,29 @@ def proxy_table(table):
         return jsonify({"error": str(e)}), 500
 
 
-@secure_proxy_bp.route("/api/ai/briefing-note", methods=["POST", "OPTIONS"])
+@secure_proxy_bp.route("/api/rpc/<fn_name>", methods=["POST", "OPTIONS"])
 @require_session
-def ai_briefing_note():
-    """Replaces the direct-from-browser call to api.anthropic.com in
-    the 'Tom's Briefing Note' feature. Browser sends the already-built
-    context string; this endpoint holds the actual API key."""
+def proxy_rpc(fn_name):
     if request.method == "OPTIONS":
         return _cors_headers(jsonify({}))
 
+    if fn_name not in ALLOWED_RPCS:
+        return jsonify({"error": f"function '{fn_name}' is not exposed via the proxy"}), 403
+
     body = request.get_json(force=True, silent=True) or {}
-    brief_context = (body.get("context") or "").strip()
-    if not brief_context:
-        return jsonify({"error": "context required"}), 400
+    url = f"{SUPA_URL}/rest/v1/rpc/{fn_name}"
 
     try:
-        resp = requests.post(
-            "https://api.anthropic.com/v1/messages",
+        r = requests.post(
+            url,
             headers={
+                "apikey": SUPA_SERVICE,
+                "Authorization": f"Bearer {SUPA_SERVICE}",
                 "Content-Type": "application/json",
-                "x-api-key": ANTH_KEY,
-                "anthropic-version": "2023-06-01",
             },
-            json={
-                "model": "claude-sonnet-4-6",
-                "max_tokens": 700,
-                "system": (
-                    "You are the BMAP Executive Strategist at Verlocity. Brief Tom "
-                    "before he walks into a meeting. Sharp colleague tone. Return "
-                    "ONLY a JSON object with keys: paragraph (string), strong "
-                    "(array of 3 strings \"Strength — implication\"), pressure "
-                    "(array of 3 strings \"Pressure — our angle\"), asymmetric "
-                    "(string, 2-3 sentences with specific branch name or number "
-                    "that would surprise a banker). No markdown, no explanation, "
-                    "ONLY the JSON."
-                ),
-                "messages": [{"role": "user", "content": brief_context}],
-            },
-            timeout=30,
+            json=body,
+            timeout=20,
         )
-        data = resp.json()
-        txt = next((b["text"] for b in data.get("content", []) if b.get("type") == "text"), "{}")
-        txt = txt.replace("```json", "").replace("```", "").strip()
-        parsed = json.loads(txt)
-        return jsonify(parsed)
+        return jsonify(r.json()), r.status_code
     except Exception as e:
         return jsonify({"error": str(e)}), 500
