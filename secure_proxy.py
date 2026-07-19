@@ -112,6 +112,11 @@ def _verify_token(token: str) -> bool:
 def require_session(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
+        # Preflight requests never carry the Authorization header — let
+        # them through untouched so CORS can succeed, then the browser's
+        # real request (which does carry the token) hits the auth check.
+        if request.method == "OPTIONS":
+            return fn(*args, **kwargs)
         auth = request.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
         if not token or not _verify_token(token):
