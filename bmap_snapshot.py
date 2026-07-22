@@ -2651,13 +2651,42 @@ def _generate_audience_brief(institution_name, br, data):
             # the first complete object. raw_decode stops at the first valid
             # object regardless of what follows.
             try:
-                brief, _end = json.JSONDecoder().raw_decode(clean[s:])
+                # strict=False lets a stray literal control character (e.g. a
+                # raw newline the model left inside a string value instead of
+                # keeping the field on one line) through without failing the
+                # whole parse — this was the most likely single cause of
+                # "Claude responded but the reply wasn't valid JSON" runs,
+                # since the model was otherwise following the format correctly.
+                brief, _end = json.JSONDecoder(strict=False).raw_decode(clean[s:])
                 if brief.get("paragraph"):
                     brief = _enforce_brief_char_limits(brief)
                     print(f"  ✓ Generated audience brief for {institution_name}")
                     return brief
             except json.JSONDecodeError:
-                pass
+                # Second line of defense: ask Claude to repair its own output
+                # into strict JSON, once, rather than immediately falling back
+                # to the no-narrative slide over a formatting slip.
+                try:
+                    repair = client.messages.create(
+                        model="claude-sonnet-5",
+                        max_tokens=2000,
+                        thinking={"type": "disabled"},
+                        system=("The following is meant to be a JSON object but failed to parse. "
+                                "Return ONLY the corrected, strictly valid JSON — same content, "
+                                "fixed formatting. No markdown, no preamble."),
+                        messages=[{"role": "user", "content": clean[s:]}]
+                    )
+                    rtxt = "".join(b.text for b in repair.content if hasattr(b, "text") and b.text)
+                    rclean = rtxt.replace("```json", "").replace("```", "").strip()
+                    rs = rclean.find("{")
+                    if rs >= 0:
+                        brief, _end = json.JSONDecoder(strict=False).raw_decode(rclean[rs:])
+                        if brief.get("paragraph"):
+                            brief = _enforce_brief_char_limits(brief)
+                            print(f"  ✓ Generated audience brief for {institution_name} (after one repair pass)")
+                            return brief
+                except Exception as repair_err:
+                    print(f"  Repair pass also failed for {institution_name}: {repair_err}")
         # Diagnostic detail so an empty/malformed response is never a dead end
         # again — block types and stop_reason tell you WHY txt came back empty
         # (e.g. stop_reason="max_tokens" with only a thinking block present).
@@ -2753,6 +2782,30 @@ def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
     run.font.italic = italic
     run.font.color.rgb = color
     return tb
+
+def _why_vulnerable(c):
+    """Turns the raw signals behind a vulnerability score into a short,
+    specific reason — 'because of what' rather than just the number.
+    Priority order matches the size of each factor's weight in the
+    underlying formula (declining deposits and weak ROA carry the most
+    weight; proximity and credit quality are secondary)."""
+    reasons = []
+    yoy = c.get("target_yoy_pct")
+    roa = c.get("target_roa")
+    noncur = c.get("target_noncurrent_pct")
+    dist = c.get("target_dist_mi")
+    if yoy is not None and float(yoy) < 0:
+        reasons.append(f"deposits down {float(yoy):.1f}% YoY")
+    if roa is not None and float(roa) < 0.5:
+        reasons.append(f"weak ROA ({float(roa):.2f}%)")
+    if noncur is not None and float(noncur) > 2:
+        reasons.append(f"rising noncurrent assets ({float(noncur):.1f}%)")
+    if dist is not None and float(dist) <= 1:
+        reasons.append("directly adjacent, <1 mi away")
+    if not reasons:
+        return "Elevated exposure across several signals, no single dominant factor"
+    return "Why: " + " and ".join(reasons[:2])
+
 
 def truncate_label(text, max_len):
     """Truncate to max_len, breaking on the last word boundary rather than mid-word."""
@@ -2969,12 +3022,15 @@ def _fetch_brokered(ik):
 def fetch_branch_competitors(my_branch_id):
     """Competitors near one specific branch (the 'lead office'), with each
     competitor's own opportunity score and vulnerability score — distinct
-    from vw_network_top_targets, which is a single bank-wide aggregate."""
+    from vw_network_top_targets, which is a single bank-wide aggregate.
+    Pulls the raw signal columns too (not just the final scores) so the
+    deck can explain WHY a competitor is vulnerable, not just state a number."""
     if not my_branch_id:
         return []
     return supabase("branch_target_competitors",
         f"my_branch_id=eq.{my_branch_id}&select=target_namefull,target_namebr,"
-        "target_opp_score,vuln_score,target_dist_mi,target_zone"
+        "target_opp_score,vuln_score,target_dist_mi,target_zone,target_institution_type,"
+        "target_yoy_pct,target_roa,target_noncurrent_pct"
         "&order=target_opp_score.desc&limit=8")
 
 def fetch_bank_data(ik):
@@ -3202,10 +3258,10 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
 
     # 4 zone tiles
     ZONE_BLURBS = {
-        "INVEST":  "High opportunity, strong branch — expand here first",
-        "ANALYZE": "Mixed signals — worth a closer look before committing spend",
-        "DEFEND":  "Losing ground to a nearby competitor — protect share",
-        "JUSTIFY": "Low opportunity today — hold spend accountable to results",
+        "INVEST":  "Move now — pour resources in before a competitor beats you to it",
+        "ANALYZE": "Dig in — validate the signal, then commit spend with confidence",
+        "DEFEND":  "Act fast — shore up share before this competitor takes more of it",
+        "JUSTIFY": "Hold the line — don't spend here without hard evidence first",
     }
     zones = [
         (str(d["invest"]),  "INVEST",   INVEST,  INVEST_L),
@@ -3437,7 +3493,7 @@ def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, pag
              "to losing share, not necessarily the largest ones.",
              6.30, 1.38, 3.0, 0.52, size=7.5, color=GRAY3, shrink_to_fit=True)
 
-    vy = 2.00
+    vy = 1.95
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
         vuln = c.get("vuln_score")
@@ -3446,15 +3502,16 @@ def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, pag
         opp_str = f"{float(opp):.0f}" if opp is not None else "—"
         dist = c.get("target_dist_mi")
         dist_str = f"{float(dist):.1f} mi" if dist is not None else "—"
+        why = _why_vulnerable(c)
 
-        add_rect(slide, 6.30, vy, 3.0, 0.86, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.06, 2.76, 0.30, size=9.5, bold=True,
+        add_rect(slide, 6.30, vy, 3.0, 1.02, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.05, 2.76, 0.26, size=9.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, f"Vulnerability: {vuln_str}   ·   Opp Score: {opp_str}", 6.42, vy + 0.36, 2.76, 0.20,
-                 size=7.5, color=GRAY3)
-        add_text(slide, f"Distance: {dist_str}", 6.42, vy + 0.58, 2.76, 0.20,
-                 size=7.5, color=GRAY3)
-        vy += 0.98
+        add_text(slide, f"Vulnerability: {vuln_str}   ·   Opp Score: {opp_str}   ·   {dist_str}",
+                 6.42, vy + 0.32, 2.76, 0.18, size=7, color=GRAY3)
+        add_text(slide, why, 6.42, vy + 0.52, 2.76, 0.42, size=7, italic=True,
+                 color=NAVY_SOFT, shrink_to_fit=True)
+        vy += 1.12
 
     return slide
 
@@ -3534,27 +3591,22 @@ def build_financial(prs, d, narr, logo_bytes, page_num=3, transparent_logo_bytes
             size=7.5, bold=True, color=AMBER)
 
 
-def build_gap(prs, d, narr, page_num=4):
-    """Dark slide — no chrome, uses navy background"""
+def build_gap(prs, d, narr, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
+    """White-background slide, matching every other slide in the deck —
+    previously a bespoke full-navy treatment, changed per client feedback
+    that it broke the deck's otherwise-consistent white theme."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-
-    # Dark background
-    bg = slide.background; fill = bg.fill; fill.solid(); fill.fore_color.rgb = NAVY
-
-    # Logo top-right — white knockout variant since this slide is full navy
-    logo_white_bytes = fetch_logo_white()
-    if logo_white_bytes:
-        add_transparent_logo(slide, 8.70, 0.08, 0.30, logo_white_bytes)
+    add_chrome(slide, page_num, "DEPOSIT GAP", logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     # Giant gap number
     add_text(slide, d["gap"], 0.28, 0.16, 5.2, 1.86,
              size=96, bold=True, color=TEAL, align=PP_ALIGN.LEFT)
     add_text(slide, "GAP VS PEER AVERAGE", 0.28, 2.08, 5.2, 0.34,
-             size=13, bold=True, color=WHITE)
+             size=13, bold=True, color=NAVY)
     add_text(slide, d["gapSubtitle"], 0.28, 2.50, 5.2, 0.26,
-             size=9.5, italic=True, color=rgb("3884B7"))
+             size=9.5, italic=True, color=NAVY_SOFT)
 
-    # 3 stat tiles
+    # 3 stat tiles — same light-card style used on every other slide
     tile_c = rgb("F87171") if d["gapNeg"] else TEAL
     tiles = [
         (f"{d['bankYoY']}%", f"{d['bankName'].upper()} YoY", tile_c),
@@ -3563,26 +3615,21 @@ def build_gap(prs, d, narr, page_num=4):
     ]
     for i, (val, lbl, c) in enumerate(tiles):
         tx = 0.28 + i*1.78
-        add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("043E63"), rgb("0C548C"), Pt(0.5))
+        add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
         add_rect(slide, tx, 2.96, 1.62, 0.06, c)
-        # First tile carries the full bank name — give it a smaller font
-        # and 2-line-capable box instead of truncating mid-name.
         lbl_size = 6 if i == 0 and len(d["bankName"]) > 14 else 7
         add_text(slide, val, tx, 3.02, 1.62, 0.52, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, tx+0.04, 3.58, 1.54, 0.42, size=lbl_size, bold=True,
-                 color=rgb("2874A7"), align=PP_ALIGN.CENTER)
+                 color=GRAY3, align=PP_ALIGN.CENTER)
 
     # ── NATIVE VECTOR BAR CHART ──────────────────────────────────
-    # Full bank name — category axis wraps naturally within column width,
-    # no truncation needed (truncating to ~20 chars was cutting names like
-    # "Citizens Independent Bank" mid-name even at a word boundary).
     chart_data = ChartData()
     chart_data.categories = [d["bankName"], "Peer Avg"]
     chart_data.add_series("Deposit YoY %", (float(d["bankYoY"]), float(d["peerYoY"])))
 
     chart_frame = slide.shapes.add_chart(
         XL_CHART_TYPE.COLUMN_CLUSTERED,
-        Inches(5.4), Inches(0.45), Inches(4.4), Inches(4.70),
+        Inches(5.4), Inches(0.90), Inches(4.4), Inches(4.20),
         chart_data
     )
     chart = chart_frame.chart
@@ -3597,21 +3644,15 @@ def build_gap(prs, d, narr, page_num=4):
         point.format.fill.fore_color.rgb = bar_colors[i]
         point.format.line.fill.background()
 
-    # Style axes
+    # Style axes — dark text on white now instead of white-on-navy
     va = chart.value_axis
     va.tick_labels.font.color.rgb = GRAY3
     va.tick_labels.font.size = Pt(11)
 
     ca = chart.category_axis
-    ca.tick_labels.font.color.rgb = WHITE
+    ca.tick_labels.font.color.rgb = NAVY
     ca.tick_labels.font.size = Pt(13) if len(d["bankName"]) <= 16 else Pt(10)
     ca.tick_labels.font.bold = True
-
-    # Footer
-    add_text(slide,
-        f"Verlocity Princeton Partners Group   ·   BMAP Intelligence   ·   {d['bankName']}",
-        0.28, 5.30, 9.5, 0.22, size=7.5, color=rgb("7BBDE9"))
-    add_text(slide, str(page_num), 9.50, 5.30, 0.38, 0.22, size=9, color=rgb("7BBDE9"), align=PP_ALIGN.RIGHT)
 
 
 def build_next_steps(prs, d, narr, logo_bytes, page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
@@ -3952,7 +3993,7 @@ def build_deck(data, logo_bytes):
 
     build_branches(prs, D, narr, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_financial(prs, D, narr, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_gap(prs, D, narr, page_num=6)
+    build_gap(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     # Audience brief slide — before next steps
     brief = data.get("personas")
     next_page = 7
