@@ -2468,10 +2468,37 @@ def supabase(table, params):
     return r.json()
 
 
+def supabase_insert(table, payload):
+    """POST helper, mirrors supabase()'s GET pattern above — used to cache
+    generated personas so re-running the same bank doesn't produce a
+    different narrative each time."""
+    url = f"{SUPA_URL}/rest/v1/{table}"
+    schema = SCHEMA_MAP.get(table, 'public')
+    headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}",
+               "Content-Type": "application/json", "Prefer": "return=minimal"}
+    if schema != 'public':
+        headers['Content-Profile'] = schema
+    r = requests.post(url, headers=headers, json=payload, timeout=30)
+    r.raise_for_status()
+
+
 
 # ═══════════════════════════════════════════════════════════════
 # PERSONA GENERATION
 # ═══════════════════════════════════════════════════════════════
+
+def _branch_fingerprint(br):
+    """Deterministic hash of the branch set actually driving the persona
+    read (uninumbr + zone + opportunity_score, sorted for stability) — if
+    this hasn't changed since the last run, the cached brief is still
+    accurate and there's no reason to call Claude again."""
+    import hashlib
+    parts = sorted(
+        f"{b.get('uninumbr')}:{b.get('opportunity_zone')}:{b.get('opportunity_score')}"
+        for b in br
+    )
+    return hashlib.md5("|".join(parts).encode()).hexdigest()
+
 
 def fetch_or_generate_personas(ik, institution_name, br, data):
     """
@@ -2481,15 +2508,40 @@ def fetch_or_generate_personas(ik, institution_name, br, data):
     (household income, home value/ZHVI trend, population trend, opportunity
     zone/score), no invented behavioral or occupation claims, no web search.
 
-    This is intentionally NOT the same code as the Hub (different runtime,
-    different call pattern) but it uses the same restrictions, the same
-    input signals, and the same output shape (paragraph / strong / watch /
-    targeting angle) so the two artifacts can't tell contradictory stories
-    about the same branches. No Supabase caching — this is a single cheap
-    call (no web search), so it's regenerated fresh every time, same as the
-    Hub does.
+    Cached in persona_runs, keyed by inst_key + a fingerprint of the branch
+    set. Re-running the same bank with unchanged underlying data returns the
+    SAME brief instead of a freshly-generated (and differently-worded) one —
+    same fix pattern as Rate Radar's same-day consistency cache. Only calls
+    Claude again if the fingerprint has actually changed (branches added/
+    removed, or opportunity scores refreshed).
     """
-    return _generate_audience_brief(institution_name, br, data)
+    fingerprint = _branch_fingerprint(br)
+    try:
+        cached = supabase("persona_runs",
+            f"inst_key=eq.{ik}&branch_fingerprint=eq.{fingerprint}"
+            "&select=brief_json&order=run_date.desc&limit=1")
+        if cached and cached[0].get("brief_json"):
+            print(f"  ✓ Using cached audience brief for {institution_name} (unchanged since last run)")
+            return cached[0]["brief_json"]
+    except Exception as e:
+        print(f"  Cache lookup failed for {institution_name}, generating fresh: {e}")
+
+    brief = _generate_audience_brief(institution_name, br, data)
+
+    try:
+        supabase_insert("persona_runs", {
+            "inst_key": ik,
+            "institution_name": institution_name,
+            "run_date": datetime.now().isoformat(),
+            "branch_fingerprint": fingerprint,
+            "branch_count": len(br),
+            "brief_json": brief,
+            "status": "auto_generated",
+        })
+    except Exception as e:
+        print(f"  Could not cache audience brief for {institution_name} (non-fatal): {e}")
+
+    return brief
 
 
 def _enforce_brief_char_limits(brief):
@@ -2501,15 +2553,15 @@ def _enforce_brief_char_limits(brief):
     for the narrative headline/spoken/close fields elsewhere in this file.
     """
     LIMITS = {
-        "paragraph": 260,
-        "asymmetric": 160,
+        "paragraph": 320,
+        "asymmetric": 200,
     }
     PERSONA_LIMITS = {
-        "name": 30, "descriptor": 50, "life_stage": 20,
-        "wealth_signal": 30, "primary_need": 28,
-        "switch_driver": 30, "markets": 50,
+        "name": 30, "descriptor": 55, "life_stage": 22,
+        "wealth_signal": 42, "primary_need": 30,
+        "switch_driver": 32, "markets": 60,
     }
-    BULLET_LIMIT = 130
+    BULLET_LIMIT = 155
 
     for field, limit in LIMITS.items():
         if brief.get(field) and len(brief[field]) > limit:
@@ -2598,25 +2650,27 @@ def _generate_audience_brief(institution_name, br, data):
         "a scrolling web page. If a field runs long, it will visually overlap the field below "
         "it. Write tight and specific — cut qualifying clauses and cite one strongest number "
         "per claim, not three. Treat every limit below as a hard maximum, not a target to "
-        "approach:\n"
+        "approach — after drafting each field, COUNT its characters and shorten it if it's "
+        "even slightly over. Every field must end on a complete clause, never mid-word or "
+        "mid-thought — a short complete sentence beats a longer cut-off one every time:\n"
         "Return ONLY a JSON object with keys: paragraph "
-        "(string, MAX 260 characters, 2 sentences — the composite audience read: who likely "
+        "(string, MAX 300 characters, 2 sentences — the composite audience read: who likely "
         "lives there, income/home-value tier, growth trajectory), "
         "personas (array of 1-2 objects — each field below has its own hard cap: "
         "name MAX 30 characters ('The [Descriptor] [Type]', e.g. 'The Equity Accelerator'); "
-        "descriptor MAX 50 characters, one short phrase; "
-        "life_stage MAX 20 characters, e.g. '35-55, established'; "
-        "wealth_signal MAX 30 characters, the core income/home-value figures only, e.g. "
-        "'$53k-$74k, homes +10% YoY'; "
-        "primary_need MAX 28 characters, e.g. 'Home equity / HELOC'; "
-        "switch_driver MAX 30 characters, e.g. 'Faster equity access'; "
-        "markets MAX 50 characters, comma-separated branch names only, no descriptions), "
-        "strong (array of 3 strings, MAX 130 characters each, format 'Signal — implication', "
+        "descriptor MAX 55 characters, one short phrase; "
+        "life_stage MAX 22 characters, e.g. '35-55, established'; "
+        "wealth_signal MAX 40 characters, the core income/home-value figures only, e.g. "
+        "'$53k-$74k, homes +7-10% YoY'; "
+        "primary_need MAX 30 characters, e.g. 'Home equity / HELOC'; "
+        "switch_driver MAX 32 characters, e.g. 'Faster equity access'; "
+        "markets MAX 55 characters, comma-separated branch names only, no descriptions), "
+        "strong (array of 3 strings, MAX 150 characters each, format 'Signal — implication', "
         "the clearest audience opportunities visible in the data), "
-        "watch (array of 2 strings, MAX 130 characters each, format 'Gap — what to validate', "
+        "watch (array of 2 strings, MAX 150 characters each, format 'Gap — what to validate', "
         "honest about what this first-level read can't tell you — end on a complete clause, "
         "never a dangling word), "
-        "asymmetric (string, MAX 160 characters, 1 sentence — the single most specific, "
+        "asymmetric (string, MAX 190 characters, 1 sentence — the single most specific, "
         "actionable targeting angle, referencing actual branch "
         "names/markets). No markdown, no preamble, ONLY valid JSON."
     )
@@ -3024,14 +3078,62 @@ def fetch_branch_competitors(my_branch_id):
     competitor's own opportunity score and vulnerability score — distinct
     from vw_network_top_targets, which is a single bank-wide aggregate.
     Pulls the raw signal columns too (not just the final scores) so the
-    deck can explain WHY a competitor is vulnerable, not just state a number."""
+    deck can explain WHY a competitor is vulnerable, not just state a number.
+    Also pulls target_inst_key so callers can filter to genuine peer-sized
+    institutions — proximity alone can surface a branch of a money-center
+    bank (e.g. Santander) next to a small community bank, which undercuts
+    credibility on first contact even when the branch-level numbers qualify."""
     if not my_branch_id:
         return []
     return supabase("branch_target_competitors",
         f"my_branch_id=eq.{my_branch_id}&select=target_namefull,target_namebr,"
         "target_opp_score,vuln_score,target_dist_mi,target_zone,target_institution_type,"
-        "target_yoy_pct,target_roa,target_noncurrent_pct"
+        "target_yoy_pct,target_roa,target_noncurrent_pct,target_inst_key"
         "&order=target_opp_score.desc&limit=8")
+
+
+def filter_to_peer_institutions(competitors, client_inst_key, min_ratio=0.1, max_ratio=8.0):
+    """Keeps only competitors whose total institution size (not just their
+    one nearby branch's deposits) is within a believable peer range of the
+    client bank. A single branch's local deposits can look comparable even
+    when the parent institution is a national/money-center bank — this
+    filters on the actual institution, which is what a first-time viewer
+    is really judging when they see a name on this slide.
+
+    Uses summed branch-level FDIC deposits (institution_total_deposits RPC)
+    rather than bank_financial_snapshot_latest.total_assets — that column
+    is NULL for exactly the institutions this filter most needs to catch
+    (e.g. Santander Bank, N.A. has no total_assets row in that table, but
+    its 400 branches' summed deposits — $79.5B vs. a $5.5B client — make
+    the size mismatch obvious once measured the right way).
+
+    If a competitor's total deposits can't be found, it's kept rather than
+    dropped — missing data is far more common for small/thinly-covered
+    institutions than for the mega-banks this filter is meant to catch."""
+    if not competitors:
+        return competitors
+
+    keys = sorted({client_inst_key} | {c.get("target_inst_key") for c in competitors if c.get("target_inst_key")})
+    try:
+        import urllib.parse
+        keys_arr = urllib.parse.quote("{" + ",".join(keys) + "}", safe="")
+        rows = supabase("rpc/institution_total_deposits", f"keys={keys_arr}")
+    except Exception as e:
+        print(f"  Could not fetch institution deposit totals for peer filtering: {e}")
+        return competitors
+
+    deposits_by_key = {r["inst_key"]: float(r["total_deposits"]) for r in rows if r.get("total_deposits")}
+    client_deposits = deposits_by_key.get(client_inst_key)
+    if not client_deposits:
+        return competitors  # can't establish a peer band — show everything rather than guess
+
+    lo, hi = client_deposits * min_ratio, client_deposits * max_ratio
+    kept = []
+    for c in competitors:
+        deposits = deposits_by_key.get(c.get("target_inst_key"))
+        if deposits is None or lo <= deposits <= hi:
+            kept.append(c)
+    return kept
 
 def fetch_bank_data(ik):
     print(f"  Fetching branch data...")
@@ -3430,7 +3532,7 @@ def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, pag
 
     add_text(slide, "Competitive Overview", 0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
-    add_text(slide, f"Competitors within range of {lead_label}", 0.7, 0.87, 8.4, 0.20,
+    add_text(slide, f"Peer-sized competitors within range of {lead_label}", 0.7, 0.87, 8.4, 0.20,
              size=9, italic=True, color=NAVY_SOFT)
 
     if not competitors:
@@ -3988,6 +4090,7 @@ def build_deck(data, logo_bytes):
 
     print(f"  Fetching competitor data for lead office...")
     competitors = fetch_branch_competitors(lead_branch.get("uninumbr")) if lead_branch else []
+    competitors = filter_to_peer_institutions(competitors, ik)
     build_competitive_overview(prs, D, lead_branch, competitors, logo_bytes, page_num=3,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
