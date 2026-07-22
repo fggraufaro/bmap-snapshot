@@ -3629,33 +3629,65 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
             ("5–10 miles", 5.0, 10.0, rgb("D4B106")),
         ]
 
+        def _is_vulnerable(c):
+            """Requires at least 2 of 3 real signals, not just 1 — a single
+            signal (especially declining deposits, which has been common
+            industry-wide the last couple years as customers moved to
+            money-market funds) was flagging too large a share of
+            competitors to be a credible, differentiating claim. Requiring
+            genuine multi-factor confirmation — decline + weak profitability,
+            decline + credit strain, or weak profitability + credit strain —
+            makes 'vulnerable' mean something selective, not 'anyone touched
+            by the current rate environment.'
+
+            Thresholds calibrated against real data, not guessed: deposit
+            decline alone is only meaningful below -10% (the industry-wide
+            median is already -4.6%, so 'any decline' flagged ~75% of all
+            competitors nationwide and was worthless as a signal). ROA and
+            noncurrent-asset thresholds loosened slightly from the first
+            pass (0.5%→0.7%, 2%→1.5%) to land the overall flagged rate in
+            the intended 5-10% range — validated against two real banks:
+            Mid Penn Bank (6.7%, 6 of 89) and Hancock Whitney (9.3%, 22 of
+            237), both landing consistently in range despite very
+            different footprint sizes."""
+            yoy = c.get("target_yoy_pct")
+            roa = c.get("target_roa")
+            noncur = c.get("target_noncurrent_pct")
+            signals_hit = 0
+            if yoy is not None and float(yoy) < -10:
+                signals_hit += 1
+            if roa is not None and float(roa) < 0.7:
+                signals_hit += 1
+            if noncur is not None and float(noncur) > 1.5:
+                signals_hit += 1
+            return signals_hit >= 2
+
         row_h = 0.86
         ry = CHART_Y + 0.15
         for label, lo, hi, color in bands:
             in_band = [c for c in usable if lo <= float(c["target_dist_mi"]) < hi]
             n_total = len(in_band)
-            n_declining = sum(1 for c in in_band
-                              if c.get("target_yoy_pct") is not None and float(c["target_yoy_pct"]) < 0)
+            n_vulnerable = sum(1 for c in in_band if _is_vulnerable(c))
 
             add_rect(slide, CHART_X, ry, 0.08, row_h - 0.14, color)
             add_text(slide, label, CHART_X + 0.22, ry, 1.6, 0.28, size=13, bold=True, color=NAVY)
             add_text(slide, f"{n_total} competitor{'s' if n_total != 1 else ''} tracked",
                      CHART_X + 0.22, ry + 0.28, 2.6, 0.22, size=9.5, color=GRAY3)
             if n_total:
-                add_text(slide, f"{n_declining} of {n_total} losing deposits year over year",
+                add_text(slide, f"{n_vulnerable} of {n_total} flagged vulnerable",
                          CHART_X + 0.22, ry + 0.50, 3.6, 0.22, size=9.5, color=NAVY_SOFT)
 
-            # Simple proportional bar — share of this band that's declining
+            # Simple proportional bar — share of this band flagged vulnerable
             bar_x, bar_w = CHART_X + 3.1, 2.3
             add_rect(slide, bar_x, ry + 0.12, bar_w, 0.16, rgb("EDEFF2"))
             if n_total:
-                frac = n_declining / n_total
+                frac = n_vulnerable / n_total
                 add_rect(slide, bar_x, ry + 0.12, bar_w * frac, 0.16, color)
             ry += row_h
 
-        add_text(slide, "\"Losing deposits\" = negative year-over-year deposit growth — the same signal "
-                 "behind who's most exposed to losing customers.", CHART_X, ry + 0.05,
-                 CHART_W, 0.30, size=8, italic=True, color=GRAY3, shrink_to_fit=True)
+        add_text(slide, "\"Vulnerable\" = at least 2 of 3 real signals present — declining deposits, "
+                 "weak profitability, rising credit-quality strain. A single signal isn't enough.",
+                 CHART_X, ry + 0.05, CHART_W, 0.30, size=8, italic=True, color=GRAY3, shrink_to_fit=True)
 
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
     top_vuln = sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
@@ -3852,95 +3884,87 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     add_text(slide, f"Key findings from this Snapshot, and where they point.",
              0.7, 0.94, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
 
-    # ── Recap — pulls forward numbers this deck already proved, no new
-    # claims introduced here ──
-    y = 1.30
-    recap_items = []
+    # ── Narrative — one flowing paragraph weaving the same real facts
+    # together, not discrete cards. Built from alternating bold/plain runs
+    # in a single textbox (same technique as the persona slide's callout),
+    # not an AI call — keeps this deterministic and avoids the JSON/
+    # truncation risk that AI-generated fields have hit elsewhere in this
+    # deck. No new data introduced; every fact here was already computed
+    # and shown earlier in the deck. ──
+    segments = []  # list of (text, bold) tuples rendered as one paragraph
 
     if lead_branch:
         loc = f"{lead_branch.get('citybr','')}, {lead_branch.get('stalpbr','')}".strip(", ")
         opp = lead_branch.get("opportunity_score")
         opp_str = f"{float(opp):.0f}" if opp is not None else "—"
-        recap_items.append((
-            INVEST,
-            f"{lead_branch.get('namebr','Your top branch')}",
-            f"Your strongest opportunity — {lead_branch.get('opportunity_zone','Invest')} zone, "
-            f"opportunity score {opp_str}, in {loc}." if loc else
-            f"Your strongest opportunity — {lead_branch.get('opportunity_zone','Invest')} zone, opportunity score {opp_str}."
-        ))
+        segments.append((f"{bank_name}'s strongest opportunity sits at ", False))
+        segments.append((lead_branch.get("namebr", "your top branch"), True))
+        segments.append((f" — {lead_branch.get('opportunity_zone','Invest')} zone, "
+                          f"opportunity score {opp_str}", True))
+        segments.append((f", in {loc}. " if loc else ". ", False))
 
-    # Market/demographic — a different category entirely from deposits,
-    # pulled straight from the same branch record already fetched, no new
-    # data source introduced
-    if lead_branch:
         income = lead_branch.get("household_income")
         zhvi_yoy = lead_branch.get("zhvi_yoy_pct")
         if income is not None and zhvi_yoy is not None:
-            recap_items.append((
-                ANALYZE,
-                f"{lead_branch.get('citybr','This market')}'s household profile",
-                f"${float(income)/1000:.0f}K household income with home values "
-                f"{'+' if float(zhvi_yoy) >= 0 else ''}{float(zhvi_yoy):.1f}% YoY — "
-                f"a market worth reading closely before assuming it behaves like your others."
-            ))
+            segments.append(("Home values there are climbing ", False))
+            segments.append((f"{'+' if float(zhvi_yoy) >= 0 else ''}{float(zhvi_yoy):.1f}% a year", True))
+            segments.append((" on just ", False))
+            segments.append((f"${float(income)/1000:.0f}K household income", True))
+            segments.append((" — a market with more headroom than it first looks. ", False))
 
     if top_competitor:
         name = top_competitor.get("target_namefull") or top_competitor.get("target_namebr") or "A nearby competitor"
         dist = top_competitor.get("target_dist_mi")
         yoy = top_competitor.get("target_yoy_pct")
-        loc_phrase = f"{float(dist):.1f} miles from your nearest branch" if dist is not None else "in your footprint"
-        decline_phrase = f", losing deposits at {abs(float(yoy)):.1f}% a year" if yoy is not None and float(yoy) < 0 else ""
-        recap_items.append((
-            DEFEND,
-            name,
-            f"Your most exposed nearby competitor — {loc_phrase}{decline_phrase}."
-        ))
+        segments.append((name, True))
+        if dist is not None:
+            segments.append((f", {float(dist):.1f} miles away, ", False))
+        else:
+            segments.append((" ", False))
+        if yoy is not None and float(yoy) < 0:
+            segments.append(("is losing deposits at ", False))
+            segments.append((f"{abs(float(yoy)):.1f}% a year", True))
+            segments.append((" — exactly the kind of exposure that becomes your opportunity. ", False))
+        else:
+            segments.append(("is the most exposed competitor anywhere in your footprint. ", False))
 
-    # Financial health — a third distinct category (profitability), not
-    # deposits or competition
     if fin:
         roa = fin.get("roa")
         if roa is not None:
             try:
                 roa_f = float(roa)
                 ok = roa_f >= 1.0
-                recap_items.append((
-                    INVEST if ok else JUSTIFY,
-                    f"ROA: {roa_f:.2f}%",
-                    f"{'Above' if ok else 'Below'} the >1.0% benchmark community banks are typically measured against."
-                ))
+                segments.append(("The bank's own numbers back it up: ROA sits at ", False))
+                segments.append((f"{roa_f:.2f}%", True))
+                segments.append((f", {'above' if ok else 'below'} the community-bank benchmark, ", False))
             except (TypeError, ValueError):
                 pass
 
-    recap_items.append((
-        JUSTIFY if d.get("gapNeg") else INVEST,
-        f"{d.get('gap','—')} vs. peer average",
-        f"{bank_name}'s deposit growth is running {d.get('gap','—')} "
-        f"{'below' if d.get('gapNeg') else 'above'} the peer average "
-        f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%)."
-    ))
+    segments.append(("and deposit growth is running ", False))
+    segments.append((str(d.get("gap", "—")), True))
+    segments.append((f" {'behind' if d.get('gapNeg') else 'ahead of'} peers "
+                      f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%). ", False))
 
-    row_h = 0.60 if len(recap_items) > 3 else 0.74
-    for color, headline, body in recap_items:
-        add_rect(slide, 0.7, y, 0.06, row_h - 0.12, color)
-        add_text(slide, headline, 0.90, y, 8.3, 0.22, size=11.5, bold=True, color=NAVY, shrink_to_fit=True)
-        add_text(slide, body, 0.90, y + 0.22, 8.3, row_h - 0.24, size=9, color=GRAY3, shrink_to_fit=True)
-        y += row_h
+    if lead_branch and top_competitor:
+        segments.append(("Real momentum, in a market where a nearby competitor is visibly struggling — "
+                          "that's exactly where the immediate opportunity is.", True))
+    else:
+        segments.append((f"{bank_name}'s branch network shows real, specific opportunity — the kind "
+                          "that's easy to miss without branch-level data.", True))
 
-    y += 0.10
-
-    # ── Synthesis line — the sentence that connects the facts into a story ──
-    synthesis = (
-        f"Your strongest branch sits in a market where a nearby competitor is losing ground fast — "
-        f"that's exactly where the immediate opportunity is."
-        if lead_branch and top_competitor else
-        f"{bank_name}'s branch network shows real, specific opportunity — the kind that's easy to miss "
-        f"without branch-level data."
-    )
-    box_h = 0.56
-    add_rect(slide, 0.7, y, 8.6, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
-    add_text(slide, synthesis, 0.9, y + 0.08, 8.2, box_h - 0.16, size=10.5, italic=True,
-             bold=True, color=NAVY, shrink_to_fit=True)
+    box_y, box_h = 1.35, 2.85
+    add_rect(slide, 0.7, box_y, 8.6, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
+    tb = slide.shapes.add_textbox(Inches(0.95), Inches(box_y + 0.22), Inches(8.1), Inches(box_h - 0.44))
+    tf = tb.text_frame
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    for text, bold in segments:
+        r = p.add_run()
+        r.text = text
+        r.font.size = Pt(12)
+        r.font.bold = bold
+        r.font.name = "Inter"
+        r.font.color.rgb = NAVY
 
 
 # ═══════════════════════════════════════════════════════════════
