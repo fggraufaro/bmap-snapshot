@@ -3609,119 +3609,53 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
                  0.7, 1.6, 8.6, 0.4, size=11, color=GRAY3)
         return slide
 
-    # ── Competitive Radar — bullseye by distance, angle = growth
-    # trajectory, dot size = vulnerability. Replaces the quadrant scatter,
-    # which tested as "lacking impact" — a target/bullseye is a much more
-    # visceral shape for a "target competitors" message than a chart with
-    # axes, and it reuses the same distance bands and declining/growing
-    # framing that were already working. ──
-    add_text(slide, "Competitive Radar — Who's Closest and Most Exposed", 0.7, 1.10, 5.4, 0.24,
+    # ── Competitive Exposure by Distance — aggregate stat rows, not a
+    # point-cloud. The radar/scatter attempts both hit real rendering
+    # problems on live data (dot overlap, label collision) once there were
+    # enough competitors to be interesting — an aggregate breakdown shows
+    # the same real breadth without anything that can visually collide. ──
+    add_text(slide, "Competitive Exposure by Distance", 0.7, 1.10, 5.4, 0.24,
              size=12, bold=True, color=NAVY)
 
     usable = [c for c in all_competitors
-              if c.get("target_yoy_pct") is not None and c.get("vuln_score") is not None]
+              if c.get("target_dist_mi") is not None]
 
     CHART_X, CHART_Y, CHART_W, CHART_H = 0.7, 1.42, 5.4, 3.05
 
     if usable:
-        import math, random, hashlib
+        bands = [
+            ("< 1 mile",  0.0, 1.0,  rgb("C0392B")),
+            ("1–5 miles", 1.0, 5.0,  rgb("E08E0B")),
+            ("5–10 miles", 5.0, 10.0, rgb("D4B106")),
+        ]
 
-        CENTER_X, CENTER_Y = CHART_X + CHART_W / 2, CHART_Y + CHART_H / 2 - 0.10
-        R_RED, R_ORANGE, R_YELLOW = 0.50, 1.00, 1.50   # ring boundaries, inches
+        row_h = 0.86
+        ry = CHART_Y + 0.15
+        for label, lo, hi, color in bands:
+            in_band = [c for c in usable if lo <= float(c["target_dist_mi"]) < hi]
+            n_total = len(in_band)
+            n_declining = sum(1 for c in in_band
+                              if c.get("target_yoy_pct") is not None and float(c["target_yoy_pct"]) < 0)
 
-        def _circle(cx, cy, r, fill_color, line_color=None):
-            left, top = Inches(cx - r), Inches(cy - r)
-            shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, Inches(r*2), Inches(r*2))
-            shp.fill.solid(); shp.fill.fore_color.rgb = fill_color
-            if line_color:
-                shp.line.color.rgb = line_color; shp.line.width = Pt(0.5)
-            else:
-                shp.line.fill.background()
-            shp.shadow.inherit = False
-            return shp
+            add_rect(slide, CHART_X, ry, 0.08, row_h - 0.14, color)
+            add_text(slide, label, CHART_X + 0.22, ry, 1.6, 0.28, size=13, bold=True, color=NAVY)
+            add_text(slide, f"{n_total} competitor{'s' if n_total != 1 else ''} tracked",
+                     CHART_X + 0.22, ry + 0.28, 2.6, 0.22, size=9.5, color=GRAY3)
+            if n_total:
+                add_text(slide, f"{n_declining} of {n_total} losing deposits year over year",
+                         CHART_X + 0.22, ry + 0.50, 3.6, 0.22, size=9.5, color=NAVY_SOFT)
 
-        # Background rings, largest first (grayscale so they never compete
-        # visually with the red/orange/yellow dot colors drawn on top)
-        _circle(CENTER_X, CENTER_Y, R_YELLOW, rgb("F5F6F7"), rgb("E3E6EA"))
-        _circle(CENTER_X, CENTER_Y, R_ORANGE, rgb("EAEDF0"), rgb("DCE0E5"))
-        _circle(CENTER_X, CENTER_Y, R_RED,    rgb("DDE1E6"), rgb("CDD2D8"))
+            # Simple proportional bar — share of this band that's declining
+            bar_x, bar_w = CHART_X + 3.1, 2.3
+            add_rect(slide, bar_x, ry + 0.12, bar_w, 0.16, rgb("EDEFF2"))
+            if n_total:
+                frac = n_declining / n_total
+                add_rect(slide, bar_x, ry + 0.12, bar_w * frac, 0.16, color)
+            ry += row_h
 
-        dist_colors = {"close": rgb("C0392B"), "mid": rgb("E08E0B"), "far": rgb("D4B106")}
-        vuln_vals = [float(c["vuln_score"]) for c in usable]
-        vmin, vmax = min(vuln_vals), max(vuln_vals)
-        vrange = (vmax - vmin) or 1.0
-        MIN_DOT, MAX_DOT = 0.09, 0.22
-
-        top2_keys = {id(c) for c in sorted(usable, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]}
-
-        for c in usable:
-            dist = c.get("target_dist_mi")
-            if dist is None:
-                continue
-            dist = float(dist)
-            if dist < 1:
-                ring_lo, ring_hi, color = 0.0, R_RED, dist_colors["close"]
-            elif dist < 5:
-                ring_lo, ring_hi, color = R_RED, R_ORANGE, dist_colors["mid"]
-            else:
-                ring_lo, ring_hi, color = R_ORANGE, R_YELLOW, dist_colors["far"]
-
-            # Deterministic jitter — seeded from the competitor's own identity
-            # so re-running the same bank produces the same layout, not a
-            # different random scatter each time.
-            seed_key = f"{c.get('target_inst_key','')}-{c.get('target_namebr','')}-{dist}"
-            rnd = random.Random(int(hashlib.md5(seed_key.encode()).hexdigest(), 16) % (10**8))
-            radius_frac = rnd.uniform(0.18, 0.90)
-            r = ring_lo + radius_frac * (ring_hi - ring_lo)
-
-            yoy = float(c.get("target_yoy_pct") or 0)
-            angle_deg = rnd.uniform(100, 260) if yoy < 0 else rnd.uniform(-80, 80)
-            angle = math.radians(angle_deg)
-            dx = r * math.cos(angle)
-            dy = r * math.sin(angle)
-
-            vuln = float(c.get("vuln_score") or 0)
-            dot_d = MIN_DOT + (MAX_DOT - MIN_DOT) * ((vuln - vmin) / vrange)
-            is_top2 = id(c) in top2_keys
-
-            dot = _circle(CENTER_X + dx, CENTER_Y + dy, dot_d / 2, color,
-                          rgb("1B2B3A") if is_top2 else None)
-
-            if is_top2:
-                name = c.get("target_namefull") or c.get("target_namebr") or "—"
-                label = truncate_label(name, 22)
-                label_w = 1.5
-                lx = CENTER_X + dx + (0.10 if dx >= 0 else -(label_w + 0.10))
-                ly = CENTER_Y + dy - 0.09
-                add_text(slide, label, lx, ly, label_w, 0.20, size=7.5, bold=True,
-                         color=NAVY, align=PP_ALIGN.LEFT if dx >= 0 else PP_ALIGN.RIGHT,
-                         shrink_to_fit=True)
-
-        # Center marker — the lead branch itself, the fixed reference point
-        # every competitor is measured against
-        _circle(CENTER_X, CENTER_Y, 0.075, NAVY)
-        center_label = "Your Branch"
-        if lead_branch:
-            center_label = truncate_label(lead_branch.get("namebr", "Your Branch"), 20)
-        add_text(slide, center_label, CENTER_X - 0.9, CENTER_Y + 0.09, 1.8, 0.18,
-                 size=7, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-
-        # Directional caption — replaces the old chart axis title, same
-        # declining/growing framing carried over
-        add_text(slide, "Deposit Growth:  Declining ←  ·  → Growing", CHART_X, CHART_Y + CHART_H - 0.06,
-                 CHART_W, 0.20, size=8, italic=True, color=GRAY3, align=PP_ALIGN.CENTER)
-
-        # Color key — distance bands, same as before, never a competitor-
-        # identity legend so anonymity is preserved for the un-named dots
-        key_y = CHART_Y + CHART_H + 0.10
-        key_items = [("< 1 mi", rgb("C0392B")), ("1–5 mi", rgb("E08E0B")), ("5–10 mi", rgb("D4B106"))]
-        kx = CHART_X + 0.3
-        for label, color in key_items:
-            add_rect(slide, kx, key_y + 0.03, 0.10, 0.10, color)
-            add_text(slide, label, kx + 0.14, key_y, 0.9, 0.18, size=7, color=GRAY3)
-            kx += 1.1
-        add_text(slide, "Dot size = vulnerability  ·  border = named to the right", CHART_X, key_y + 0.20,
-                 CHART_W, 0.18, size=7, italic=True, color=GRAY3, align=PP_ALIGN.CENTER)
+        add_text(slide, "\"Losing deposits\" = negative year-over-year deposit growth — the same signal "
+                 "behind who's most exposed to losing customers.", CHART_X, ry + 0.05,
+                 CHART_W, 0.30, size=8, italic=True, color=GRAY3, shrink_to_fit=True)
 
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
     top_vuln = sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
@@ -3891,18 +3825,21 @@ def build_gap(prs, d, narr, logo_bytes, page_num=4, transparent_logo_bytes=None,
     ca.tick_labels.font.bold = True
 
 
-def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None,
+def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None, fin=None,
                       page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Closing slide — recaps THIS bank's own numbers (priority branch, top
-    competitor, deposit gap) and one synthesis sentence connecting them.
-    No call-to-action on the slide itself — that ask happens in the
-    follow-up email or live conversation, not baked into the deck.
-    Replaces the earlier flywheel/platform-architecture slide per Brock's
-    review: the deck's job is to keep the prospect thinking about
-    themselves through the last slide, not pivot to explaining Verlocity's
-    internal product architecture at the exact moment we want them focused
-    on their own opportunity.
+    Closing slide — recaps THIS bank's own numbers across several distinct
+    categories (branch-level, competitive, market/demographic, financial
+    health, deposit performance) and one synthesis sentence connecting
+    them. Deliberately broadened beyond deposit growth alone — showing only
+    one metric type reads as "that's the only thing they measure," when
+    the actual breadth of what BMAP looks at is the more persuasive fact.
+
+    No call-to-action, no comparison table, no commentary about Verlocity's
+    own methodology or depth — the density and specificity of real,
+    cross-category findings is what does that work implicitly. Anything
+    that states the pitch outright undercuts it; Tom/Brock make that case
+    live, in the room, not the slide.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
@@ -3912,12 +3849,12 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     add_text(slide, f"What This Means for {bank_name}",
              0.7, 0.30, 8.6, 0.50, size=22, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
-    add_text(slide, f"Three findings from this Snapshot, and where they point.",
+    add_text(slide, f"Key findings from this Snapshot, and where they point.",
              0.7, 0.94, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
 
     # ── Recap — pulls forward numbers this deck already proved, no new
     # claims introduced here ──
-    y = 1.35
+    y = 1.30
     recap_items = []
 
     if lead_branch:
@@ -3932,6 +3869,21 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
             f"Your strongest opportunity — {lead_branch.get('opportunity_zone','Invest')} zone, opportunity score {opp_str}."
         ))
 
+    # Market/demographic — a different category entirely from deposits,
+    # pulled straight from the same branch record already fetched, no new
+    # data source introduced
+    if lead_branch:
+        income = lead_branch.get("household_income")
+        zhvi_yoy = lead_branch.get("zhvi_yoy_pct")
+        if income is not None and zhvi_yoy is not None:
+            recap_items.append((
+                ANALYZE,
+                f"{lead_branch.get('citybr','This market')}'s household profile",
+                f"${float(income)/1000:.0f}K household income with home values "
+                f"{'+' if float(zhvi_yoy) >= 0 else ''}{float(zhvi_yoy):.1f}% YoY — "
+                f"a market worth reading closely before assuming it behaves like your others."
+            ))
+
     if top_competitor:
         name = top_competitor.get("target_namefull") or top_competitor.get("target_namebr") or "A nearby competitor"
         dist = top_competitor.get("target_dist_mi")
@@ -3944,6 +3896,22 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
             f"Your most exposed nearby competitor — {loc_phrase}{decline_phrase}."
         ))
 
+    # Financial health — a third distinct category (profitability), not
+    # deposits or competition
+    if fin:
+        roa = fin.get("roa")
+        if roa is not None:
+            try:
+                roa_f = float(roa)
+                ok = roa_f >= 1.0
+                recap_items.append((
+                    INVEST if ok else JUSTIFY,
+                    f"ROA: {roa_f:.2f}%",
+                    f"{'Above' if ok else 'Below'} the >1.0% benchmark community banks are typically measured against."
+                ))
+            except (TypeError, ValueError):
+                pass
+
     recap_items.append((
         JUSTIFY if d.get("gapNeg") else INVEST,
         f"{d.get('gap','—')} vs. peer average",
@@ -3952,11 +3920,12 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
         f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%)."
     ))
 
+    row_h = 0.60 if len(recap_items) > 3 else 0.74
     for color, headline, body in recap_items:
-        add_rect(slide, 0.7, y, 0.06, 0.62, color)
-        add_text(slide, headline, 0.90, y, 8.3, 0.24, size=12, bold=True, color=NAVY, shrink_to_fit=True)
-        add_text(slide, body, 0.90, y + 0.24, 8.3, 0.36, size=9.5, color=GRAY3, shrink_to_fit=True)
-        y += 0.74
+        add_rect(slide, 0.7, y, 0.06, row_h - 0.12, color)
+        add_text(slide, headline, 0.90, y, 8.3, 0.22, size=11.5, bold=True, color=NAVY, shrink_to_fit=True)
+        add_text(slide, body, 0.90, y + 0.22, 8.3, row_h - 0.24, size=9, color=GRAY3, shrink_to_fit=True)
+        y += row_h
 
     y += 0.10
 
@@ -4256,7 +4225,7 @@ def build_deck(data, logo_bytes):
         next_page = 8
     else:
         print("  Skipping audience brief slide — no brief available")
-    build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor,
+    build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
                       page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
