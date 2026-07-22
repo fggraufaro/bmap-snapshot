@@ -41,8 +41,8 @@ try:
     from pptx.util import Inches, Pt, Emu
     from pptx.dml.color import RGBColor
     from pptx.enum.text import PP_ALIGN
-    from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-    from pptx.chart.data import ChartData
+    from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION, XL_MARKER_STYLE
+    from pptx.chart.data import ChartData, XyChartData
     from pptx.oxml.ns import qn
     from pptx.enum.shapes import MSO_SHAPE
     from pptx.oxml import parse_xml
@@ -3073,6 +3073,17 @@ def _fetch_brokered(ik):
     }
 
 
+def fetch_all_bank_competitors(ik):
+    """Bank-wide competitor rows (every branch, not just the lead office) —
+    used only for the scatter chart's distance-vs-vulnerability cloud, which
+    needs real volume to look like anything. The per-branch fetch above caps
+    at 3 competitors per branch by design (a curated shortlist, not a full
+    census) — bank-wide, Mid Penn Bank alone has 165 rows across 55
+    branches, which is what actually shows the scope of what's tracked."""
+    return supabase("branch_target_competitors",
+        f"my_inst_key=eq.{ik}&select=target_dist_mi,vuln_score&limit=1000")
+
+
 def fetch_branch_competitors(my_branch_id):
     """Competitors near one specific branch (the 'lead office'), with each
     competitor's own opportunity score and vulnerability score — distinct
@@ -3512,13 +3523,22 @@ def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=N
 
 
 
-def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, page_num,
+def build_competitive_overview(prs, d, lead_branch, competitors, all_competitors, logo_bytes, page_num,
                                 transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Slide: Competitive Overview — centered on the bank's lead/flagship office.
-    Bar chart of nearby competitors by Opportunity Score, plus a short list of
-    the top 3 by vulnerability score (the competitors most exposed to losing
-    share). Requested by Tom, 07/2026, off Brock's deck review.
+    Slide: Competitive Overview — anchored on the same #1 branch shown on
+    Priority Markets (highest Opportunity Score among Invest-zone branches).
+
+    Left: bank-wide scatter (distance vs. vulnerability) across every
+    tracked competitor — anonymized, no names, no legend. The point is
+    scope ("here's the shape of everything we track"), not identifying any
+    single dot. A bar chart of 3 scores clustered in the 20s (the previous
+    version) didn't show anything; a cloud of 50-150 points does.
+
+    Right: the two most vulnerable named competitors specifically near the
+    #1 branch (max 3 available there by design — this table is a curated
+    top-3 shortlist per branch, not a full census), with a plain-language
+    reason drawn from the real underlying signals, never the formula itself.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, "COMPETITIVE OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
@@ -3532,70 +3552,86 @@ def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, pag
 
     add_text(slide, "Competitive Overview", 0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
-    add_text(slide, f"Peer-sized competitors within range of {lead_label}", 0.7, 0.87, 8.4, 0.20,
-             size=9, italic=True, color=NAVY_SOFT)
 
-    if not competitors:
-        add_text(slide, "No competitor data available for this branch yet.",
+    # ── Scope narrative — data-driven, not AI-generated, so it's always
+    # accurate to what's actually plotted below it ──
+    n_points = len(all_competitors or [])
+    n_inst = len({c.get("target_inst_key") for c in (all_competitors or []) if c.get("target_inst_key")})
+    scope_line = (
+        f"Across {d['bankName']}'s {d['branchCount']} branches, BMAP is tracking "
+        f"{n_points} competitor data points"
+        + (f" across {n_inst} institutions" if n_inst else "")
+        + f" — the chart below shows their shape; the two most exposed near {lead_label} are called out to the right."
+    ) if n_points else f"Peer-sized competitors within range of {lead_label}."
+    add_text(slide, scope_line, 0.7, 0.87, 8.6, 0.34, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
+
+    if not all_competitors and not competitors:
+        add_text(slide, "No competitor data available yet.",
                  0.7, 1.6, 8.6, 0.4, size=11, color=GRAY3)
         return slide
 
-    # ── Bar chart — competitors by Opportunity Score ──
-    add_text(slide, "Competitors by Opportunity Score", 0.7, 1.10, 5.4, 0.26, size=12, bold=True, color=NAVY)
+    # ── Scatter — distance vs. vulnerability, anonymized, bank-wide ──
+    if all_competitors:
+        add_text(slide, "Competitive Exposure — Distance vs. Vulnerability", 0.7, 1.28, 5.4, 0.26,
+                 size=12, bold=True, color=NAVY)
 
-    chart_rows = competitors[:6]  # keep readable — 6 bars max
-    names = [c.get("target_namefull") or c.get("target_namebr") or "—" for c in chart_rows]
-    scores = [round(float(c.get("target_opp_score") or 0), 1) for c in chart_rows]
+        dist_vals = [float(c["target_dist_mi"]) for c in all_competitors
+                     if c.get("target_dist_mi") is not None and c.get("vuln_score") is not None]
+        vuln_vals = [float(c["vuln_score"]) for c in all_competitors
+                     if c.get("target_dist_mi") is not None and c.get("vuln_score") is not None]
 
-    chart_data = ChartData()
-    chart_data.categories = list(reversed(names))   # top score reads at the top of the bar chart
-    chart_data.add_series("Opportunity Score", list(reversed(scores)))
+        chart_data = XyChartData()
+        series = chart_data.add_series("Competitors")
+        for x, y in zip(dist_vals, vuln_vals):
+            series.add_data_point(x, y)
 
-    chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.BAR_CLUSTERED,
-        Inches(0.7), Inches(1.42), Inches(5.4), Inches(3.30),
-        chart_data
-    )
-    chart = chart_frame.chart
-    chart.has_legend = False
-    chart.has_title = False
+        chart_frame = slide.shapes.add_chart(
+            XL_CHART_TYPE.XY_SCATTER,
+            Inches(0.7), Inches(1.60), Inches(5.4), Inches(3.15),
+            chart_data
+        )
+        chart = chart_frame.chart
+        chart.has_legend = False
+        chart.has_title = False
 
-    series = chart.series[0]
-    series.format.fill.solid()
-    series.format.fill.fore_color.rgb = ANALYZE
-    series.format.line.fill.background()
+        s = chart.series[0]
+        s.marker.style = XL_MARKER_STYLE.CIRCLE
+        s.marker.size = 5
+        s.marker.format.fill.solid()
+        s.marker.format.fill.fore_color.rgb = ANALYZE
+        s.marker.format.line.fill.background()
+        # No connecting line between points — this is a scatter, not a trend line
+        s.format.line.fill.background()
 
-    va = chart.value_axis
-    va.tick_labels.font.size = Pt(7.5)
-    va.tick_labels.font.color.rgb = GRAY3
-    va.has_major_gridlines = False
-    va.minimum_scale = 0
-    va.maximum_scale = 100
+        va = chart.value_axis
+        va.tick_labels.font.size = Pt(7.5)
+        va.tick_labels.font.color.rgb = GRAY3
+        va.has_title = True
+        va.axis_title.text_frame.text = "Vulnerability Score"
+        va.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(8)
+        va.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
+        va.has_major_gridlines = True
 
-    ca = chart.category_axis
-    ca.tick_labels.font.size = Pt(8)
-    ca.tick_labels.font.color.rgb = NAVY
+        ca = chart.category_axis
+        ca.tick_labels.font.size = Pt(7.5)
+        ca.tick_labels.font.color.rgb = GRAY3
+        ca.has_title = True
+        ca.axis_title.text_frame.text = "Distance (miles)"
+        ca.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(8)
+        ca.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
 
-    plot = chart.plots[0]
-    plot.has_data_labels = True
-    dl = plot.data_labels
-    dl.number_format = '0'
-    dl.number_format_is_linked = False
-    dl.font.size = Pt(8)
-    dl.font.color.rgb = NAVY
+    # ── Top 2 by vulnerability — named, right column, drawn from the
+    # #1 branch's own competitor set (max 3 available there) ──
+    top_vuln = sorted(competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
 
-    # ── Top 3 by vulnerability score — right column ──
-    top_vuln = sorted(competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:3]
-
-    add_text(slide, "Suggested Top 3 — by Vulnerability Score", 6.30, 1.10, 3.0, 0.26,
-             size=12, bold=True, color=NAVY)
+    add_text(slide, f"Top 2 Peers to Watch — near {lead_label.split(' (')[0]}", 6.30, 1.28, 3.0, 0.40,
+             size=12, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide,
-             "Vulnerability score reflects signals like declining YoY deposits, "
-             "rising noncurrent assets, and softer ROA — competitors more exposed "
-             "to losing share, not necessarily the largest ones.",
-             6.30, 1.38, 3.0, 0.52, size=7.5, color=GRAY3, shrink_to_fit=True)
+             "The two competitors near your top opportunity branch most exposed "
+             "to losing share — not necessarily the largest, the most vulnerable.",
+             6.30, 1.66, 3.0, 0.40, size=7.5, color=GRAY3, shrink_to_fit=True)
 
-    vy = 1.95
+    vy = 2.14
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
         vuln = c.get("vuln_score")
@@ -3606,14 +3642,18 @@ def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, pag
         dist_str = f"{float(dist):.1f} mi" if dist is not None else "—"
         why = _why_vulnerable(c)
 
-        add_rect(slide, 6.30, vy, 3.0, 1.02, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.05, 2.76, 0.26, size=9.5, bold=True,
+        add_rect(slide, 6.30, vy, 3.0, 1.15, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.06, 2.76, 0.28, size=10, bold=True,
                  color=NAVY, shrink_to_fit=True)
         add_text(slide, f"Vulnerability: {vuln_str}   ·   Opp Score: {opp_str}   ·   {dist_str}",
-                 6.42, vy + 0.32, 2.76, 0.18, size=7, color=GRAY3)
-        add_text(slide, why, 6.42, vy + 0.52, 2.76, 0.42, size=7, italic=True,
+                 6.42, vy + 0.36, 2.76, 0.20, size=7.5, color=GRAY3)
+        add_text(slide, why, 6.42, vy + 0.58, 2.76, 0.50, size=7.5, italic=True,
                  color=NAVY_SOFT, shrink_to_fit=True)
-        vy += 1.12
+        vy += 1.28
+
+    if not competitors:
+        add_text(slide, "No named competitor data available for this branch yet.",
+                 6.30, vy, 3.0, 0.4, size=8, color=GRAY3, shrink_to_fit=True)
 
     return slide
 
@@ -3841,6 +3881,12 @@ def _build_branch_list(br, sf):
     Urgency mix: top Invest branches (upside) + critical Defend/Justify
     branches by deposit size (risk). Scores redacted — zone pill only.
     Max 5 cards. Names up to 28 chars.
+
+    Returns (formatted_list, raw_merged_list) — the raw list (full branch
+    dicts, with uninumbr/citybr/stalpbr intact) lets the Competitive
+    Overview slide anchor on the exact same #1 branch shown here, instead
+    of running its own separate "highest deposits" selection and risking
+    the two slides pointing at two different branches.
     """
     invest_br  = sorted(
         [b for b in br if b.get("opportunity_zone") == "Invest" and sf(b.get("latest_dep")) >= 5e6],
@@ -3861,7 +3907,7 @@ def _build_branch_list(br, sf):
             merged.append(b)
     merged = merged[:5]
 
-    return [
+    formatted = [
         {
             "name":  b["namebr"].split("--")[-1].strip()[:28],
             "city":  f"{b.get('citybr','')}, {b.get('stalpbr','')}",
@@ -3871,6 +3917,7 @@ def _build_branch_list(br, sf):
         }
         for b in merged
     ]
+    return formatted, merged
 
 
 
@@ -4014,6 +4061,8 @@ def build_deck(data, logo_bytes):
 
     narr = get_narratives(data)
 
+    branch_list_formatted, branch_list_raw = _build_branch_list(br, sf)
+
     D = {
         "bankName":    bankName,
         "date":        datetime.now().strftime("%B %Y"),
@@ -4030,7 +4079,7 @@ def build_deck(data, logo_bytes):
         "defend":  defend,  "justify": justify,
         "depInvest":  dep_invest,  "depAnalyze": dep_analyze,
         "depDefend":  dep_defend,  "depJustify": dep_justify,
-        "branchList": _build_branch_list(br, sf),
+        "branchList": branch_list_formatted,
         "metrics": [
             {"label":"ROA",           "value":f"{sf(fin.get('roa')):.2f}%",              "bench":">1.0%",    "ok": sf(fin.get("roa"))>=1},
             {"label":"NIM",           "value":f"{sf(fin.get('nim')):.2f}%",              "bench":"2.5–3.5%", "ok": 2.5<=sf(fin.get("nim"))<=4},
@@ -4078,23 +4127,23 @@ def build_deck(data, logo_bytes):
     chevron_bytes = fetch_chevron_mark()
     build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
     build_network(prs, D, narr, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_branches(prs, D, narr, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    # Lead/flagship office — highest-deposit branch, preferring one in DC if
-    # present (matches how Tom/Brock refer to it: "the lead office in DC").
-    # Falls back to highest-deposit branch generally if no DC branch exists.
-    lead_branch = None
-    if br:
-        dc_branches = [b for b in br if (b.get("stalpbr") or "").upper() == "DC"]
-        pool = dc_branches or br
-        lead_branch = max(pool, key=lambda b: sf(b.get("latest_dep")))
+    # Anchor branch for Competitive Overview — the exact #1 branch shown on
+    # Priority Markets (highest Opportunity Score among Invest-zone branches
+    # ≥$5M deposits), not a separately-selected "highest deposits" branch.
+    # Previously these two slides could point at two different branches
+    # since each ran its own selection logic — now they always agree.
+    lead_branch = branch_list_raw[0] if branch_list_raw else None
 
     print(f"  Fetching competitor data for lead office...")
     competitors = fetch_branch_competitors(lead_branch.get("uninumbr")) if lead_branch else []
     competitors = filter_to_peer_institutions(competitors, data["ik"])
-    build_competitive_overview(prs, D, lead_branch, competitors, logo_bytes, page_num=3,
+    print(f"  Fetching bank-wide competitor set for scatter...")
+    all_competitors = fetch_all_bank_competitors(data["ik"])
+    build_competitive_overview(prs, D, lead_branch, competitors, all_competitors, logo_bytes, page_num=4,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    build_branches(prs, D, narr, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_financial(prs, D, narr, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_gap(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     # Audience brief slide — before next steps
