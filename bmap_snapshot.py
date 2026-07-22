@@ -3609,8 +3609,13 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
                  0.7, 1.6, 8.6, 0.4, size=11, color=GRAY3)
         return slide
 
-    # ── Quadrant scatter — deposit growth (x) vs. vulnerability (y) ──
-    add_text(slide, "Competitive Exposure by Growth Trajectory", 0.7, 1.10, 5.4, 0.24,
+    # ── Competitive Radar — bullseye by distance, angle = growth
+    # trajectory, dot size = vulnerability. Replaces the quadrant scatter,
+    # which tested as "lacking impact" — a target/bullseye is a much more
+    # visceral shape for a "target competitors" message than a chart with
+    # axes, and it reuses the same distance bands and declining/growing
+    # framing that were already working. ──
+    add_text(slide, "Competitive Radar — Who's Closest and Most Exposed", 0.7, 1.10, 5.4, 0.24,
              size=12, bold=True, color=NAVY)
 
     usable = [c for c in all_competitors
@@ -3619,83 +3624,104 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     CHART_X, CHART_Y, CHART_W, CHART_H = 0.7, 1.42, 5.4, 3.05
 
     if usable:
-        # 3 distance bands, clean boundaries (no gap, no overlap) — confirmed
-        # against real data that nothing falls beyond 10mi, so 3 bands cover
-        # the full range with no "beyond" case needed.
-        bands = [
-            ("Close",  0.0, 1.0,  rgb("C0392B")),   # red    — <1 mi
-            ("Mid",    1.0, 5.0,  rgb("E08E0B")),   # orange — 1-5 mi
-            ("Far",    5.0, 10.0, rgb("D4B106")),   # yellow — 5-10 mi
-        ]
+        import math, random, hashlib
 
-        yoy_vals = [float(c["target_yoy_pct"]) for c in usable]
+        CENTER_X, CENTER_Y = CHART_X + CHART_W / 2, CHART_Y + CHART_H / 2 - 0.10
+        R_RED, R_ORANGE, R_YELLOW = 0.50, 1.00, 1.50   # ring boundaries, inches
+
+        def _circle(cx, cy, r, fill_color, line_color=None):
+            left, top = Inches(cx - r), Inches(cy - r)
+            shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, left, top, Inches(r*2), Inches(r*2))
+            shp.fill.solid(); shp.fill.fore_color.rgb = fill_color
+            if line_color:
+                shp.line.color.rgb = line_color; shp.line.width = Pt(0.5)
+            else:
+                shp.line.fill.background()
+            shp.shadow.inherit = False
+            return shp
+
+        # Background rings, largest first (grayscale so they never compete
+        # visually with the red/orange/yellow dot colors drawn on top)
+        _circle(CENTER_X, CENTER_Y, R_YELLOW, rgb("F5F6F7"), rgb("E3E6EA"))
+        _circle(CENTER_X, CENTER_Y, R_ORANGE, rgb("EAEDF0"), rgb("DCE0E5"))
+        _circle(CENTER_X, CENTER_Y, R_RED,    rgb("DDE1E6"), rgb("CDD2D8"))
+
+        dist_colors = {"close": rgb("C0392B"), "mid": rgb("E08E0B"), "far": rgb("D4B106")}
         vuln_vals = [float(c["vuln_score"]) for c in usable]
-        max_abs_yoy = max(abs(min(yoy_vals)), abs(max(yoy_vals)), 1.0) * 1.15
-        vuln_max = max(vuln_vals) * 1.1
+        vmin, vmax = min(vuln_vals), max(vuln_vals)
+        vrange = (vmax - vmin) or 1.0
+        MIN_DOT, MAX_DOT = 0.09, 0.22
 
-        chart_data = XyChartData()
-        band_series = []
-        for label, lo, hi, color in bands:
-            series = chart_data.add_series(label)
-            pts = [c for c in usable if c.get("target_dist_mi") is not None
-                   and lo <= float(c["target_dist_mi"]) < hi]
-            for c in pts:
-                series.add_data_point(float(c["target_yoy_pct"]), float(c["vuln_score"]))
-            band_series.append((series, color, len(pts)))
+        top2_keys = {id(c) for c in sorted(usable, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]}
 
-        chart_frame = slide.shapes.add_chart(
-            XL_CHART_TYPE.XY_SCATTER,
-            Inches(CHART_X), Inches(CHART_Y), Inches(CHART_W), Inches(CHART_H),
-            chart_data
-        )
-        chart = chart_frame.chart
-        chart.has_legend = False
-        chart.has_title = False
-
-        for i, (series, color, n) in enumerate(band_series):
-            if n == 0:
+        for c in usable:
+            dist = c.get("target_dist_mi")
+            if dist is None:
                 continue
-            s = chart.series[i]
-            s.marker.style = XL_MARKER_STYLE.CIRCLE
-            s.marker.size = 5
-            s.marker.format.fill.solid()
-            s.marker.format.fill.fore_color.rgb = color
-            s.marker.format.line.fill.background()
-            s.format.line.fill.background()
+            dist = float(dist)
+            if dist < 1:
+                ring_lo, ring_hi, color = 0.0, R_RED, dist_colors["close"]
+            elif dist < 5:
+                ring_lo, ring_hi, color = R_RED, R_ORANGE, dist_colors["mid"]
+            else:
+                ring_lo, ring_hi, color = R_ORANGE, R_YELLOW, dist_colors["far"]
 
-        # Hide axis numbers entirely (blank custom number format) — quadrant
-        # position tells the story, not the underlying score scale.
-        va = chart.value_axis
-        va.minimum_scale = 0
-        va.maximum_scale = vuln_max
-        va.tick_labels.number_format = ';;;'
-        va.tick_labels.number_format_is_linked = False
-        va.has_title = True
-        va.axis_title.text_frame.text = "Vulnerability Score"
-        va.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(7.5)
-        va.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
-        va.has_major_gridlines = False
+            # Deterministic jitter — seeded from the competitor's own identity
+            # so re-running the same bank produces the same layout, not a
+            # different random scatter each time.
+            seed_key = f"{c.get('target_inst_key','')}-{c.get('target_namebr','')}-{dist}"
+            rnd = random.Random(int(hashlib.md5(seed_key.encode()).hexdigest(), 16) % (10**8))
+            radius_frac = rnd.uniform(0.18, 0.90)
+            r = ring_lo + radius_frac * (ring_hi - ring_lo)
 
-        ca = chart.category_axis
-        ca.minimum_scale = -max_abs_yoy
-        ca.maximum_scale = max_abs_yoy
-        ca.tick_labels.number_format = ';;;'
-        ca.tick_labels.number_format_is_linked = False
-        ca.has_title = True
-        ca.axis_title.text_frame.text = "Deposit Growth  (declining ←  ·  growing →)"
-        ca.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(7.5)
-        ca.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
-        ca.has_major_gridlines = False
+            yoy = float(c.get("target_yoy_pct") or 0)
+            angle_deg = rnd.uniform(100, 260) if yoy < 0 else rnd.uniform(-80, 80)
+            angle = math.radians(angle_deg)
+            dx = r * math.cos(angle)
+            dy = r * math.sin(angle)
 
-        # Small color key — distance bands only, never a competitor-identity
-        # legend, so anonymity is preserved while still explaining the colors
-        key_y = CHART_Y + CHART_H + 0.06
+            vuln = float(c.get("vuln_score") or 0)
+            dot_d = MIN_DOT + (MAX_DOT - MIN_DOT) * ((vuln - vmin) / vrange)
+            is_top2 = id(c) in top2_keys
+
+            dot = _circle(CENTER_X + dx, CENTER_Y + dy, dot_d / 2, color,
+                          rgb("1B2B3A") if is_top2 else None)
+
+            if is_top2:
+                name = c.get("target_namefull") or c.get("target_namebr") or "—"
+                label = truncate_label(name, 22)
+                label_w = 1.5
+                lx = CENTER_X + dx + (0.10 if dx >= 0 else -(label_w + 0.10))
+                ly = CENTER_Y + dy - 0.09
+                add_text(slide, label, lx, ly, label_w, 0.20, size=7.5, bold=True,
+                         color=NAVY, align=PP_ALIGN.LEFT if dx >= 0 else PP_ALIGN.RIGHT,
+                         shrink_to_fit=True)
+
+        # Center marker — the lead branch itself, the fixed reference point
+        # every competitor is measured against
+        _circle(CENTER_X, CENTER_Y, 0.075, NAVY)
+        center_label = "Your Branch"
+        if lead_branch:
+            center_label = truncate_label(lead_branch.get("namebr", "Your Branch"), 20)
+        add_text(slide, center_label, CENTER_X - 0.9, CENTER_Y + 0.09, 1.8, 0.18,
+                 size=7, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
+
+        # Directional caption — replaces the old chart axis title, same
+        # declining/growing framing carried over
+        add_text(slide, "Deposit Growth:  Declining ←  ·  → Growing", CHART_X, CHART_Y + CHART_H - 0.06,
+                 CHART_W, 0.20, size=8, italic=True, color=GRAY3, align=PP_ALIGN.CENTER)
+
+        # Color key — distance bands, same as before, never a competitor-
+        # identity legend so anonymity is preserved for the un-named dots
+        key_y = CHART_Y + CHART_H + 0.10
         key_items = [("< 1 mi", rgb("C0392B")), ("1–5 mi", rgb("E08E0B")), ("5–10 mi", rgb("D4B106"))]
-        kx = CHART_X
+        kx = CHART_X + 0.3
         for label, color in key_items:
             add_rect(slide, kx, key_y + 0.03, 0.10, 0.10, color)
             add_text(slide, label, kx + 0.14, key_y, 0.9, 0.18, size=7, color=GRAY3)
             kx += 1.1
+        add_text(slide, "Dot size = vulnerability  ·  border = named to the right", CHART_X, key_y + 0.20,
+                 CHART_W, 0.18, size=7, italic=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
     top_vuln = sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
