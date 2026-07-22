@@ -3873,18 +3873,17 @@ def build_gap(prs, d, narr, logo_bytes, page_num=4, transparent_logo_bytes=None,
 def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None, fin=None,
                       page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Closing slide — recaps THIS bank's own numbers across several distinct
-    categories (branch-level, competitive, market/demographic, financial
-    health, deposit performance) and one synthesis sentence connecting
-    them. Deliberately broadened beyond deposit growth alone — showing only
-    one metric type reads as "that's the only thing they measure," when
-    the actual breadth of what BMAP looks at is the more persuasive fact.
+    Closing slide — same proven structure as the Audience Intelligence
+    Brief slide (paragraph / where the opportunity is strong / what to
+    validate / what this means), reused here rather than inventing a new
+    visual treatment. That slide's pattern already works; this one just
+    applies it to the whole-deck summary instead of the audience read.
 
     No call-to-action, no comparison table, no commentary about Verlocity's
-    own methodology or depth — the density and specificity of real,
-    cross-category findings is what does that work implicitly. Anything
-    that states the pitch outright undercuts it; Tom/Brock make that case
-    live, in the room, not the slide.
+    own methodology or depth. The "what to validate" section carries the
+    "there's more to see" idea implicitly and honestly — as real scope
+    limitations of a single snapshot, not a sales pitch — the same way the
+    persona slide is honest about what a first-level read can't confirm.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
@@ -3892,109 +3891,125 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     bank_name = d.get("bankName", "")
 
     add_text(slide, f"What This Means for {bank_name}",
-             0.7, 0.30, 8.6, 0.50, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
-    add_text(slide, f"Key findings from this Snapshot, and where they point.",
-             0.7, 0.94, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
+             0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
+    add_text(slide, f"Key findings from this Snapshot, and where they point · {bank_name}",
+             0.7, 0.87, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    # ── Narrative — one flowing paragraph weaving the same real facts
-    # together, not discrete cards. Built from alternating bold/plain runs
-    # in a single textbox (same technique as the persona slide's callout),
-    # not an AI call — keeps this deterministic and avoids the JSON/
-    # truncation risk that AI-generated fields have hit elsewhere in this
-    # deck. No new data introduced; every fact here was already computed
-    # and shown earlier in the deck. ──
-    segments = []  # list of (text, bold) tuples rendered as one paragraph
-
+    opp_score = lead_branch.get("opportunity_score") if lead_branch else None
+    opp_str = f"{float(opp_score):.0f}" if opp_score is not None else None
+    branch_loc = None
     if lead_branch:
-        loc = f"{lead_branch.get('citybr','')}, {lead_branch.get('stalpbr','')}".strip(", ")
-        opp = lead_branch.get("opportunity_score")
-        opp_str = f"{float(opp):.0f}" if opp is not None else "—"
-        segments.append((f"{bank_name}'s strongest opportunity sits at ", False))
-        segments.append((lead_branch.get("namebr", "your top branch"), True))
-        segments.append((f" — {lead_branch.get('opportunity_zone','Invest')} zone, "
-                          f"opportunity score {opp_str}", True))
-        segments.append((f", in {loc}. " if loc else ". ", False))
+        branch_loc = f"{lead_branch.get('citybr','')}, {lead_branch.get('stalpbr','')}".strip(", ")
 
-        income = lead_branch.get("household_income")
-        zhvi_yoy = lead_branch.get("zhvi_yoy_pct")
-        if income is not None and zhvi_yoy is not None:
-            segments.append(("Home values there are climbing ", False))
-            segments.append((f"{'+' if float(zhvi_yoy) >= 0 else ''}{float(zhvi_yoy):.1f}% a year", True))
-            segments.append((" on just ", False))
-            segments.append((f"${float(income)/1000:.0f}K household income", True))
-            segments.append((" — a market with more headroom than it first looks. ", False))
-
+    comp_name, comp_dist, comp_yoy = None, None, None
     if top_competitor:
-        name = top_competitor.get("target_namefull") or top_competitor.get("target_namebr") or "A nearby competitor"
-        dist = top_competitor.get("target_dist_mi")
-        yoy = top_competitor.get("target_yoy_pct")
-        segments.append((name, True))
-        if dist is not None:
-            segments.append((f", {float(dist):.1f} miles away, ", False))
-        else:
-            segments.append((" ", False))
-        if yoy is not None and float(yoy) < 0:
-            segments.append(("is losing deposits at ", False))
-            segments.append((f"{abs(float(yoy)):.1f}% a year", True))
-            segments.append((" — exactly the kind of exposure that becomes your opportunity. ", False))
-        else:
-            segments.append(("is the most exposed competitor anywhere in your footprint. ", False))
+        comp_name = top_competitor.get("target_namefull") or top_competitor.get("target_namebr")
+        comp_dist = top_competitor.get("target_dist_mi")
+        comp_yoy = top_competitor.get("target_yoy_pct")
 
-    if fin:
-        roa = fin.get("roa")
-        if roa is not None:
-            try:
-                roa_f = float(roa)
-                ok = roa_f >= 1.0
-                segments.append(("The bank's own numbers back it up: ROA sits at ", False))
-                segments.append((f"{roa_f:.2f}%", True))
-                segments.append((f", {'above' if ok else 'below'} the community-bank benchmark. ", False))
-            except (TypeError, ValueError):
-                pass
+    roa = fin.get("roa") if fin else None
+    roa_f = None
+    if roa is not None:
+        try:
+            roa_f = float(roa)
+        except (TypeError, ValueError):
+            roa_f = None
 
-    if lead_branch and top_competitor:
-        segments.append(("Real momentum, in a market where a nearby competitor is visibly struggling — "
-                          "that's exactly where the immediate opportunity is.", True))
-    else:
-        segments.append((f"{bank_name}'s branch network shows real, specific opportunity — the kind "
-                          "that's easy to miss without branch-level data.", True))
+    # ── Summary paragraph — condensed version of the same facts, one
+    # tight paragraph instead of a long narrative block ──
+    para_parts = []
+    if lead_branch:
+        para_parts.append(f"{bank_name}'s strongest opportunity sits at {lead_branch.get('namebr','its top branch')}"
+                           f"{f', in {branch_loc}' if branch_loc else ''}.")
+    if comp_name:
+        decline_phrase = f", down {abs(float(comp_yoy)):.1f}% YoY" if comp_yoy is not None and float(comp_yoy) < 0 else ""
+        para_parts.append(f"Nearby, {comp_name} shows real signs of exposure{decline_phrase} — "
+                           f"the kind of opening that turns into your gain.")
+    if roa_f is not None:
+        para_parts.append(f"The bank's own numbers back it up, with ROA at {roa_f:.2f}%.")
+    paragraph = " ".join(para_parts) or f"{bank_name}'s branch network shows real, specific opportunity."
 
-    box_y, box_h = 1.35, 2.85
+    y = 1.16
+    add_text(slide, "THE FINDINGS IN ONE PARAGRAPH", 0.7, y, 8.6, 0.14,
+             size=7.5, bold=True, color=GRAY3)
+    add_text(slide, paragraph, 0.7, y + 0.15, 8.6, 0.45,
+             size=8.5, color=NAVY, shrink_to_fit=True)
+    y += 0.68
 
-    # ── Giant number — visual anchor, same treatment as the Gap slide.
-    # Without this the slide was "just a text box" — nothing for the eye
-    # to land on before reading. The deposit gap is the cleanest single
-    # number to lead with since every bank has one, pulled straight from
-    # the same figure the Gap slide already computed. ──
-    num_w = 2.5
-    gap_color = rgb("F87171") if d.get("gapNeg") else TEAL
-    add_rect(slide, 0.7, box_y, num_w, box_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-    add_rect(slide, 0.7, box_y, num_w, 0.08, gap_color)
-    add_text(slide, str(d.get("gap", "—")), 0.7, box_y + 0.55, num_w, 1.10,
-             size=54, bold=True, color=gap_color, align=PP_ALIGN.CENTER)
-    add_text(slide, "VS. PEER AVERAGE", 0.7, box_y + 1.68, num_w, 0.26,
-             size=10, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
-    add_text(slide, f"{d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}% deposit growth",
-             0.75, box_y + 1.98, num_w - 0.1, 0.4, size=9, color=NAVY_SOFT,
-             align=PP_ALIGN.CENTER, shrink_to_fit=True)
+    # ── Where the opportunity is strong ──
+    strong = []
+    if lead_branch and opp_str:
+        strong.append(f"{lead_branch.get('namebr','Your top branch')} — "
+                      f"{lead_branch.get('opportunity_zone','Invest')} zone, opportunity score {opp_str}"
+                      f"{f', in {branch_loc}' if branch_loc else ''}.")
+    income = lead_branch.get("household_income") if lead_branch else None
+    zhvi_yoy = lead_branch.get("zhvi_yoy_pct") if lead_branch else None
+    if income is not None and zhvi_yoy is not None:
+        strong.append(f"Home values there are climbing {'+' if float(zhvi_yoy) >= 0 else ''}"
+                      f"{float(zhvi_yoy):.1f}% a year on just ${float(income)/1000:.0f}K household income "
+                      f"— more headroom than it first looks.")
+    if d.get("gap"):
+        strong.append(f"Deposit growth is already running {d.get('gap')} "
+                      f"{'behind' if d.get('gapNeg') else 'ahead of'} peers "
+                      f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%).")
 
-    # ── Narrative — the flowing story continues here, in the remaining
-    # width beside the giant number ──
-    narrative_x, narrative_w = 0.7 + num_w + 0.25, 8.6 - num_w - 0.25
-    add_rect(slide, narrative_x, box_y, narrative_w, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
-    tb = slide.shapes.add_textbox(Inches(narrative_x + 0.20), Inches(box_y + 0.20),
-                                   Inches(narrative_w - 0.40), Inches(box_h - 0.40))
-    tf = tb.text_frame
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    for text, bold in segments:
-        r = p.add_run()
-        r.text = text
-        r.font.size = Pt(11.5)
-        r.font.bold = bold
-        r.font.name = "Inter"
-        r.font.color.rgb = NAVY
+    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.7, y, 8.6, 0.14,
+             size=7.5, bold=True, color=GRAY3)
+    y += 0.16
+    for s in strong[:3]:
+        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.30))
+        tf = tb.text_frame; tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(8)
+        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
+        for r in (r1, r2):
+            r.font.name = "Inter"
+        y += 0.28
+    y += 0.05
+
+    # ── What to validate next — honest scope limits of a single snapshot,
+    # same spirit as the persona slide's "where to validate" section, not
+    # a sales pitch ──
+    validate = []
+    if comp_name:
+        validate.append(f"{comp_name}'s exposure reflects one year of data — worth confirming how long "
+                        f"this has been building before acting on it.")
+    if lead_branch:
+        validate.append("This Snapshot analyzed one priority branch in depth — validate whether the same "
+                        "pattern holds across your other Invest-zone branches.")
+    validate.append("ROA and deposit trends here reflect a single point in time — worth tracking quarter "
+                    "over quarter, not just once.")
+
+    add_text(slide, "WHAT TO VALIDATE NEXT", 0.7, y, 8.6, 0.14,
+             size=7.5, bold=True, color=GRAY3)
+    y += 0.16
+    for s in validate[:3]:
+        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.30))
+        tf = tb.text_frame; tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = JUSTIFY; r1.font.size = Pt(8)
+        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
+        for r in (r1, r2):
+            r.font.name = "Inter"
+        y += 0.28
+    y += 0.06
+
+    # ── What this means — closing synthesis, callout box ──
+    synthesis = (
+        "Real momentum, in a market where a nearby competitor is visibly struggling — "
+        "that's exactly where the immediate opportunity is."
+        if lead_branch and top_competitor else
+        f"{bank_name}'s branch network shows real, specific opportunity — the kind that's "
+        "easy to miss without branch-level data."
+    )
+    box_h = 0.46
+    add_rect(slide, 0.7, y, 8.6, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
+    add_text(slide, "WHAT THIS MEANS", 0.84, y + 0.04, 8.3, 0.13,
+             size=7, bold=True, color=GRAY3)
+    add_text(slide, synthesis, 0.84, y + 0.17, 8.3, box_h - 0.21,
+             size=8, color=NAVY, shrink_to_fit=True)
+
 
 
 # ═══════════════════════════════════════════════════════════════
