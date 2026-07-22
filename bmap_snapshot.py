@@ -2861,6 +2861,40 @@ def _why_vulnerable(c):
     return "Standout signal: " + " and ".join(reasons[:2])
 
 
+def _sales_narrative(c):
+    """Same underlying signals as _why_vulnerable, but written to sell the
+    opportunity rather than report the data — this feeds the peer cards on
+    the Competitive Overview slide specifically, which exist to hook a
+    first-time prospect, not to document a methodology."""
+    dist = c.get("target_dist_mi")
+    yoy = c.get("target_yoy_pct")
+    roa = c.get("target_roa")
+    noncur = c.get("target_noncurrent_pct")
+
+    if dist is not None and float(dist) < 1:
+        loc = "sitting directly in your trade area"
+    elif dist is not None and float(dist) < 5:
+        loc = f"just {float(dist):.1f} miles from your nearest branch"
+    elif dist is not None:
+        loc = f"within {float(dist):.1f} miles of your footprint"
+    else:
+        loc = "within your market"
+
+    signals = []
+    if yoy is not None and float(yoy) < 0:
+        signals.append(f"losing deposits at {abs(float(yoy)):.1f}% a year")
+    if roa is not None and float(roa) < 0.5:
+        signals.append("running on thin profitability")
+    if noncur is not None and float(noncur) > 2:
+        signals.append("carrying rising credit-quality strain")
+
+    if signals:
+        signal_clause = " and ".join(signals[:2])
+        return (f"{loc[0].upper()}{loc[1:]} — and {signal_clause}. Their customers are "
+                f"the ones most likely already looking for a better banking relationship.")
+    return f"{loc[0].upper()}{loc[1:]} — a real head-to-head opportunity worth watching closely."
+
+
 def truncate_label(text, max_len):
     """Truncate to max_len, breaking on the last word boundary rather than mid-word."""
     if len(text) <= max_len:
@@ -3637,7 +3671,7 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
         va.tick_labels.number_format = ';;;'
         va.tick_labels.number_format_is_linked = False
         va.has_title = True
-        va.axis_title.text_frame.text = "Competitive Exposure  (low ↓  ·  high ↑)"
+        va.axis_title.text_frame.text = "Vulnerability Score"
         va.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(7.5)
         va.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
         va.has_major_gridlines = False
@@ -3652,18 +3686,6 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
         ca.axis_title.text_frame.paragraphs[0].runs[0].font.size = Pt(7.5)
         ca.axis_title.text_frame.paragraphs[0].runs[0].font.color.rgb = GRAY3
         ca.has_major_gridlines = False
-
-        # Quadrant corner labels — placed at the known chart bounding box
-        # corners (the chart's own internal plot-area padding is small
-        # enough at this size to read fine without pixel-exact alignment)
-        quad_labels = [
-            ("Declining & High Exposure", CHART_X + 0.05, CHART_Y + 0.05),
-            ("Growing & High Exposure",   CHART_X + CHART_W - 1.75, CHART_Y + 0.05),
-            ("Declining & Low Exposure",  CHART_X + 0.05, CHART_Y + CHART_H - 0.22),
-            ("Growing & Low Exposure",    CHART_X + CHART_W - 1.75, CHART_Y + CHART_H - 0.22),
-        ]
-        for text, qx, qy in quad_labels:
-            add_text(slide, text, qx, qy, 1.7, 0.20, size=6.5, italic=True, color=GRAY3)
 
         # Small color key — distance bands only, never a competitor-identity
         # legend, so anonymity is preserved while still explaining the colors
@@ -3688,18 +3710,14 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     vy = 1.96
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
-        dist = c.get("target_dist_mi")
-        dist_str = f"{float(dist):.1f} mi from your nearest branch" if dist is not None else "—"
-        why = _why_vulnerable(c)
+        narrative = _sales_narrative(c)
 
-        add_rect(slide, 6.30, vy, 3.0, 1.15, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.06, 2.76, 0.28, size=10, bold=True,
+        add_rect(slide, 6.30, vy, 3.0, 1.32, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.07, 2.76, 0.28, size=10.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, dist_str,
-                 6.42, vy + 0.36, 2.76, 0.20, size=7.5, color=GRAY3)
-        add_text(slide, why, 6.42, vy + 0.58, 2.76, 0.50, size=7.5, italic=True,
+        add_text(slide, narrative, 6.42, vy + 0.38, 2.76, 0.88, size=8.5,
                  color=NAVY_SOFT, shrink_to_fit=True)
-        vy += 1.28
+        vy += 1.45
 
     if not top_vuln:
         add_text(slide, "No named competitor data available yet.",
@@ -3847,79 +3865,87 @@ def build_gap(prs, d, narr, logo_bytes, page_num=4, transparent_logo_bytes=None,
     ca.tick_labels.font.bold = True
 
 
-def build_next_steps(prs, d, narr, logo_bytes, page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
+def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None,
+                      page_num=6, transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Closing slide — flywheel on the left, three stage cards on the right
-    (Foundation/Activation/Momentum), styled like the deck's other right-
-    column capability cards. The wheel graphic and the three descriptions
-    are generic and identical across every bank; only the headline,
-    subtitle, and closing line are personalized.
+    Closing slide — recaps THIS bank's own numbers (priority branch, top
+    competitor, deposit gap) and one synthesis sentence connecting them.
+    No call-to-action on the slide itself — that ask happens in the
+    follow-up email or live conversation, not baked into the deck.
+    Replaces the earlier flywheel/platform-architecture slide per Brock's
+    review: the deck's job is to keep the prospect thinking about
+    themselves through the last slide, not pivot to explaining Verlocity's
+    internal product architecture at the exact moment we want them focused
+    on their own opportunity.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
 
-    # Headline block — same pattern as the rest of the deck
-    add_text(slide, "A System Built to Compound",
+    add_text(slide, f"What This Means for {bank_name}",
              0.7, 0.30, 8.6, 0.50, size=22, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
-    add_text(slide, f"How BMAP, AudienceFinder, and MediaPredict work together for {bank_name}",
+    add_text(slide, f"Three findings from this Snapshot, and where they point.",
              0.7, 0.94, 8.6, 0.24, size=10, italic=True, color=NAVY_SOFT)
 
-    # Flywheel graphic — left column, generic across all banks
-    flywheel_bytes = fetch_flywheel()
-    if flywheel_bytes:
-        fw_w = 3.55
-        fw_h = fw_w / FLYWHEEL_ASPECT
-        fw_x = 0.7 + (5.3 - fw_w) / 2
-        fw_y = 1.34
-        slide.shapes.add_picture(io.BytesIO(flywheel_bytes), Inches(fw_x), Inches(fw_y),
-                                  Inches(fw_w), Inches(fw_h))
+    # ── Recap — pulls forward numbers this deck already proved, no new
+    # claims introduced here ──
+    y = 1.35
+    recap_items = []
 
-    # Closing line — sits in the left column below the wheel. Short by design;
-    # there's only a narrow strip of clearance left above the banner here.
-    add_text(slide, f"Happy to walk through what this looks like for {bank_name}.",
-             0.7, fw_y + fw_h + 0.06, 5.3, 0.22, size=9, italic=True, color=NAVY,
-             align=PP_ALIGN.CENTER, shrink_to_fit=True)
+    if lead_branch:
+        loc = f"{lead_branch.get('citybr','')}, {lead_branch.get('stalpbr','')}".strip(", ")
+        opp = lead_branch.get("opportunity_score")
+        opp_str = f"{float(opp):.0f}" if opp is not None else "—"
+        recap_items.append((
+            INVEST,
+            f"{lead_branch.get('namebr','Your top branch')}",
+            f"Your strongest opportunity — {lead_branch.get('opportunity_zone','Invest')} zone, "
+            f"opportunity score {opp_str}, in {loc}." if loc else
+            f"Your strongest opportunity — {lead_branch.get('opportunity_zone','Invest')} zone, opportunity score {opp_str}."
+        ))
 
-    # Three stage cards — right column, same visual language as the other
-    # capability cards elsewhere in the deck (numbered badge, colored pill,
-    # title, body), but explaining the wheel's three outer rings instead of
-    # the four platform modules.
-    stages = [
-        ("FOUNDATION", rgb("478F6B"), "Market & Brand Truth",
-         "BMAP scores every branch to separate real growth from risk; Brand Reality "
-         "checks that read against market perception. The ground truth everything "
-         "else builds on."),
-        ("ACTIVATION", rgb("02A7C2"), "Forecasted, Not Just Targeted",
-         "AudienceFinder builds campaigns from BMAP's branch scoring. MediaPredict "
-         "forecasts the return before it runs, then tracks against that forecast — "
-         "accountability built in."),
-        ("MOMENTUM", rgb("083D5F"), "Compounding the Win",
-         "CRM & Engagement nurtures the relationship; Retention & Deepening grows "
-         "wallet share. What Momentum produces feeds the next cycle of Foundation — "
-         "a wheel, not a funnel."),
-    ]
-    card_x, card_w = 6.22, 3.6
-    card_h, gap = 1.14, 0.12
-    for i, (label, color, title, body) in enumerate(stages):
-        cy = 1.34 + i * (card_h + gap)
-        add_rect(slide, card_x, cy, card_w, card_h, GRAY1, GRAY2, Pt(0.4))
-        add_rect(slide, card_x, cy, 0.06, card_h, color)
-        add_rect(slide, card_x + 0.12, cy + 0.14, 0.36, 0.34, color)
-        badge_tb = add_text(slide, str(i+1).zfill(2), card_x + 0.12, cy + 0.145, 0.36, 0.34,
-                 size=8.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-        badge_tb.text_frame.margin_left = 0
-        badge_tb.text_frame.margin_right = 0
-        badge_tb.text_frame.word_wrap = False
-        add_rect(slide, card_x + 0.54, cy + 0.15, 1.15, 0.18, color)
-        add_text(slide, label, card_x + 0.54, cy + 0.15, 1.15, 0.18,
-                 size=6.5, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-        add_text(slide, title, card_x + 0.54, cy + 0.35, card_w - 0.66, 0.22,
-                 size=10, bold=True, color=NAVY)
-        add_text(slide, body, card_x + 0.54, cy + 0.57, card_w - 0.66, card_h - 0.63,
-                 size=7.5, color=GRAY3, shrink_to_fit=True)
+    if top_competitor:
+        name = top_competitor.get("target_namefull") or top_competitor.get("target_namebr") or "A nearby competitor"
+        dist = top_competitor.get("target_dist_mi")
+        yoy = top_competitor.get("target_yoy_pct")
+        loc_phrase = f"{float(dist):.1f} miles from your nearest branch" if dist is not None else "in your footprint"
+        decline_phrase = f", losing deposits at {abs(float(yoy)):.1f}% a year" if yoy is not None and float(yoy) < 0 else ""
+        recap_items.append((
+            DEFEND,
+            name,
+            f"Your most exposed nearby competitor — {loc_phrase}{decline_phrase}."
+        ))
+
+    recap_items.append((
+        JUSTIFY if d.get("gapNeg") else INVEST,
+        f"{d.get('gap','—')} vs. peer average",
+        f"{bank_name}'s deposit growth is running {d.get('gap','—')} "
+        f"{'below' if d.get('gapNeg') else 'above'} the peer average "
+        f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%)."
+    ))
+
+    for color, headline, body in recap_items:
+        add_rect(slide, 0.7, y, 0.06, 0.62, color)
+        add_text(slide, headline, 0.90, y, 8.3, 0.24, size=12, bold=True, color=NAVY, shrink_to_fit=True)
+        add_text(slide, body, 0.90, y + 0.24, 8.3, 0.36, size=9.5, color=GRAY3, shrink_to_fit=True)
+        y += 0.74
+
+    y += 0.10
+
+    # ── Synthesis line — the sentence that connects the facts into a story ──
+    synthesis = (
+        f"Your strongest branch sits in a market where a nearby competitor is losing ground fast — "
+        f"that's exactly where the immediate opportunity is."
+        if lead_branch and top_competitor else
+        f"{bank_name}'s branch network shows real, specific opportunity — the kind that's easy to miss "
+        f"without branch-level data."
+    )
+    box_h = 0.56
+    add_rect(slide, 0.7, y, 8.6, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
+    add_text(slide, synthesis, 0.9, y + 0.08, 8.2, box_h - 0.16, size=10.5, italic=True,
+             bold=True, color=NAVY, shrink_to_fit=True)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -4189,6 +4215,7 @@ def build_deck(data, logo_bytes):
     print(f"  Fetching bank-wide competitor set...")
     all_competitors = fetch_all_bank_competitors(data["ik"])
     all_competitors = filter_to_peer_institutions(all_competitors, data["ik"])
+    top_competitor = (sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:1] or [None])[0]
     build_competitive_overview(prs, D, lead_branch, all_competitors, logo_bytes, page_num=4,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
@@ -4203,7 +4230,8 @@ def build_deck(data, logo_bytes):
         next_page = 8
     else:
         print("  Skipping audience brief slide — no brief available")
-    build_next_steps(prs, D, narr, logo_bytes, page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor,
+                      page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
