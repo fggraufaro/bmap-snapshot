@@ -3630,37 +3630,50 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
         ]
 
         def _is_vulnerable(c):
-            """Requires at least 2 of 3 real signals, not just 1 — a single
-            signal (especially declining deposits, which has been common
-            industry-wide the last couple years as customers moved to
-            money-market funds) was flagging too large a share of
-            competitors to be a credible, differentiating claim. Requiring
-            genuine multi-factor confirmation — decline + weak profitability,
-            decline + credit strain, or weak profitability + credit strain —
-            makes 'vulnerable' mean something selective, not 'anyone touched
-            by the current rate environment.'
+            """Two rules, combined with OR — validated against real data on
+            two banks (Hancock Whitney 14.8%, Mid Penn Bank 13.5%, both in
+            the intended 10-15% range):
 
-            Thresholds calibrated against real data, not guessed: deposit
-            decline alone is only meaningful below -10% (the industry-wide
-            median is already -4.6%, so 'any decline' flagged ~75% of all
-            competitors nationwide and was worthless as a signal). ROA and
-            noncurrent-asset thresholds loosened slightly from the first
-            pass (0.5%→0.7%, 2%→1.5%) to land the overall flagged rate in
-            the intended 5-10% range — validated against two real banks:
-            Mid Penn Bank (6.7%, 6 of 89) and Hancock Whitney (9.3%, 22 of
-            237), both landing consistently in range despite very
-            different footprint sizes."""
+            1. MODERATE MULTI-FACTOR: at least 2 of 3 signals present
+               (deposits down >8%, ROA below 0.6%, noncurrent assets above
+               1.75%). Requiring 2 of 3 (not just 1) matters because a
+               single signal — especially deposit decline, which has been
+               common industry-wide the last couple years as customers
+               moved to money-market funds — was flagging ~75%+ of all
+               competitors nationwide and meant nothing.
+
+            2. EXTREME SINGLE-SIGNAL OUTLIER: deposits down >30%, ROA below
+               0.2%, or noncurrent above 3.5% — any ONE of these alone is
+               rare and real enough to flag on its own. This rule exists
+               specifically because the closest competitors (<1 mile) kept
+               coming back with zero flags under rule 1 alone: checking the
+               actual data, several had dramatic one-year deposit swings
+               (one over -49%) but genuinely healthy ROA and credit
+               quality — a real, honest finding on its own merit, just not
+               a multi-factor one. Rule 2 catches that case without forcing
+               a financially healthy institution into a false 'distressed'
+               claim just to fill the closest band."""
             yoy = c.get("target_yoy_pct")
             roa = c.get("target_roa")
             noncur = c.get("target_noncurrent_pct")
+
             signals_hit = 0
-            if yoy is not None and float(yoy) < -10:
+            if yoy is not None and float(yoy) < -8:
                 signals_hit += 1
-            if roa is not None and float(roa) < 0.7:
+            if roa is not None and float(roa) < 0.6:
                 signals_hit += 1
-            if noncur is not None and float(noncur) > 1.5:
+            if noncur is not None and float(noncur) > 1.75:
                 signals_hit += 1
-            return signals_hit >= 2
+            if signals_hit >= 2:
+                return True
+
+            if yoy is not None and float(yoy) < -30:
+                return True
+            if roa is not None and float(roa) < 0.2:
+                return True
+            if noncur is not None and float(noncur) > 3.5:
+                return True
+            return False
 
         row_h = 0.86
         ry = CHART_Y + 0.15
@@ -3685,8 +3698,8 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
                 add_rect(slide, bar_x, ry + 0.12, bar_w * frac, 0.16, color)
             ry += row_h
 
-        add_text(slide, "\"Vulnerable\" = at least 2 of 3 real signals present — declining deposits, "
-                 "weak profitability, rising credit-quality strain. A single signal isn't enough.",
+        add_text(slide, "\"Vulnerable\" = multiple warning signs together, or one extreme outlier alone — "
+                 "declining deposits, weak profitability, rising credit-quality strain.",
                  CHART_X, ry + 0.05, CHART_W, 0.30, size=8, italic=True, color=GRAY3, shrink_to_fit=True)
 
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
@@ -3936,14 +3949,9 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
                 ok = roa_f >= 1.0
                 segments.append(("The bank's own numbers back it up: ROA sits at ", False))
                 segments.append((f"{roa_f:.2f}%", True))
-                segments.append((f", {'above' if ok else 'below'} the community-bank benchmark, ", False))
+                segments.append((f", {'above' if ok else 'below'} the community-bank benchmark. ", False))
             except (TypeError, ValueError):
                 pass
-
-    segments.append(("and deposit growth is running ", False))
-    segments.append((str(d.get("gap", "—")), True))
-    segments.append((f" {'behind' if d.get('gapNeg') else 'ahead of'} peers "
-                      f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%). ", False))
 
     if lead_branch and top_competitor:
         segments.append(("Real momentum, in a market where a nearby competitor is visibly struggling — "
@@ -3953,15 +3961,37 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
                           "that's easy to miss without branch-level data.", True))
 
     box_y, box_h = 1.35, 2.85
-    add_rect(slide, 0.7, box_y, 8.6, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
-    tb = slide.shapes.add_textbox(Inches(0.95), Inches(box_y + 0.22), Inches(8.1), Inches(box_h - 0.44))
+
+    # ── Giant number — visual anchor, same treatment as the Gap slide.
+    # Without this the slide was "just a text box" — nothing for the eye
+    # to land on before reading. The deposit gap is the cleanest single
+    # number to lead with since every bank has one, pulled straight from
+    # the same figure the Gap slide already computed. ──
+    num_w = 2.5
+    gap_color = rgb("F87171") if d.get("gapNeg") else TEAL
+    add_rect(slide, 0.7, box_y, num_w, box_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+    add_rect(slide, 0.7, box_y, num_w, 0.08, gap_color)
+    add_text(slide, str(d.get("gap", "—")), 0.7, box_y + 0.55, num_w, 1.10,
+             size=54, bold=True, color=gap_color, align=PP_ALIGN.CENTER)
+    add_text(slide, "VS. PEER AVERAGE", 0.7, box_y + 1.68, num_w, 0.26,
+             size=10, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+    add_text(slide, f"{d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}% deposit growth",
+             0.75, box_y + 1.98, num_w - 0.1, 0.4, size=9, color=NAVY_SOFT,
+             align=PP_ALIGN.CENTER, shrink_to_fit=True)
+
+    # ── Narrative — the flowing story continues here, in the remaining
+    # width beside the giant number ──
+    narrative_x, narrative_w = 0.7 + num_w + 0.25, 8.6 - num_w - 0.25
+    add_rect(slide, narrative_x, box_y, narrative_w, box_h, rgb("FFFBF2"), rgb("E8C96A"), Pt(0.8))
+    tb = slide.shapes.add_textbox(Inches(narrative_x + 0.20), Inches(box_y + 0.20),
+                                   Inches(narrative_w - 0.40), Inches(box_h - 0.40))
     tf = tb.text_frame
     tf.word_wrap = True
     p = tf.paragraphs[0]
     for text, bold in segments:
         r = p.add_run()
         r.text = text
-        r.font.size = Pt(12)
+        r.font.size = Pt(11.5)
         r.font.bold = bold
         r.font.name = "Inter"
         r.font.color.rgb = NAVY
