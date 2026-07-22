@@ -4090,7 +4090,7 @@ def build_deck(data, logo_bytes):
 
     print(f"  Fetching competitor data for lead office...")
     competitors = fetch_branch_competitors(lead_branch.get("uninumbr")) if lead_branch else []
-    competitors = filter_to_peer_institutions(competitors, ik)
+    competitors = filter_to_peer_institutions(competitors, data["ik"])
     build_competitive_overview(prs, D, lead_branch, competitors, logo_bytes, page_num=3,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
