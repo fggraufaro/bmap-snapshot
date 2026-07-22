@@ -2858,7 +2858,7 @@ def _why_vulnerable(c):
         reasons.append("directly adjacent, <1 mi away")
     if not reasons:
         return "Elevated exposure across several signals, no single dominant factor"
-    return "Why: " + " and ".join(reasons[:2])
+    return "Standout signal: " + " and ".join(reasons[:2])
 
 
 def truncate_label(text, max_len):
@@ -3627,25 +3627,21 @@ def build_competitive_overview(prs, d, lead_branch, competitors, all_competitors
     add_text(slide, f"Top 2 Peers to Watch — near {lead_label.split(' (')[0]}", 6.30, 1.28, 3.0, 0.40,
              size=12, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide,
-             "The two competitors near your top opportunity branch most exposed "
-             "to losing share — not necessarily the largest, the most vulnerable.",
+             "Exposure is ranked across deposit trajectory, profitability, and credit "
+             "quality together — not any single metric alone.",
              6.30, 1.66, 3.0, 0.40, size=7.5, color=GRAY3, shrink_to_fit=True)
 
     vy = 2.14
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
-        vuln = c.get("vuln_score")
-        vuln_str = f"{float(vuln):.0f}/100" if vuln is not None else "—"
-        opp = c.get("target_opp_score")
-        opp_str = f"{float(opp):.0f}" if opp is not None else "—"
         dist = c.get("target_dist_mi")
-        dist_str = f"{float(dist):.1f} mi" if dist is not None else "—"
+        dist_str = f"{float(dist):.1f} mi away" if dist is not None else "—"
         why = _why_vulnerable(c)
 
         add_rect(slide, 6.30, vy, 3.0, 1.15, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
         add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.06, 2.76, 0.28, size=10, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, f"Vulnerability: {vuln_str}   ·   Opp Score: {opp_str}   ·   {dist_str}",
+        add_text(slide, dist_str,
                  6.42, vy + 0.36, 2.76, 0.20, size=7.5, color=GRAY3)
         add_text(slide, why, 6.42, vy + 0.58, 2.76, 0.50, size=7.5, italic=True,
                  color=NAVY_SOFT, shrink_to_fit=True)
