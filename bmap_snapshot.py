@@ -2509,7 +2509,7 @@ def _enforce_brief_char_limits(brief):
         "wealth_signal": 30, "primary_need": 28,
         "switch_driver": 30, "markets": 50,
     }
-    BULLET_LIMIT = 100
+    BULLET_LIMIT = 130
 
     for field, limit in LIMITS.items():
         if brief.get(field) and len(brief[field]) > limit:
@@ -2611,10 +2611,11 @@ def _generate_audience_brief(institution_name, br, data):
         "primary_need MAX 28 characters, e.g. 'Home equity / HELOC'; "
         "switch_driver MAX 30 characters, e.g. 'Faster equity access'; "
         "markets MAX 50 characters, comma-separated branch names only, no descriptions), "
-        "strong (array of 3 strings, MAX 100 characters each, format 'Signal — implication', "
+        "strong (array of 3 strings, MAX 130 characters each, format 'Signal — implication', "
         "the clearest audience opportunities visible in the data), "
-        "watch (array of 2 strings, MAX 100 characters each, format 'Gap — what to validate', "
-        "honest about what this first-level read can't tell you), "
+        "watch (array of 2 strings, MAX 130 characters each, format 'Gap — what to validate', "
+        "honest about what this first-level read can't tell you — end on a complete clause, "
+        "never a dangling word), "
         "asymmetric (string, MAX 160 characters, 1 sentence — the single most specific, "
         "actionable targeting angle, referencing actual branch "
         "names/markets). No markdown, no preamble, ONLY valid JSON."
@@ -2965,6 +2966,17 @@ def _fetch_brokered(ik):
     }
 
 
+def fetch_branch_competitors(my_branch_id):
+    """Competitors near one specific branch (the 'lead office'), with each
+    competitor's own opportunity score and vulnerability score — distinct
+    from vw_network_top_targets, which is a single bank-wide aggregate."""
+    if not my_branch_id:
+        return []
+    return supabase("branch_target_competitors",
+        f"my_branch_id=eq.{my_branch_id}&select=target_namefull,target_namebr,"
+        "target_opp_score,vuln_score,target_dist_mi,target_zone"
+        "&order=target_opp_score.desc&limit=8")
+
 def fetch_bank_data(ik):
     print(f"  Fetching branch data...")
     rows = supabase("branch_opportunity_base",
@@ -3189,6 +3201,12 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
                  size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
     # 4 zone tiles
+    ZONE_BLURBS = {
+        "INVEST":  "High opportunity, strong branch — expand here first",
+        "ANALYZE": "Mixed signals — worth a closer look before committing spend",
+        "DEFEND":  "Losing ground to a nearby competitor — protect share",
+        "JUSTIFY": "Low opportunity today — hold spend accountable to results",
+    }
     zones = [
         (str(d["invest"]),  "INVEST",   INVEST,  INVEST_L),
         (str(d["analyze"]), "ANALYZE",  ANALYZE, ANALYZE_L),
@@ -3200,6 +3218,8 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
         add_rect(slide, zx, 3.82, 2.0, 0.72, bg, c, Pt(0.8))
         add_text(slide, val, zx, 3.86, 2.0, 0.36, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, zx, 4.22, 2.0, 0.24, size=8,  bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, ZONE_BLURBS[lbl], zx, 4.58, 2.0, 0.38, size=6.5, color=GRAY3,
+                 align=PP_ALIGN.CENTER, shrink_to_fit=True)
 
     # Confidential line sits just above the new banner
     add_text(slide,
@@ -3209,6 +3229,10 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
     # Section-footer banner — gradient + chevron + Verlocity.ai, replaces the old
     # small bottom-left logo treatment
     add_section_footer_banner(slide, chevron_bytes)
+
+    # Page number — cover is page 1 of the deck (was previously unnumbered,
+    # which read as "page 0" against every other slide's visible footer number)
+    add_text(slide, "1", 9.30, 5.30, 0.55, 0.20, size=9, color=WHITE, align=PP_ALIGN.RIGHT)
 
 
 def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=None, chevron_bytes=None):
@@ -3328,6 +3352,111 @@ def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=N
               6.0, 4.86, 3.8, 0.22, size=8, italic=True, color=GRAY3, align=PP_ALIGN.LEFT)
 
 
+
+
+def build_competitive_overview(prs, d, lead_branch, competitors, logo_bytes, page_num,
+                                transparent_logo_bytes=None, chevron_bytes=None):
+    """
+    Slide: Competitive Overview — centered on the bank's lead/flagship office.
+    Bar chart of nearby competitors by Opportunity Score, plus a short list of
+    the top 3 by vulnerability score (the competitors most exposed to losing
+    share). Requested by Tom, 07/2026, off Brock's deck review.
+    """
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, "COMPETITIVE OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    lead_label = "the lead office"
+    if lead_branch:
+        city = lead_branch.get("citybr", "")
+        state = lead_branch.get("stalpbr", "")
+        loc = f"{city}, {state}".strip(", ")
+        lead_label = f"{lead_branch.get('namebr','Lead office')} ({loc})" if loc else lead_branch.get("namebr", "Lead office")
+
+    add_text(slide, "Competitive Overview", 0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
+    add_text(slide, f"Competitors within range of {lead_label}", 0.7, 0.87, 8.4, 0.20,
+             size=9, italic=True, color=NAVY_SOFT)
+
+    if not competitors:
+        add_text(slide, "No competitor data available for this branch yet.",
+                 0.7, 1.6, 8.6, 0.4, size=11, color=GRAY3)
+        return slide
+
+    # ── Bar chart — competitors by Opportunity Score ──
+    add_text(slide, "Competitors by Opportunity Score", 0.7, 1.10, 5.4, 0.26, size=12, bold=True, color=NAVY)
+
+    chart_rows = competitors[:6]  # keep readable — 6 bars max
+    names = [c.get("target_namefull") or c.get("target_namebr") or "—" for c in chart_rows]
+    scores = [round(float(c.get("target_opp_score") or 0), 1) for c in chart_rows]
+
+    chart_data = ChartData()
+    chart_data.categories = list(reversed(names))   # top score reads at the top of the bar chart
+    chart_data.add_series("Opportunity Score", list(reversed(scores)))
+
+    chart_frame = slide.shapes.add_chart(
+        XL_CHART_TYPE.BAR_CLUSTERED,
+        Inches(0.7), Inches(1.42), Inches(5.4), Inches(3.30),
+        chart_data
+    )
+    chart = chart_frame.chart
+    chart.has_legend = False
+    chart.has_title = False
+
+    series = chart.series[0]
+    series.format.fill.solid()
+    series.format.fill.fore_color.rgb = ANALYZE
+    series.format.line.fill.background()
+
+    va = chart.value_axis
+    va.tick_labels.font.size = Pt(7.5)
+    va.tick_labels.font.color.rgb = GRAY3
+    va.has_major_gridlines = False
+    va.minimum_scale = 0
+    va.maximum_scale = 100
+
+    ca = chart.category_axis
+    ca.tick_labels.font.size = Pt(8)
+    ca.tick_labels.font.color.rgb = NAVY
+
+    plot = chart.plots[0]
+    plot.has_data_labels = True
+    dl = plot.data_labels
+    dl.number_format = '0'
+    dl.number_format_is_linked = False
+    dl.font.size = Pt(8)
+    dl.font.color.rgb = NAVY
+
+    # ── Top 3 by vulnerability score — right column ──
+    top_vuln = sorted(competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:3]
+
+    add_text(slide, "Suggested Top 3 — by Vulnerability Score", 6.30, 1.10, 3.0, 0.26,
+             size=12, bold=True, color=NAVY)
+    add_text(slide,
+             "Vulnerability score reflects signals like declining YoY deposits, "
+             "rising noncurrent assets, and softer ROA — competitors more exposed "
+             "to losing share, not necessarily the largest ones.",
+             6.30, 1.38, 3.0, 0.52, size=7.5, color=GRAY3, shrink_to_fit=True)
+
+    vy = 2.00
+    for i, c in enumerate(top_vuln):
+        name = c.get("target_namefull") or c.get("target_namebr") or "—"
+        vuln = c.get("vuln_score")
+        vuln_str = f"{float(vuln):.0f}/100" if vuln is not None else "—"
+        opp = c.get("target_opp_score")
+        opp_str = f"{float(opp):.0f}" if opp is not None else "—"
+        dist = c.get("target_dist_mi")
+        dist_str = f"{float(dist):.1f} mi" if dist is not None else "—"
+
+        add_rect(slide, 6.30, vy, 3.0, 0.86, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_text(slide, f"{i+1}. {name}", 6.42, vy + 0.06, 2.76, 0.30, size=9.5, bold=True,
+                 color=NAVY, shrink_to_fit=True)
+        add_text(slide, f"Vulnerability: {vuln_str}   ·   Opp Score: {opp_str}", 6.42, vy + 0.36, 2.76, 0.20,
+                 size=7.5, color=GRAY3)
+        add_text(slide, f"Distance: {dist_str}", 6.42, vy + 0.58, 2.76, 0.20,
+                 size=7.5, color=GRAY3)
+        vy += 0.98
+
+    return slide
 
 
 def build_branches(prs, d, narr, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
@@ -3673,14 +3802,14 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
              size=7.5, bold=True, color=GRAY3)
     y += 0.16
     for s in strong:
-        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.22))
+        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
         tf = tb.text_frame; tf.word_wrap = True
         p = tf.paragraphs[0]
         r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(8)
         r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
         for r in (r1, r2):
             r.font.name = "Inter"
-        y += 0.22
+        y += 0.25
     y += 0.05
 
     # Where to validate before activating
@@ -3688,14 +3817,14 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
              size=7.5, bold=True, color=GRAY3)
     y += 0.16
     for s in watch:
-        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.22))
+        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
         tf = tb.text_frame; tf.word_wrap = True
         p = tf.paragraphs[0]
         r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = JUSTIFY; r1.font.size = Pt(8)
         r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
         for r in (r1, r2):
             r.font.name = "Inter"
-        y += 0.22
+        y += 0.25
     y += 0.06
 
     # What this means for targeting — callout box
@@ -3805,17 +3934,32 @@ def build_deck(data, logo_bytes):
     transparent_logo_bytes = fetch_transparent_logo()
     chevron_bytes = fetch_chevron_mark()
     build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
-    build_network(prs, D, narr, logo_bytes, page_num=1, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_branches(prs, D, narr, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_financial(prs, D, narr, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_gap(prs, D, narr, page_num=4)
+    build_network(prs, D, narr, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+
+    # Lead/flagship office — highest-deposit branch, preferring one in DC if
+    # present (matches how Tom/Brock refer to it: "the lead office in DC").
+    # Falls back to highest-deposit branch generally if no DC branch exists.
+    lead_branch = None
+    if br:
+        dc_branches = [b for b in br if (b.get("stalpbr") or "").upper() == "DC"]
+        pool = dc_branches or br
+        lead_branch = max(pool, key=lambda b: sf(b.get("latest_dep")))
+
+    print(f"  Fetching competitor data for lead office...")
+    competitors = fetch_branch_competitors(lead_branch.get("uninumbr")) if lead_branch else []
+    build_competitive_overview(prs, D, lead_branch, competitors, logo_bytes, page_num=3,
+                                transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+
+    build_branches(prs, D, narr, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_financial(prs, D, narr, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_gap(prs, D, narr, page_num=6)
     # Audience brief slide — before next steps
     brief = data.get("personas")
-    next_page = 5
+    next_page = 7
     if brief and brief.get("paragraph"):
         print(f"  Adding audience brief slide...")
-        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-        next_page = 6
+        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=7, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+        next_page = 8
     else:
         print("  Skipping audience brief slide — no brief available")
     build_next_steps(prs, D, narr, logo_bytes, page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
