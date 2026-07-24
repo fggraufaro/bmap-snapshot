@@ -2933,8 +2933,8 @@ def add_narrative(slide, n, y0):
             p.text = f"• {b}"
             p.font.size = Pt(9.5); p.font.color.rgb = NAVY; p.font.name = "Inter"
             p.space_after = Pt(5)
-    add_rect(slide, 0.45, y0+3.68, 5.6, 0.46, NAVY)
-    add_text(slide, n.get("close",""), 0.56, y0+3.68, 5.4, 0.46,
+    add_rect(slide, 0.45, y0+3.68, 5.6, 0.78, NAVY)
+    add_text(slide, n.get("close",""), 0.56, y0+3.68, 5.4, 0.78,
              size=9.5, bold=True, color=WHITE, valign="center", shrink_to_fit=True)
 
 # Actual logo asset is 1036×420px — update this if the logo file is ever replaced.
@@ -3043,6 +3043,9 @@ def add_section_footer_banner(slide, chevron_bytes):
     add_chevron_mark(slide, 0, 5.150, 0.476, chevron_bytes)
     add_text(slide, "Verlocity.ai", 0.566, 5.297, 2.2, 0.189,
              size=7, bold=True, italic=True, color=WHITE, font="Inter")
+    add_text(slide,
+             f"Confidential  ·  Verlocity Princeton Partners Group  ·  {datetime.now().year}",
+             2.6, 5.297, 4.8, 0.189, size=7.5, color=WHITE, align=PP_ALIGN.CENTER)
 
 # ═══════════════════════════════════════════════════════════════
 # DATA FETCH
@@ -3437,11 +3440,6 @@ def build_cover(prs, d, logo_bytes, transparent_logo_bytes=None, chevron_bytes=N
         add_text(slide, ZONE_BLURBS[lbl], zx, 4.58, 2.0, 0.38, size=6.5, color=GRAY3,
                  align=PP_ALIGN.CENTER, shrink_to_fit=True)
 
-    # Confidential line sits just above the new banner
-    add_text(slide,
-        f"Confidential  ·  Verlocity Princeton Partners Group  ·  {datetime.now().year}",
-        0.7, 4.98, 8.6, 0.2, size=7.5, color=GRAY3, align=PP_ALIGN.CENTER)
-
     # Section-footer banner — gradient + chevron + Verlocity.ai, replaces the old
     # small bottom-left logo treatment
     add_section_footer_banner(slide, chevron_bytes)
@@ -3590,8 +3588,8 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, "COMPETITIVE OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    add_text(slide, "Competitive Overview", 0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
+    add_text(slide, "Competitive Overview", 0.7, 0.14, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
 
     # ── Scope narrative — data-driven, not AI-generated ──
     n_points = len(all_competitors or [])
@@ -3602,7 +3600,7 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
         + (f" across {n_inst} institutions" if n_inst else "")
         + " — the two most exposed anywhere in your footprint are called out to the right."
     ) if n_points else "No competitor data available yet."
-    add_text(slide, scope_line, 0.7, 0.87, 8.6, 0.34, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
+    add_text(slide, scope_line, 0.7, 0.77, 8.6, 0.28, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
     if not all_competitors:
         add_text(slide, "No competitor data available yet.",
@@ -3614,13 +3612,13 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     # problems on live data (dot overlap, label collision) once there were
     # enough competitors to be interesting — an aggregate breakdown shows
     # the same real breadth without anything that can visually collide. ──
-    add_text(slide, "Competitive Exposure by Distance", 0.7, 1.10, 5.4, 0.24,
+    add_text(slide, "Competitive Exposure by Distance", 0.7, 1.15, 5.4, 0.24,
              size=12, bold=True, color=NAVY)
 
     usable = [c for c in all_competitors
               if c.get("target_dist_mi") is not None]
 
-    CHART_X, CHART_Y, CHART_W, CHART_H = 0.7, 1.42, 5.4, 3.05
+    CHART_X, CHART_Y, CHART_W, CHART_H = 0.7, 1.47, 5.4, 3.05
 
     if usable:
         bands = [
@@ -3705,14 +3703,14 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
     top_vuln = sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
 
-    add_text(slide, "Top 2 Peers to Watch — Across Your Footprint", 6.30, 1.10, 3.0, 0.40,
+    add_text(slide, "Top 2 Peers to Watch — Across Your Footprint", 6.30, 1.15, 3.0, 0.40,
              size=12, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide,
              "Exposure is ranked across deposit trajectory, profitability, and credit "
              "quality together — not any single metric alone.",
-             6.30, 1.48, 3.0, 0.40, size=7.5, color=GRAY3, shrink_to_fit=True)
+             6.30, 1.53, 3.0, 0.40, size=7.5, color=GRAY3, shrink_to_fit=True)
 
-    vy = 1.96
+    vy = 2.01
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
         narrative = _sales_narrative(c)
@@ -3891,10 +3889,10 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     bank_name = d.get("bankName", "")
 
     add_text(slide, f"What This Means for {bank_name}",
-             0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
+             0.7, 0.14, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide, f"Key findings from this Snapshot, and where they point · {bank_name}",
-             0.7, 0.87, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+             0.7, 0.77, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
     opp_score = lead_branch.get("opportunity_score") if lead_branch else None
     opp_str = f"{float(opp_score):.0f}" if opp_score is not None else None
@@ -4079,10 +4077,10 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
 
     # Headline block — narrower box so it can't wrap into the logo/label corner
     add_text(slide, "YOUR MARKET IS TELLING YOU WHO TO TALK TO",
-             0.7, 0.24, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.7, 0.80, 8.6, 0.04, TEAL)
+             0.7, 0.14, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide, f"First-level audience read across priority branches · {bank_name}",
-             0.7, 0.87, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+             0.7, 0.77, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
     brief = brief or {}
     paragraph  = brief.get("paragraph", "")
