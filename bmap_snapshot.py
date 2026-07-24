@@ -4096,7 +4096,7 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
              size=7.5, bold=True, color=GRAY3)
     add_text(slide, paragraph, 0.7, y + 0.15, 8.6, 0.40,
              size=8.5, color=NAVY, shrink_to_fit=True)
-    y += 0.60
+    y += 0.74
 
     # Named persona cards — compact, 1 or 2 side by side
     if personas:
@@ -4123,12 +4123,12 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
                      size=7, color=NAVY, shrink_to_fit=True)
             add_text(slide, line3, cx + 0.10, y + 0.84, card_w - 0.20, 0.18,
                      size=7, bold=True, color=GRAY3, shrink_to_fit=True)
-        y += card_h + 0.08
+        y += card_h + 0.02
 
     # Where the opportunity is strong
     add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.7, y, 8.6, 0.14,
              size=7.5, bold=True, color=GRAY3)
-    y += 0.16
+    y += 0.14
     for s in strong:
         tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
         tf = tb.text_frame; tf.word_wrap = True
@@ -4138,12 +4138,12 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
         for r in (r1, r2):
             r.font.name = "Inter"
         y += 0.25
-    y += 0.05
+    y += 0.02
 
     # Where to validate before activating
     add_text(slide, "WHERE TO VALIDATE BEFORE ACTIVATING", 0.7, y, 8.6, 0.14,
              size=7.5, bold=True, color=GRAY3)
-    y += 0.16
+    y += 0.14
     for s in watch:
         tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
         tf = tb.text_frame; tf.word_wrap = True
@@ -4153,11 +4153,11 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
         for r in (r1, r2):
             r.font.name = "Inter"
         y += 0.25
-    y += 0.06
+    y += 0.02
 
     # What this means for targeting — callout box
     if asymmetric:
-        box_h = 0.46
+        box_h = 0.42
         add_rect(slide, 0.7, y, 8.6, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
         add_text(slide, "WHAT THIS MEANS FOR TARGETING", 0.84, y + 0.04, 8.3, 0.13,
                  size=7, bold=True, color=GRAY3)
