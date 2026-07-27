@@ -4089,9 +4089,7 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
     watch      = (brief.get("watch", []) or [])[:2]
     asymmetric = brief.get("asymmetric", "")
 
-    y = 1.16
-
-    # The audience in one paragraph
+    y = 1.02
     add_text(slide, "THE AUDIENCE IN ONE PARAGRAPH", 0.7, y, 8.6, 0.14,
              size=7.5, bold=True, color=GRAY3)
     add_text(slide, paragraph, 0.7, y + 0.15, 8.6, 0.40,
@@ -4102,7 +4100,7 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
     if personas:
         add_text(slide, "AUDIENCE PERSONAS", 0.7, y, 8.6, 0.14,
                  size=7.5, bold=True, color=GRAY3)
-        y += 0.16
+        y += 0.30
         card_h = 1.05
         n = len(personas)
         card_w = 8.6 if n == 1 else 4.2
