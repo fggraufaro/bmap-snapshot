@@ -4094,7 +4094,7 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
              size=7.5, bold=True, color=GRAY3)
     add_text(slide, paragraph, 0.7, y + 0.15, 8.6, 0.40,
              size=8.5, color=NAVY, shrink_to_fit=True)
-    y += 0.74
+    y += 0.60
 
     # Named persona cards — compact, 1 or 2 side by side
     if personas:
