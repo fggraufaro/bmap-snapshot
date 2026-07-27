@@ -3602,7 +3602,7 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=
 def build_bmap_ecosystem(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
     """Explainer 3 of 3 — how BMAP feeds the rest of the Verlocity Growth
     System (the 5-stage pipeline: BMAP → AudienceFinder → MediaPredict →
-    CRM Hub → White Whale)."""
+    CRM & Engagement → Retention & Deepening)."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
@@ -3622,8 +3622,8 @@ def build_bmap_ecosystem(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
         ("1", "BMAP",           "WHERE TO INVEST",   "Market Intelligence",      True),
         ("2", "AudienceFinder", "WHO TO WIN",         "Precision Targeting",      False),
         ("3", "MediaPredict",   "HOW TO ACQUIRE",     "Omnichannel AI Media",     False),
-        ("4", "CRM Hub",        "CAPTURE & CONVERT",  "Engagement Engine",        False),
-        ("5", "White Whale",    "DEEPEN & GROW",      "Cross-Sell & Retention",   False),
+        ("4", "CRM & Engagement", "CAPTURE & CONVERT",  "Engagement Engine",        False),
+        ("5", "Retention & Deepening", "DEEPEN & GROW", "Cross-Sell & Retention",   False),
     ]
     n = len(stages)
     box_w = 1.55
@@ -4228,6 +4228,67 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
              size=8, color=NAVY, shrink_to_fit=True)
 
 
+def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=None, chevron_bytes=None):
+    """Closing slide — explicit statement of what this Snapshot covers,
+    what it doesn't do, and what a full BMAP Assessment adds. No pricing,
+    timeline, or call-to-action language by design — this states scope
+    and limitations plainly rather than pitching next steps."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    bank_name = d.get("bankName", "")
+    branch_count = d.get("branchCount", "")
+
+    add_text(slide, "What This Snapshot Is — and What It Isn't",
+             0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
+    add_text(slide, f"Scope of this analysis, and what a full BMAP Assessment adds · {bank_name}",
+             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+
+    y = 1.02
+    add_text(slide, "WHAT THIS SNAPSHOT COVERS", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
+    y += 0.14
+    covers = [
+        f"Branch-level opportunity scoring and Invest / Analyze / Defend / Justify "
+        f"classification across all {branch_count} branches in your network.",
+        "A deep-dive read on your single highest-priority branch — competitive exposure, "
+        "deposit trends, and a first-level audience read.",
+        "One point-in-time view, not a tracked trend — a snapshot, not a subscription.",
+    ]
+    for c in covers:
+        _bullet_line(slide, y, c, lead_color=TEAL, size=9, height=0.36)
+        y += 0.36
+    y += 0.04
+
+    add_text(slide, "WHAT THIS SNAPSHOT DOES NOT DO", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=JUSTIFY)
+    y += 0.14
+    limits = [
+        "Doesn't include a written strategy, campaign plan, or budget recommendation — "
+        "this is analysis, not execution.",
+        "Doesn't validate the read against real customer behavior or product-usage data — "
+        "a first-level market signal, not a confirmed pattern.",
+        "Doesn't score every branch in depth, or track any of this over time.",
+    ]
+    for l in limits:
+        _bullet_line(slide, y, l, lead_color=JUSTIFY, size=9, height=0.36)
+        y += 0.36
+    y += 0.04
+
+    add_text(slide, "WHAT A FULL BMAP ASSESSMENT ADDS", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
+    y += 0.14
+    adds = [
+        "The same deep-dive analysis extended to every Invest- and Analyze-zone branch, "
+        "not just the top one.",
+        "Competitor vulnerability scoring across your full footprint — not just the "
+        "markets nearest a single branch.",
+        "Customer segment playbooks for every priority market, refreshed on a quarterly "
+        "cadence as conditions shift.",
+    ]
+    for a in adds:
+        _bullet_line(slide, y, a, lead_color=NAVY_SOFT, size=9, height=0.34)
+        y += 0.34
+
+
 
 # ═══════════════════════════════════════════════════════════════
 # MAIN BUILD
@@ -4518,6 +4579,9 @@ def build_deck(data, logo_bytes):
         print("  Skipping audience brief slide — no brief available")
     build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
                       page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+
+    build_scope_next_steps(prs, D, logo_bytes, page_num=next_page + 1,
+                            transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
