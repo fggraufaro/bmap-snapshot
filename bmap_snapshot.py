@@ -4103,8 +4103,8 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transpare
         y += 0.30
         card_h = 1.05
         n = len(personas)
-        card_w = 8.6 if n == 1 else 4.2
-        gap = 0.2
+        card_w = 8.6 if n == 1 else 4.05
+        gap = 0.5
         for i, p in enumerate(personas):
             cx = 0.7 + i * (card_w + gap)
             add_rect(slide, cx, y, card_w, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
