@@ -4228,11 +4228,40 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
              size=8, color=NAVY, shrink_to_fit=True)
 
 
+def _explainer_card(slide, x, y, w, h, header, items, accent, bg):
+    """One card in the 3-column closing layout: colored top bar, header,
+    then arrow-bulleted items — same visual language as the Investment
+    Framework tiles on page 3, but its own accent set so this slide still
+    reads as visually distinct rather than a third stacked bullet list."""
+    add_rect(slide, x, y, w, h, bg, accent, Pt(1.0))
+    add_rect(slide, x, y, w, 0.05, accent)
+    pad = 0.16
+    add_text(slide, header, x + pad, y + 0.14, w - 2 * pad, 0.34,
+             size=9.5, bold=True, color=accent, shrink_to_fit=True)
+    iy = y + 0.52
+    for it in items:
+        tb = slide.shapes.add_textbox(Inches(x + pad), Inches(iy), Inches(w - 2 * pad), Inches(0.68))
+        tf = tb.text_frame; tf.word_wrap = True
+        from pptx.enum.text import MSO_AUTO_SIZE
+        tf.auto_size = MSO_AUTO_SIZE.TEXT_TO_FIT_SHAPE
+        p = tf.paragraphs[0]
+        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = accent; r1.font.size = Pt(8.5)
+        r2 = p.add_run(); r2.text = it; r2.font.size = Pt(8.5); r2.font.color.rgb = NAVY
+        for r in (r1, r2):
+            r.font.name = "Inter"
+        iy += 0.72
+
+
 def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=None, chevron_bytes=None):
     """Closing slide — explicit statement of what this Snapshot covers,
     what it doesn't do, and what a full BMAP Assessment adds. No pricing,
     timeline, or call-to-action language by design — this states scope
-    and limitations plainly rather than pitching next steps."""
+    and limitations plainly rather than pitching next steps.
+
+    3-column card layout rather than the stacked-bullet-list pattern used
+    on pages 2 and 3 — three consecutive slides in that same format read
+    as repetitive, so this one is visually distinct while keeping the
+    same underlying content."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
@@ -4245,9 +4274,6 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
     add_text(slide, f"Scope of this analysis, and what a full BMAP Assessment adds · {bank_name}",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.02
-    add_text(slide, "WHAT THIS SNAPSHOT COVERS", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
-    y += 0.14
     covers = [
         f"Branch-level opportunity scoring and Invest / Analyze / Defend / Justify "
         f"classification across all {branch_count} branches in your network.",
@@ -4255,13 +4281,6 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
         "deposit trends, and a first-level audience read.",
         "One point-in-time view, not a tracked trend — a snapshot, not a subscription.",
     ]
-    for c in covers:
-        _bullet_line(slide, y, c, lead_color=TEAL, size=9, height=0.36)
-        y += 0.36
-    y += 0.04
-
-    add_text(slide, "WHAT THIS SNAPSHOT DOES NOT DO", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=JUSTIFY)
-    y += 0.14
     limits = [
         "Doesn't include a written strategy, campaign plan, or budget recommendation — "
         "this is analysis, not execution.",
@@ -4269,13 +4288,6 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
         "a first-level market signal, not a confirmed pattern.",
         "Doesn't score every branch in depth, or track any of this over time.",
     ]
-    for l in limits:
-        _bullet_line(slide, y, l, lead_color=JUSTIFY, size=9, height=0.36)
-        y += 0.36
-    y += 0.04
-
-    add_text(slide, "WHAT A FULL BMAP ASSESSMENT ADDS", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
-    y += 0.14
     adds = [
         "The same deep-dive analysis extended to every Invest- and Analyze-zone branch, "
         "not just the top one.",
@@ -4284,9 +4296,18 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
         "Customer segment playbooks for every priority market, refreshed on a quarterly "
         "cadence as conditions shift.",
     ]
-    for a in adds:
-        _bullet_line(slide, y, a, lead_color=NAVY_SOFT, size=9, height=0.34)
-        y += 0.34
+
+    y0 = 1.05
+    tile_w = 2.73
+    gap = (8.6 - tile_w * 3) / 2
+    tile_h = 3.00
+    cards = [
+        (0.7,                          "WHAT THIS SNAPSHOT COVERS",      covers, TEAL,    rgb("F0FAFB")),
+        (0.7 + (tile_w + gap),         "WHAT THIS SNAPSHOT DOES NOT DO", limits, JUSTIFY, JUSTIFY_L),
+        (0.7 + 2 * (tile_w + gap),     "WHAT A FULL BMAP ASSESSMENT ADDS", adds, ANALYZE, ANALYZE_L),
+    ]
+    for tx, header, items, accent, bg in cards:
+        _explainer_card(slide, tx, y0, tile_w, tile_h, header, items, accent, bg)
 
 
 
