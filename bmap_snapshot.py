@@ -3592,14 +3592,14 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     ]
     card_w = 1.95
     card_gap = (8.6 - card_w * 4) / 3
-    card_h = 0.72
+    card_h = 0.85
     for i, (name, desc) in enumerate(forces):
         cx = 0.7 + i * (card_w + card_gap)
         add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
         add_rect(slide, cx, y, card_w, 0.05, TEAL)
-        add_text(slide, name, cx + 0.10, y + 0.10, card_w - 0.20, 0.32, size=9.5, bold=True,
+        add_text(slide, name, cx + 0.10, y + 0.14, card_w - 0.20, 0.26, size=9.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.10, y + 0.40, card_w - 0.20, 0.30, size=6.5, color=GRAY3,
+        add_text(slide, desc, cx + 0.10, y + 0.50, card_w - 0.20, 0.30, size=6.5, color=GRAY3,
                  shrink_to_fit=True)
     y += card_h
 
@@ -3629,12 +3629,13 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     r.font.bold = True; r.font.size = Pt(12.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
     y += badge_h + 0.06
 
-    # ── Bridge line — directly answers "what does a raw score mean":
-    # nothing on its own, only its quartile rank against peers does ──
+    # ── Bridge line — answers "what does a raw score mean" without
+    # implying the score itself is meaningless: it's rank, not raw
+    # value, that determines the zone ──
     add_text(slide,
-             "A score alone means little — a 37 could land in Invest in one state and "
-             "Justify in another. What sets the zone is the quartile: rank against peer "
-             "community banks in-state, applied to every branch in your network.",
+             "It's rank, not raw value, that sets the zone — the same score of 37 could be "
+             "Invest in one state and Justify in another. Each branch is scored against peer "
+             "community banks in-state, by quartile, then applied across your whole network.",
              0.7, y, 8.6, 0.34, size=8.5, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
     y += 0.34
@@ -4326,15 +4327,27 @@ def _explainer_card(slide, x, y, w, h, header, items, accent, bg):
 
 
 def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=None, chevron_bytes=None):
-    """Closing slide — explicit statement of what this Snapshot covers,
-    what it doesn't do, and what a full BMAP Assessment adds. No pricing,
-    timeline, or call-to-action language by design — this states scope
-    and limitations plainly rather than pitching next steps.
+    """Closing slide — three distinct tiers, not two: what this Snapshot
+    covers, what BMAP as a product never does (even at full scale — it's
+    Stage 1 only, market intelligence, not execution), and what turning
+    on the full Verlocity Growth System (all 5 stages from the ecosystem
+    slide) adds on top of that. No pricing, timeline, or call-to-action
+    language by design.
 
-    3-column card layout rather than the stacked-bullet-list pattern used
-    on pages 2 and 3 — three consecutive slides in that same format read
-    as repetitive, so this one is visually distinct while keeping the
-    same underlying content."""
+    Previously this conflated "Snapshot limitations" with "BMAP
+    limitations" in one middle column and framed the third column as
+    "full BMAP Assessment adds" — which undersold the real ceiling.
+    BMAP at full scale still only scores and targets; it doesn't run
+    campaigns, manage engagement, or drive retention. That's the rest of
+    the Growth System, not more BMAP. The third column's closing line
+    intentionally echoes the ecosystem slide's own "one upstream data
+    foundation drives every downstream dollar spent" so the two slides
+    reinforce each other instead of drifting apart.
+
+    3-column card layout, same visual language as the Investment
+    Framework tiles on page 4 but its own accent set — three consecutive
+    slides in an identical stacked-bullet-list format would read as
+    repetitive."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
@@ -4344,8 +4357,10 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
     add_text(slide, "What This Snapshot Is — and What It Isn't",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, f"Scope of this analysis, and what a full BMAP Assessment adds · {bank_name}",
-             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+    add_text(slide,
+             f"Scope of this analysis, what BMAP alone doesn't do, and what the full "
+             f"Verlocity engine adds · {bank_name}",
+             0.7, 0.77, 8.6, 0.20, size=8.5, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
     covers = [
         f"Branch-level opportunity scoring and Invest / Analyze / Defend / Justify "
@@ -4357,17 +4372,18 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
     limits = [
         "Doesn't include a written strategy, campaign plan, or budget recommendation — "
         "this is analysis, not execution.",
-        "Doesn't validate the read against real customer behavior or product-usage data — "
-        "a first-level market signal, not a confirmed pattern.",
-        "Doesn't score every branch in depth, or track any of this over time.",
+        "Doesn't target, reach, or convert a single customer — BMAP shows you where to "
+        "look, not who to contact or how.",
+        "Doesn't run campaigns, manage engagement, or drive retention — that's the rest "
+        "of the Verlocity Growth System, not BMAP alone.",
     ]
     adds = [
-        "The same deep-dive analysis extended to every Invest- and Analyze-zone branch, "
-        "not just the top one.",
-        "Competitor vulnerability scoring across your full footprint — not just the "
-        "markets nearest a single branch.",
-        "Customer segment playbooks for every priority market, refreshed on a quarterly "
-        "cadence as conditions shift.",
+        "AudienceFinder turns BMAP's scores into a targetable audience; MediaPredict "
+        "turns that audience into a media plan.",
+        "CRM & Engagement and Retention & Deepening carry new customers from acquisition "
+        "through cross-sell.",
+        "One upstream data foundation drives every downstream dollar spent — not a "
+        "one-time report.",
     ]
 
     y0 = 1.05
@@ -4375,9 +4391,9 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
     gap = (8.6 - tile_w * 3) / 2
     tile_h = 3.00
     cards = [
-        (0.7,                          "WHAT THIS SNAPSHOT COVERS",      covers, TEAL,    rgb("F0FAFB")),
-        (0.7 + (tile_w + gap),         "WHAT THIS SNAPSHOT DOES NOT DO", limits, JUSTIFY, JUSTIFY_L),
-        (0.7 + 2 * (tile_w + gap),     "WHAT A FULL BMAP ASSESSMENT ADDS", adds, ANALYZE, ANALYZE_L),
+        (0.7,                      "WHAT THIS SNAPSHOT COVERS",           covers, TEAL,    rgb("F0FAFB")),
+        (0.7 + (tile_w + gap),     "WHAT BMAP ALONE DOESN'T DO",          limits, JUSTIFY, JUSTIFY_L),
+        (0.7 + 2 * (tile_w + gap), "TURN ON THE FULL VERLOCITY ENGINE",   adds,   ANALYZE, ANALYZE_L),
     ]
     for tx, header, items, accent, bg in cards:
         _explainer_card(slide, tx, y0, tile_w, tile_h, header, items, accent, bg)
