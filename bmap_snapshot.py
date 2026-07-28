@@ -3509,10 +3509,12 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
              "in deposit growth strategy.",
              col_x[1], y, col_w, 1.15, size=11, color=NAVY, shrink_to_fit=True)
 
-    quote_y = y + 1.20
+    # ── Pull-quote — centered across the full width, not confined to the
+    # right column, since it's the single unifying line for the slide ──
+    quote_y = y + 1.30
     add_text(slide, "Where should we invest our marketing capital — and where should we not?",
-             col_x[1], quote_y, col_w, 0.42, size=12.5, bold=True, italic=True, color=NAVY,
-             shrink_to_fit=True)
+             0.7, quote_y, 8.6, 0.42, size=13, bold=True, italic=True, color=NAVY,
+             align=PP_ALIGN.CENTER, shrink_to_fit=True)
     y = quote_y + 0.55
 
     add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
@@ -3520,12 +3522,13 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
 
     # ── Table-count stat — restrained card treatment matching the KPI
     # tiles used elsewhere in the deck (e.g. the Deposit Gap slide), not
-    # a giant billboard number. Light card, thin accent bar, modest-size
-    # stat, everything else quiet. ──
+    # a giant billboard number. "24" spans the full card height so it's
+    # vertically centered against the card itself, not a sub-box — keeps
+    # top/bottom air equal regardless of font metrics. ──
     card_h = 0.80
     add_rect(slide, 0.7, y, 8.6, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
     add_rect(slide, 0.7, y, 0.06, card_h, TEAL)
-    add_text(slide, "24", 0.95, y + 0.12, 0.85, 0.56, size=30, bold=True, color=TEAL,
+    add_text(slide, "24", 0.95, y, 0.85, card_h, size=30, bold=True, color=TEAL,
              align=PP_ALIGN.LEFT, valign="center")
     add_text(slide, "DATA TABLES", 1.85, y + 0.14, 2.4, 0.26, size=11, bold=True, color=NAVY)
     add_text(slide,
@@ -3534,12 +3537,16 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
              1.85, y + 0.42, 6.9, 0.32, size=9, color=GRAY3, shrink_to_fit=True)
     y += card_h + 0.10
 
-    add_rect(slide, 0.7, y, 8.6, 0.56, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
+    # ── Closing callout — more internal room (taller box, text vertically
+    # centered) so the text doesn't crowd the box edges ──
+    box_h = 0.68
+    add_rect(slide, 0.7, y, 8.6, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
     add_text(slide,
              "Public data tells you where to invest. Add your own transaction and "
              "relationship data, and BMAP tells you exactly who — turning market "
              "intelligence into precision targeting.",
-             0.84, y + 0.11, 8.3, 0.40, size=12, bold=True, color=NAVY, shrink_to_fit=True)
+             0.84, y, 8.3, box_h, size=12, bold=True, color=NAVY, valign="center",
+             shrink_to_fit=True)
 
 
 def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
