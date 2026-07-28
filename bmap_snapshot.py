@@ -3471,65 +3471,97 @@ def _bullet_line(slide, y, text, lead_color=TEAL, rest_color=NAVY, size=9, heigh
 
 
 def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
-    """Explainer 1 of 3 — the problem BMAP solves and what it does."""
+    """Explainer — the problem BMAP solves and what it does, two columns
+    styled after the Executive Leave-Behind's own layout: regular-weight
+    body copy, with a single bold italic pull-quote carrying the emphasis
+    rather than the whole paragraph. Closes on the real data-table count
+    (24, not the 6 source families) and a line connecting public data
+    ("where") to first-party data ("who") — Marc's ask from the demo,
+    kept concrete rather than a vague "gets sharper" close."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    bank_name = d.get("bankName", "")
-
-    add_text(slide, "Know Where to Win Before You Spend",
+    add_text(slide, "BMAP: Know Where to Win Before You Spend",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide, "What BMAP does, and the problem it solves for community banks",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.02
-    add_text(slide, "THE PROBLEM", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
+    # ── Two columns: The Problem | What BMAP Does ──
+    y = 1.05
+    col_w = 4.1
+    col_gap = 0.4
+    col_x = [0.7, 0.7 + col_w + col_gap]
+
+    add_text(slide, "THE PROBLEM", col_x[0], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
+    add_text(slide, "WHAT BMAP DOES", col_x[1], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
+    y += 0.24
+
     add_text(slide,
              "Most community banks allocate marketing budgets by tradition, not by data. "
-             "The result is predictable: equal investment across unequal opportunities, wasted "
-             "spend in markets where the battle is already lost, and missed growth in markets "
-             "where the conditions are ripe to win.",
-             0.7, y + 0.15, 8.6, 0.58, size=9, color=NAVY, shrink_to_fit=True)
-    y += 0.85
-
-    add_text(slide, "WHAT BMAP DOES", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
+             "The result is predictable: equal investment across unequal opportunities, "
+             "wasted spend in markets where the battle is already lost, and missed growth "
+             "where conditions are ripe to win.",
+             col_x[0], y, col_w, 1.55, size=11, color=NAVY, shrink_to_fit=True)
     add_text(slide,
-             "BMAP is a branch-level market intelligence platform that gives bank leadership a "
-             "precise, data-driven answer to the most important question in deposit growth "
-             "strategy: where should we invest our marketing capital — and where should we not?",
-             0.7, y + 0.15, 8.6, 0.58, size=9, color=NAVY, shrink_to_fit=True)
-    y += 0.85
+             "BMAP is a branch-level market intelligence platform that gives bank "
+             "leadership a precise, data-driven answer to the most important question "
+             "in deposit growth strategy.",
+             col_x[1], y, col_w, 1.15, size=11, color=NAVY, shrink_to_fit=True)
 
-    add_text(slide, "THREE STRATEGIC QUESTIONS BMAP ANSWERS", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.18
-    questions = [
-        "Where are our most asymmetric growth opportunities — where can incremental "
-        "investment produce the highest deposit return?",
-        "Which competitors in our markets are most vulnerable right now — and how do "
-        "we take their customers?",
-        "Where are we over-investing relative to opportunity — and where should we "
-        "redeploy that capital?",
-    ]
-    for q in questions:
-        _bullet_line(slide, y, q, size=9, height=0.32)
-        y += 0.36
-    y += 0.04
+    quote_y = y + 1.20
+    add_text(slide, "Where should we invest our marketing capital — and where should we not?",
+             col_x[1], quote_y, col_w, 0.42, size=12.5, bold=True, italic=True, color=NAVY,
+             shrink_to_fit=True)
+    y = quote_y + 0.55
 
-    add_rect(slide, 0.7, y, 8.6, 0.50, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-    add_text(slide, "WHY THIS MATTERS", 0.84, y + 0.05, 8.3, 0.13, size=7, bold=True, color=GRAY3)
+    add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
+    y += 0.10
+
+    # ── Table-count stat — restrained card treatment matching the KPI
+    # tiles used elsewhere in the deck (e.g. the Deposit Gap slide), not
+    # a giant billboard number. Light card, thin accent bar, modest-size
+    # stat, everything else quiet. ──
+    card_h = 0.80
+    add_rect(slide, 0.7, y, 8.6, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+    add_rect(slide, 0.7, y, 0.06, card_h, TEAL)
+    add_text(slide, "24", 0.95, y + 0.12, 0.85, 0.56, size=30, bold=True, color=TEAL,
+             align=PP_ALIGN.LEFT, valign="center")
+    add_text(slide, "DATA TABLES", 1.85, y + 0.14, 2.4, 0.26, size=11, bold=True, color=NAVY)
     add_text(slide,
-             f"This Snapshot is a first-level look at what a full BMAP engagement reveals "
-             f"across {bank_name}'s network — the same analysis, one branch deep.",
-             0.84, y + 0.19, 8.3, 0.25, size=8, color=NAVY, shrink_to_fit=True)
+             "FDIC  ·  FFIEC  ·  NCUA  ·  Census  ·  Zillow  ·  PostGIS — public "
+             "regulatory, demographic, and market data, fused into one scoring engine.",
+             1.85, y + 0.42, 6.9, 0.32, size=9, color=GRAY3, shrink_to_fit=True)
+    y += card_h + 0.10
+
+    add_rect(slide, 0.7, y, 8.6, 0.56, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
+    add_text(slide,
+             "Public data tells you where to invest. Add your own transaction and "
+             "relationship data, and BMAP tells you exactly who — turning market "
+             "intelligence into precision targeting.",
+             0.84, y + 0.11, 8.3, 0.40, size=12, bold=True, color=NAVY, shrink_to_fit=True)
 
 
-def build_bmap_framework(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
-    """Explainer 2 of 3 — the Four Forces BMAP measures, and the resulting
-    Invest/Analyze/Defend/Justify Investment Framework. Reuses the exact
-    zone colors (INVEST/ANALYZE/DEFEND/JUSTIFY) used later on the branch-
-    level slides, so this explicitly sets up that vocabulary."""
+def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
+    """Explainer — how the four real inputs to opportunity_score (sourced
+    from the live refresh_branch_opportunity_base function, not the
+    Leave-Behind's marketing copy) converge into one score, which then
+    sorts branches into the Invest/Analyze/Defend/Justify zones used on
+    every branch-level slide later in the deck.
+
+    Built as a top-to-bottom flow diagram (forces → score → zones)
+    rather than stacked bullet lists — the underlying logic is a
+    convergence/divergence, and a vertical funnel is the natural shape
+    for that; a left-right layout would read as a sequence of steps
+    instead and would force each card into a narrow column given the
+    available height.
+
+    Each zone tile leads with its quartile band (what actually puts a
+    branch there) before the recommended action — directly answers the
+    "what does a score of 37 mean" question: a raw score means nothing
+    on its own, only its percentile rank against peer community banks
+    in-state does, which the bridge line under the score badge also
+    states explicitly."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
@@ -3539,67 +3571,101 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=
     add_text(slide, "How BMAP scores and classifies every branch in your network",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.02
-    add_text(slide, "FOUR FORCES BMAP MEASURES SIMULTANEOUSLY", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.20
+    # ── Row 1: the four forces (inputs) ──
+    y = 0.98
+    add_text(slide, "WHAT BMAP MEASURES", 0.7, y, 8.6, 0.14,
+             size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+    y += 0.19
+
     forces = [
-        ("Market Growth Dynamics",
-         "Is the deposit opportunity in each market expanding or contracting?"),
-        ("Competitor Density",
-         "How crowded is the competitive landscape around each branch?"),
-        ("Competitor Vulnerability",
-         "Which competitors are most susceptible to losing customers right now — based on "
-         "rate positioning, service gaps, and market momentum?"),
-        ("Historical Branch Performance",
-         "How is each branch actually performing relative to its market — including "
-         "year-over-year deposit trends vs. competitors?"),
+        ("Market Growth", "Expanding or contracting income, population, home values"),
+        ("Relative Performance", "Growing faster or slower than nearby competitors"),
+        ("Competitive Density", "How crowded the immediate market is"),
+        ("Deposit Size", "Branch size vs. peers statewide"),
     ]
-    for name, definition in forces:
-        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.32))
-        tf = tb.text_frame; tf.word_wrap = True
-        p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(9)
-        r2 = p.add_run(); r2.text = f"{name} — "; r2.font.bold = True; r2.font.size = Pt(9); r2.font.color.rgb = NAVY
-        r3 = p.add_run(); r3.text = definition; r3.font.size = Pt(9); r3.font.color.rgb = NAVY_SOFT
-        for r in (r1, r2, r3):
-            r.font.name = "Inter"
-        y += 0.36
-    y += 0.06
+    card_w = 1.95
+    card_gap = (8.6 - card_w * 4) / 3
+    card_h = 0.72
+    for i, (name, desc) in enumerate(forces):
+        cx = 0.7 + i * (card_w + card_gap)
+        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
+        add_rect(slide, cx, y, card_w, 0.05, TEAL)
+        add_text(slide, name, cx + 0.10, y + 0.10, card_w - 0.20, 0.32, size=9.5, bold=True,
+                 color=NAVY, shrink_to_fit=True)
+        add_text(slide, desc, cx + 0.10, y + 0.40, card_w - 0.20, 0.30, size=6.5, color=GRAY3,
+                 shrink_to_fit=True)
+    y += card_h
 
-    add_text(slide, "THE BMAP INVESTMENT FRAMEWORK", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.20
+    # ── Convergence arrow into the score ──
+    arrow_w, arrow_h = 0.32, 0.16
+    arrow_x = 5.0 - arrow_w / 2
+    shp = slide.shapes.add_shape(MSO_SHAPE.DOWN_ARROW, Inches(arrow_x), Inches(y + 0.02),
+                                  Inches(arrow_w), Inches(arrow_h))
+    shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
+    shp.line.fill.background()
+    y += arrow_h + 0.08
 
+    # ── Score badge ──
+    badge_w, badge_h = 3.6, 0.46
+    badge_x = 5.0 - badge_w / 2
+    shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(badge_x), Inches(y),
+                                  Inches(badge_w), Inches(badge_h))
+    shp.fill.solid(); shp.fill.fore_color.rgb = NAVY
+    shp.line.fill.background()
+    tf = shp.text_frame
+    tf.word_wrap = True
+    from pptx.enum.text import MSO_ANCHOR
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    r = p.add_run(); r.text = "ONE OPPORTUNITY SCORE  ·  0–100"
+    r.font.bold = True; r.font.size = Pt(12.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
+    y += badge_h + 0.06
+
+    # ── Bridge line — directly answers "what does a raw score mean":
+    # nothing on its own, only its quartile rank against peers does ──
+    add_text(slide,
+             "A score alone means little — a 37 could land in Invest in one state and "
+             "Justify in another. What sets the zone is the quartile: rank against peer "
+             "community banks in-state, applied to every branch in your network.",
+             0.7, y, 8.6, 0.34, size=8.5, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             shrink_to_fit=True)
+    y += 0.34
+
+    # ── Divergence arrow into the four zones ──
+    shp = slide.shapes.add_shape(MSO_SHAPE.DOWN_ARROW, Inches(arrow_x), Inches(y + 0.02),
+                                  Inches(arrow_w), Inches(arrow_h))
+    shp.fill.solid(); shp.fill.fore_color.rgb = GRAY3
+    shp.line.fill.background()
+    y += arrow_h + 0.08
+
+    # ── Row 2: the four zones (outputs) — quartile band first (what
+    # puts a branch here), action second (what to do about it) ──
     roles = [
-        ("INVEST",
-         "Highest-priority growth opportunity — market conditions favor aggressive acquisition.",
+        ("INVEST", "Top quartile in-state",
          "Concentrate growth capital here first.", INVEST, INVEST_L),
-        ("ANALYZE",
-         "Strong potential worth validating — credible test-and-scale candidate.",
+        ("ANALYZE", "50th–75th percentile",
          "Focused growth leadership and targeted investment.", ANALYZE, ANALYZE_L),
-        ("DEFEND",
-         "Competitive pressure is working against easy expansion — retention is the priority.",
+        ("DEFEND", "25th–50th percentile",
          "Protect position; do not overspend on acquisition.", DEFEND, DEFEND_L),
-        ("JUSTIFY",
-         "Weak relative performance — question continued investment level.",
+        ("JUSTIFY", "Bottom quartile in-state",
          "Run for efficiency; right-size resource allocation.", JUSTIFY, JUSTIFY_L),
     ]
     tile_w = 2.0
     tile_gap = (8.6 - tile_w * 4) / 3
-    tile_h = 1.80
-    for i, (lbl, definition, action, c, bg) in enumerate(roles):
+    tile_h = 1.00
+    for i, (lbl, band, action, c, bg) in enumerate(roles):
         tx = 0.7 + i * (tile_w + tile_gap)
         add_rect(slide, tx, y, tile_w, tile_h, bg, c, Pt(0.8))
-        add_rect(slide, tx, y, tile_w, 0.06, c)
-        add_text(slide, lbl, tx + 0.10, y + 0.14, tile_w - 0.20, 0.24, size=13, bold=True, color=c)
-        add_text(slide, definition, tx + 0.10, y + 0.42, tile_w - 0.20, 0.74, size=7, color=NAVY,
-                 shrink_to_fit=True)
-        add_text(slide, action, tx + 0.10, y + 1.18, tile_w - 0.20, 0.55, size=7, bold=True, color=c,
-                 shrink_to_fit=True)
+        add_rect(slide, tx, y, tile_w, 0.05, c)
+        add_text(slide, lbl, tx + 0.10, y + 0.09, tile_w - 0.20, 0.24, size=13, bold=True, color=c)
+        add_text(slide, band, tx + 0.10, y + 0.36, tile_w - 0.20, 0.20, size=8, bold=True,
+                 color=GRAY3, shrink_to_fit=True)
+        add_text(slide, action, tx + 0.10, y + 0.58, tile_w - 0.20, 0.38, size=7.5, bold=True,
+                 color=c, shrink_to_fit=True)
 
 
-def build_bmap_ecosystem(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
+def build_bmap_ecosystem(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
     """Explainer 3 of 3 — how BMAP feeds the rest of the Verlocity Growth
     System (the 5-stage pipeline: BMAP → AudienceFinder → MediaPredict →
     CRM & Engagement → Retention & Deepening)."""
@@ -4567,8 +4633,8 @@ def build_deck(data, logo_bytes):
     # 3 explainer slides — Verlocity/BMAP positioning content, same on every
     # deck, added per Marc Winkler demo feedback (pages 2-4)
     build_bmap_overview(prs, D, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_framework(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_ecosystem(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_ecosystem(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_framework(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     build_network(prs, D, narr, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_branches(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
