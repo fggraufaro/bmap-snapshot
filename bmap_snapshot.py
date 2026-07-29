@@ -3653,27 +3653,7 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     add_text(slide, "Two families of scoring, one connected system",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.05
-    col_w = 4.1
-    col_gap = 0.4
-    col_x = [0.7, 0.7 + col_w + col_gap]
-
-    # ── Card boxes behind each column — same height for both, so they
-    # align visually even though Internal has 4 items and Competitive
-    # has 2. Light-blue/white fill to match the deck's palette. ──
-    pad = 0.16
-    box_top = y - pad
-    box_h = 0.24 + 4 * 0.56 + 0.14 + pad
-    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAFB"), TEAL, Pt(0.9))
-    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, 0.05, TEAL)
-    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAF7"), EMERALD, Pt(0.9))
-    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, 0.05, EMERALD)
-
-    add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
-             col_x[0], y, col_w, 0.16, size=8, bold=True, color=GRAY3, shrink_to_fit=True)
-    add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
-             col_x[1], y, col_w, 0.16, size=8, bold=True, color=GRAY3, shrink_to_fit=True)
-    y += 0.24
+    y = 1.20
 
     internal = [
         ("01", "Opportunity Score",
@@ -3693,14 +3673,11 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
          "How exposed a competitor branch is to losing deposits. Base = 100 minus "
          "their Opportunity Score, then amplified by declining deposits, low ROA, "
          "credit stress, and proximity."),
-        ("06", "Prospecting Score",
-         "Ranked acquisition targets, for every branch and for the full network — "
-         "the specific competitor branches whose customers are most likely to switch."),
     ]
 
-    def numbered_block(x, num, name, desc, item_h, accent):
-        badge_d = 0.28
-        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y_block[0]),
+    def score_item(x, y0, w, num, name, desc, item_h, accent):
+        badge_d = 0.30
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y0),
                                       Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = accent
         shp.line.fill.background()
@@ -3712,31 +3689,47 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         r = p.add_run(); r.text = num
-        r.font.bold = True; r.font.size = Pt(9.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
+        r.font.bold = True; r.font.size = Pt(10); r.font.color.rgb = WHITE; r.font.name = "Inter"
 
-        add_text(slide, name, x + 0.36, y_block[0], col_w - 0.36, 0.24, size=10.5, bold=True,
+        add_text(slide, name, x + 0.38, y0, w - 0.38, 0.26, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, x + 0.36, y_block[0] + 0.24, col_w - 0.36, item_h - 0.24,
-                 size=8, color=NAVY_SOFT, shrink_to_fit=True)
-        y_block[0] += item_h
+        add_text(slide, desc, x + 0.38, y0 + 0.28, w - 0.38, item_h - 0.28,
+                 size=8.5, color=NAVY_SOFT, shrink_to_fit=True)
 
-    y_block = [y]
-    for num, name, desc in internal:
-        numbered_block(col_x[0], num, name, desc, 0.56, TEAL)
+    # ── INTERNAL — full-width box, 4 items as a 2x2 grid ──
+    pad = 0.16
+    inner_pad = 0.22
+    grid_gap = 0.40
+    box_top = y - pad
+    row_h = 0.95
+    box_h_internal = 0.30 + 2 * row_h + 0.14 + pad
+    add_rect(slide, 0.7 - pad, box_top, 8.6 + 2 * pad, box_h_internal, rgb("F0FAFB"), TEAL, Pt(0.9))
+    add_rect(slide, 0.7 - pad, box_top, 8.6 + 2 * pad, 0.05, TEAL)
+    add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
+             0.7, y, 8.6, 0.22, size=11, bold=True, color=TEAL, shrink_to_fit=True)
 
-    y_block[0] = y
-    for num, name, desc in competitive:
-        numbered_block(col_x[1], num, name, desc, 1.05, EMERALD)
+    grid_y = y + 0.30
+    cell_w = (8.6 - 2 * inner_pad - grid_gap) / 2
+    cell_x = [0.7 + inner_pad, 0.7 + inner_pad + cell_w + grid_gap]
+    grid_positions = [
+        (cell_x[0], grid_y), (cell_x[1], grid_y),
+        (cell_x[0], grid_y + row_h), (cell_x[1], grid_y + row_h),
+    ]
+    for (num, name, desc), (gx, gy) in zip(internal, grid_positions):
+        score_item(gx, gy, cell_w, num, name, desc, row_h, TEAL)
 
-    y = box_top + box_h + 0.14
+    y = box_top + box_h_internal + 0.30
 
-    add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
-    y += 0.14
-    add_text(slide,
-             "Part 1 scores answer \u201cwhat should we do with our own branches?\u201d  ·  "
-             "Part 2 scores answer \u201cwhich competitors should we target?\u201d",
-             0.7, y, 8.6, 0.30, size=9.5, italic=True, bold=True, color=NAVY,
-             align=PP_ALIGN.CENTER, shrink_to_fit=True)
+    # ── COMPETITIVE — full-width box below, single item ──
+    box_top2 = y - pad
+    comp_h = 0.75
+    box_h_comp = 0.30 + comp_h + 0.14 + pad
+    add_rect(slide, 0.7 - pad, box_top2, 8.6 + 2 * pad, box_h_comp, rgb("F0FAF7"), EMERALD, Pt(0.9))
+    add_rect(slide, 0.7 - pad, box_top2, 8.6 + 2 * pad, 0.05, EMERALD)
+    add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
+             0.7, y, 8.6, 0.22, size=11, bold=True, color=EMERALD, shrink_to_fit=True)
+    num, name, desc = competitive[0]
+    score_item(0.7 + inner_pad, y + 0.30, 8.6 - 2 * inner_pad, num, name, desc, comp_h, EMERALD)
 
 
 def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
