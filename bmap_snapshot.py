@@ -3484,70 +3484,69 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     add_text(slide, "BMAP: Know Where to Win Before You Spend",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, "Branch Market Assessment Platform — what it does, and the problem "
-                     "it solves for community banks",
-             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
     # ── Two columns: The Problem | What BMAP Does ──
-    y = 1.05
+    y = 0.90
     col_w = 4.1
     col_gap = 0.4
     col_x = [0.7, 0.7 + col_w + col_gap]
 
     add_text(slide, "THE PROBLEM", col_x[0], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
     add_text(slide, "WHAT BMAP DOES", col_x[1], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
-    y += 0.24
+    y += 0.32
 
     add_text(slide,
              "Most community banks allocate marketing budgets by tradition, not by data. "
              "The result is predictable: equal investment across unequal opportunities, "
              "wasted spend in markets where the battle is already lost, and missed growth "
              "where conditions are ripe to win.",
-             col_x[0], y, col_w, 1.55, size=11, color=NAVY, shrink_to_fit=True)
+             col_x[0], y, col_w, 1.55, size=11.5, color=NAVY, shrink_to_fit=True)
     add_text(slide,
              "BMAP is a branch-level market intelligence platform that gives bank "
              "leadership a precise, data-driven answer to the most important question "
              "in deposit growth strategy.",
-             col_x[1], y, col_w, 1.15, size=11, color=NAVY, shrink_to_fit=True)
+             col_x[1], y, col_w, 1.15, size=11.5, color=NAVY, shrink_to_fit=True)
 
     # ── Pull-quote — centered across the full width, not confined to the
     # right column, since it's the single unifying line for the slide ──
-    quote_y = y + 1.30
+    quote_y = y + 1.55
     add_text(slide, "Where should we invest our marketing capital — and where should we not?",
-             0.7, quote_y, 8.6, 0.42, size=13, bold=True, italic=True, color=NAVY,
+             0.7, quote_y, 8.6, 0.44, size=14, bold=True, italic=True, color=NAVY,
              align=PP_ALIGN.CENTER, shrink_to_fit=True)
-    y = quote_y + 0.55
+    y = quote_y + 0.68
 
     add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
-    y += 0.10
+    y += 0.24
 
     # ── Table-count stat — restrained card treatment matching the KPI
     # tiles used elsewhere in the deck (e.g. the Deposit Gap slide), not
     # a giant billboard number. "24" spans the full card height so it's
-    # vertically centered against the card itself, not a sub-box — keeps
-    # top/bottom air equal regardless of font metrics. ──
-    card_h = 0.80
+    # vertically centered against the card itself. Label+description are
+    # centered as a block too. Card enlarged slightly now that the whole
+    # slide has more room to breathe. ──
+    card_h = 0.95
     add_rect(slide, 0.7, y, 8.6, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
     add_rect(slide, 0.7, y, 0.06, card_h, TEAL)
-    add_text(slide, "24", 0.95, y, 0.85, card_h, size=30, bold=True, color=TEAL,
-             align=PP_ALIGN.LEFT, valign="center")
-    add_text(slide, "DATA TABLES", 1.85, y + 0.14, 2.4, 0.26, size=11, bold=True, color=NAVY)
+
+    # "24" built directly (not via add_text) so word_wrap can be forced
+    # off — add_text always sets word_wrap=True, which at this font size
+    # wrapped "24" into a stacked "2" / "4" inside too narrow a box.
+    num_tb = slide.shapes.add_textbox(Inches(0.95), Inches(y), Inches(1.0), Inches(card_h))
+    num_tf = num_tb.text_frame
+    num_tf.word_wrap = False
+    from pptx.enum.text import MSO_ANCHOR
+    num_tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    num_p = num_tf.paragraphs[0]
+    num_p.alignment = PP_ALIGN.LEFT
+    num_r = num_p.add_run(); num_r.text = "24"
+    num_r.font.bold = True; num_r.font.size = Pt(34); num_r.font.color.rgb = TEAL
+    num_r.font.name = "Inter"
+
+    add_text(slide, "DATA TABLES", 2.05, y + 0.135, 2.4, 0.28, size=12, bold=True, color=NAVY)
     add_text(slide,
              "FDIC  ·  FFIEC  ·  NCUA  ·  Census  ·  Zillow  ·  PostGIS — public "
              "regulatory, demographic, and market data, fused into one scoring engine.",
-             1.85, y + 0.42, 6.9, 0.32, size=9, color=GRAY3, shrink_to_fit=True)
-    y += card_h + 0.10
-
-    # ── Closing callout — more internal room (taller box, text vertically
-    # centered) so the text doesn't crowd the box edges ──
-    box_h = 0.68
-    add_rect(slide, 0.7, y, 8.6, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-    add_text(slide,
-             "Public data tells you where to invest. Add your own transaction and "
-             "relationship data, and BMAP tells you exactly who — turning market "
-             "intelligence into precision targeting.",
-             0.84, y, 8.3, box_h, size=12, bold=True, color=NAVY, valign="center",
-             shrink_to_fit=True)
+             2.05, y + 0.455, 6.7, 0.36, size=9.5, color=GRAY3, shrink_to_fit=True)
 
 
 def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
