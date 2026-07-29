@@ -3484,8 +3484,9 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     add_text(slide, "BMAP: Know Where to Win Before You Spend",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, "What BMAP does, and the problem it solves for community banks",
-             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+    add_text(slide, "Branch Market Assessment Platform — what it does, and the problem "
+                     "it solves for community banks",
+             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
     # ── Two columns: The Problem | What BMAP Does ──
     y = 1.05
@@ -3673,73 +3674,158 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
                  color=c, shrink_to_fit=True)
 
 
-def build_bmap_ecosystem(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
-    """Explainer 3 of 3 — how BMAP feeds the rest of the Verlocity Growth
-    System (the 5-stage pipeline: BMAP → AudienceFinder → MediaPredict →
-    CRM & Engagement → Retention & Deepening)."""
+def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
+    """Explainer — the six scores BMAP computes, split into the two
+    families Brock's intro deck uses: Internal (what to do with your own
+    branches) and Competitive (where to attack). Adapted from
+    BMAP_Introduction_Slides.pptx slide 2, restyled to this deck's
+    branding — no formula, no weights, no full 16-Play grid (Brock's own
+    slide 5 was flagged as overkill for this audience; "Play" is
+    introduced here as a concept, not enumerated)."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    add_text(slide, "The Six Scores That Drive Every Decision",
+             0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
+    add_text(slide, "Two families of scoring, one connected system",
+             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+
+    y = 1.05
+    col_w = 4.1
+    col_gap = 0.4
+    col_x = [0.7, 0.7 + col_w + col_gap]
+
+    add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
+             col_x[0], y, col_w, 0.16, size=8, bold=True, color=GRAY3, shrink_to_fit=True)
+    add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
+             col_x[1], y, col_w, 0.16, size=8, bold=True, color=GRAY3, shrink_to_fit=True)
+    y += 0.24
+
+    internal = [
+        ("01", "Opportunity Score",
+         "0–100 ranking of deposit growth potential vs. peers in-state."),
+        ("02", "Zone",
+         "Strategic posture from score quartiles: Invest, Analyze, Defend, Justify."),
+        ("03", "Matrix Quadrant",
+         "Market attractiveness paired with branch performance — explains why the "
+         "zone looks the way it does."),
+        ("04", "Play",
+         "A named campaign prescription from Zone × Quadrant — direct input to media "
+         "briefs and budget decisions."),
+    ]
+    competitive = [
+        ("05", "Vulnerability Score",
+         "How exposed a competitor branch is to losing deposits — starts from the "
+         "inverse of their own Opportunity Score, then rises with decline, weak "
+         "returns, credit stress, or proximity to you."),
+        ("06", "Prospecting Score",
+         "Ranked acquisition targets, for every branch and for the full network — "
+         "the specific competitor branches whose customers are most likely to switch."),
+    ]
+
+    def numbered_block(x, num, name, desc, item_h):
+        add_text(slide, num, x, y_block[0], 0.34, 0.26, size=11, bold=True, color=TEAL)
+        add_text(slide, name, x + 0.36, y_block[0], col_w - 0.36, 0.24, size=10.5, bold=True,
+                 color=NAVY, shrink_to_fit=True)
+        add_text(slide, desc, x + 0.36, y_block[0] + 0.24, col_w - 0.36, item_h - 0.24,
+                 size=8, color=NAVY_SOFT, shrink_to_fit=True)
+        y_block[0] += item_h
+
+    y_block = [y]
+    for num, name, desc in internal:
+        numbered_block(col_x[0], num, name, desc, 0.56)
+
+    y_block[0] = y
+    for num, name, desc in competitive:
+        numbered_block(col_x[1], num, name, desc, 1.05)
+
+    y = max(y_block[0], y + 4 * 0.56) + 0.12
+
+    add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
+    y += 0.14
+    add_text(slide,
+             "Part 1 scores answer \u201cwhat should we do with our own branches?\u201d  ·  "
+             "Part 2 scores answer \u201cwhich competitors should we target?\u201d",
+             0.7, y, 8.6, 0.30, size=9.5, italic=True, bold=True, color=NAVY,
+             align=PP_ALIGN.CENTER, shrink_to_fit=True)
+
+
+def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
+    """Explainer — Vulnerability Score and Prospecting Output, adapted
+    from Brock's intro deck slide 4. No multiplier stack (×1.5 declining
+    deposits, ×1.4 low ROA, etc.) — those risk factors are described in
+    plain language instead, matching the CFO-level standard the rest of
+    this deck holds to. Closes by pointing at the Competitive Overview
+    page later in this Snapshot, where this exact scoring is already
+    applied to this bank's two most exposed nearby competitors."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
 
-    add_text(slide, "BMAP Is Stage One of the Verlocity Growth System",
+    add_text(slide, "Competitive Intelligence: Vulnerability & Prospecting",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, "Market intelligence that becomes the addressable universe for every stage after it",
+    add_text(slide, "How BMAP finds exposed competitors, and turns that into ranked targets",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.10
-    add_text(slide, "THE FIVE-STAGE SYSTEM", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
-    y += 0.22
+    y = 1.05
+    col_w = 4.1
+    col_gap = 0.4
+    col_x = [0.7, 0.7 + col_w + col_gap]
 
-    stages = [
-        ("1", "BMAP",           "WHERE TO INVEST",   "Market Intelligence",      True),
-        ("2", "AudienceFinder", "WHO TO WIN",         "Precision Targeting",      False),
-        ("3", "MediaPredict",   "HOW TO ACQUIRE",     "Omnichannel AI Media",     False),
-        ("4", "CRM & Engagement", "CAPTURE & CONVERT",  "Engagement Engine",        False),
-        ("5", "Retention & Deepening", "DEEPEN & GROW", "Cross-Sell & Retention",   False),
+    add_text(slide, "VULNERABILITY SCORE", col_x[0], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
+    add_text(slide, "PROSPECTING OUTPUT", col_x[1], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
+    y += 0.20
+
+    add_text(slide, "How exposed is a competitor branch to losing deposits?",
+             col_x[0], y, col_w, 0.30, size=10, bold=True, color=NAVY, shrink_to_fit=True)
+    add_text(slide, "Turns vulnerability into ranked acquisition targets",
+             col_x[1], y, col_w, 0.30, size=10, bold=True, color=NAVY, shrink_to_fit=True)
+    y += 0.36
+
+    vuln_points = [
+        "Starts from the inverse of their own Opportunity Score — a low-scoring "
+        "competitor branch is already exposed.",
+        "Rises further if they're losing deposits year-over-year, running weak "
+        "returns, showing credit-quality stress, or sitting close to one of "
+        "your branches.",
     ]
-    n = len(stages)
-    box_w = 1.55
-    box_gap = (8.6 - box_w * n) / (n - 1)
-    box_h = 1.55
-    for i, (num, name, verb, sub, is_bmap) in enumerate(stages):
-        bx = 0.7 + i * (box_w + box_gap)
-        fill   = NAVY if is_bmap else GRAY1
-        border = TEAL if is_bmap else GRAY2
-        txt_c  = WHITE if is_bmap else NAVY
-        num_c  = rgb("BEE4EC") if is_bmap else GRAY3
-        verb_c = rgb("7FE0EF") if is_bmap else TEAL
-        add_rect(slide, bx, y, box_w, box_h, fill, border, Pt(1.0 if is_bmap else 0.5))
-        add_text(slide, num, bx + 0.08, y + 0.06, box_w - 0.16, 0.20, size=8, bold=True, color=num_c)
-        add_text(slide, name, bx + 0.08, y + 0.26, box_w - 0.16, 0.32, size=11, bold=True, color=txt_c,
-                 shrink_to_fit=True)
-        add_text(slide, verb, bx + 0.08, y + 0.62, box_w - 0.16, 0.42, size=7.5, bold=True, color=verb_c,
-                 shrink_to_fit=True)
-        add_text(slide, sub, bx + 0.08, y + 1.08, box_w - 0.16, 0.42, size=6.5, color=num_c,
-                 shrink_to_fit=True)
-        if i < n - 1:
-            ax = bx + box_w + box_gap / 2 - 0.15
-            add_text(slide, "→", ax, y + 0.55, 0.3, 0.4, size=16, bold=True, color=GRAY3,
-                     align=PP_ALIGN.CENTER)
-    y += box_h + 0.18
+    prospect_points = [
+        "Branch-level: the top 3 competitor branches within 10 miles of each of "
+        "your branches, ranked by vulnerability — direct input to that "
+        "location's media brief.",
+        "Network-level: one ranking across your entire footprint — total "
+        "addressable deposits, and the single highest-value institution to "
+        "target network-wide.",
+    ]
+    vy = y
+    for pt in vuln_points:
+        _bullet_line(slide, vy, pt, lead_color=JUSTIFY, size=9, height=0.55)
+        vy += 0.60
+    py = y
+    for pt in prospect_points:
+        tb = slide.shapes.add_textbox(Inches(col_x[1]), Inches(py), Inches(col_w), Inches(0.60))
+        tf = tb.text_frame; tf.word_wrap = True
+        p = tf.paragraphs[0]
+        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(9)
+        r2 = p.add_run(); r2.text = pt; r2.font.size = Pt(9); r2.font.color.rgb = NAVY
+        for r in (r1, r2):
+            r.font.name = "Inter"
+        py += 0.60
 
-    add_text(slide, "HOW THE HANDOFF WORKS", 0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3)
-    y += 0.16
-    add_text(slide,
-             "BMAP's branch-level opportunity scores and priority segments become the addressable "
-             "universe — the specific households and businesses AudienceFinder targets next. That "
-             "targeted audience then feeds directly into MediaPredict as the input for the media "
-             "plan. One upstream data foundation drives every downstream dollar spent.",
-             0.7, y + 0.02, 8.6, 0.58, size=9, color=NAVY, shrink_to_fit=True)
-    y += 0.74
+    y = max(vy, py) + 0.10
+    add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
+    y += 0.14
 
-    add_rect(slide, 0.7, y, 8.6, 0.46, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-    add_text(slide, "WHERE THIS SNAPSHOT FITS IN", 0.84, y + 0.05, 8.3, 0.13, size=7, bold=True, color=GRAY3)
+    add_rect(slide, 0.7, y, 8.6, 0.50, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
     add_text(slide,
-             f"This Snapshot is Stage 1 only — the market-truth foundation. The pages that "
-             f"follow show what that foundation reveals for {bank_name}'s network.",
-             0.84, y + 0.19, 8.3, 0.23, size=8, color=NAVY, shrink_to_fit=True)
+             f"This exact scoring is already applied to {bank_name}'s network — the "
+             f"Competitive Overview page ahead names your two most exposed nearby "
+             f"competitors using it.",
+             0.84, y, 8.3, 0.50, size=10.5, bold=True, color=NAVY, valign="center",
+             shrink_to_fit=True)
 
 
 def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=None, chevron_bytes=None):
@@ -4327,39 +4413,38 @@ def _explainer_card(slide, x, y, w, h, header, items, accent, bg):
 
 
 def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=None, chevron_bytes=None):
-    """Closing slide — three distinct tiers, not two: what this Snapshot
-    covers, what BMAP as a product never does (even at full scale — it's
-    Stage 1 only, market intelligence, not execution), and what turning
-    on the full Verlocity Growth System (all 5 stages from the ecosystem
-    slide) adds on top of that. No pricing, timeline, or call-to-action
-    language by design.
+    """Closing slide — three tiers building upward, not a limitations
+    list: what this Snapshot covers, what a full BMAP Assessment adds
+    (the promotional card — same deep-dive extended network-wide), and
+    a brief, forward-looking mention of the full Verlocity Growth System
+    BMAP feeds into. No pricing, timeline, or call-to-action language
+    by design.
 
-    Previously this conflated "Snapshot limitations" with "BMAP
-    limitations" in one middle column and framed the third column as
-    "full BMAP Assessment adds" — which undersold the real ceiling.
-    BMAP at full scale still only scores and targets; it doesn't run
-    campaigns, manage engagement, or drive retention. That's the rest of
-    the Growth System, not more BMAP. The third column's closing line
-    intentionally echoes the ecosystem slide's own "one upstream data
-    foundation drives every downstream dollar spent" so the two slides
-    reinforce each other instead of drifting apart.
+    Earlier version framed the middle card as "what BMAP alone doesn't
+    do" — accurate, but it read as a list of shortcomings right where
+    the deck should be building momentum toward the next conversation.
+    Full BMAP Assessment is now the clear upsell card (green/INVEST
+    accent — literally "invest in the next tier"), and the engine gets
+    only a light, two-line introduction rather than another itemized
+    list — enough to plant the idea, not enough to feel like homework.
+    Its closing line still echoes the ecosystem slide's own "one
+    upstream data foundation drives every downstream dollar spent" so
+    the two slides reinforce each other.
 
     3-column card layout, same visual language as the Investment
-    Framework tiles on page 4 but its own accent set — three consecutive
-    slides in an identical stacked-bullet-list format would read as
-    repetitive."""
+    Framework tiles on page 4 but its own accent set."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
     branch_count = d.get("branchCount", "")
 
-    add_text(slide, "What This Snapshot Is — and What It Isn't",
+    add_text(slide, "What This Snapshot Is — and What Comes Next",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide,
-             f"Scope of this analysis, what BMAP alone doesn't do, and what the full "
-             f"Verlocity engine adds · {bank_name}",
+             f"Scope of this analysis, what a full BMAP Assessment adds, and the bigger "
+             f"engine it feeds · {bank_name}",
              0.7, 0.77, 8.6, 0.20, size=8.5, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
     covers = [
@@ -4369,21 +4454,18 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
         "deposit trends, and a first-level audience read.",
         "One point-in-time view, not a tracked trend — a snapshot, not a subscription.",
     ]
-    limits = [
-        "Doesn't include a written strategy, campaign plan, or budget recommendation — "
-        "this is analysis, not execution.",
-        "Doesn't target, reach, or convert a single customer — BMAP shows you where to "
-        "look, not who to contact or how.",
-        "Doesn't run campaigns, manage engagement, or drive retention — that's the rest "
-        "of the Verlocity Growth System, not BMAP alone.",
+    full_bmap = [
+        "The same deep-dive analysis extended to every Invest- and Analyze-zone branch, "
+        "not just the top one.",
+        "Competitor vulnerability scoring across your full footprint, not just the "
+        "markets nearest a single branch.",
+        "Customer segment playbooks for every priority market, refreshed on a quarterly "
+        "cadence as conditions shift.",
     ]
-    adds = [
-        "AudienceFinder turns BMAP's scores into a targetable audience; MediaPredict "
-        "turns that audience into a media plan.",
-        "CRM & Engagement and Retention & Deepening carry new customers from acquisition "
-        "through cross-sell.",
-        "One upstream data foundation drives every downstream dollar spent — not a "
-        "one-time report.",
+    engine_teaser = [
+        "BMAP is Stage 1 of the Verlocity Growth System — AudienceFinder, MediaPredict, "
+        "CRM & Engagement, and Retention & Deepening build on what it finds.",
+        "One upstream data foundation drives every downstream dollar spent.",
     ]
 
     y0 = 1.05
@@ -4391,9 +4473,9 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
     gap = (8.6 - tile_w * 3) / 2
     tile_h = 3.00
     cards = [
-        (0.7,                      "WHAT THIS SNAPSHOT COVERS",           covers, TEAL,    rgb("F0FAFB")),
-        (0.7 + (tile_w + gap),     "WHAT BMAP ALONE DOESN'T DO",          limits, JUSTIFY, JUSTIFY_L),
-        (0.7 + 2 * (tile_w + gap), "TURN ON THE FULL VERLOCITY ENGINE",   adds,   ANALYZE, ANALYZE_L),
+        (0.7,                      "WHAT THIS SNAPSHOT COVERS",         covers,       TEAL,  rgb("F0FAFB")),
+        (0.7 + (tile_w + gap),     "WHAT A FULL BMAP ASSESSMENT ADDS",  full_bmap,    INVEST, INVEST_L),
+        (0.7 + 2 * (tile_w + gap), "THE BIGGER PICTURE",                engine_teaser, NAVY,  rgb("EAF1F6")),
     ]
     for tx, header, items, accent, bg in cards:
         _explainer_card(slide, tx, y0, tile_w, tile_h, header, items, accent, bg)
@@ -4653,14 +4735,20 @@ def build_deck(data, logo_bytes):
     chevron_bytes = fetch_chevron_mark()
     build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # 3 explainer slides — Verlocity/BMAP positioning content, same on every
-    # deck, added per Marc Winkler demo feedback (pages 2-4)
+    # 4 explainer slides — Verlocity/BMAP positioning content, same on every
+    # deck (pages 2-5). Structure adapted from Brock's BMAP_Introduction_Slides.pptx
+    # (slides 1/2/4 → our overview/six-scores/competitive-intel; slide 3's raw
+    # formula was kept out, since our existing Four Forces flow diagram already
+    # covers that ground CFO-appropriately; slide 5's full 16-Play grid was
+    # flagged as overkill and left out entirely). Ecosystem/5-stage-system
+    # content (formerly page 3) was dropped per direct instruction.
     build_bmap_overview(prs, D, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_ecosystem(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_six_scores(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_bmap_framework(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_competitive_intel(prs, D, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    build_network(prs, D, narr, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_branches(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_network(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_branches(prs, D, narr, logo_bytes, page_num=7, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     # Anchor branch for Competitive Overview — the exact #1 branch shown on
     # Priority Markets (highest Opportunity Score among Invest-zone branches
@@ -4673,18 +4761,18 @@ def build_deck(data, logo_bytes):
     all_competitors = fetch_all_bank_competitors(data["ik"])
     all_competitors = filter_to_peer_institutions(all_competitors, data["ik"])
     top_competitor = (sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:1] or [None])[0]
-    build_competitive_overview(prs, D, lead_branch, all_competitors, logo_bytes, page_num=7,
+    build_competitive_overview(prs, D, lead_branch, all_competitors, logo_bytes, page_num=8,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    build_financial(prs, D, narr, logo_bytes, page_num=8, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_gap(prs, D, narr, logo_bytes, page_num=9, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_financial(prs, D, narr, logo_bytes, page_num=9, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_gap(prs, D, narr, logo_bytes, page_num=10, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     # Audience brief slide — before next steps
     brief = data.get("personas")
-    next_page = 10
+    next_page = 11
     if brief and brief.get("paragraph"):
         print(f"  Adding audience brief slide...")
-        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=10, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-        next_page = 11
+        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=11, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+        next_page = 12
     else:
         print("  Skipping audience brief slide — no brief available")
     build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
