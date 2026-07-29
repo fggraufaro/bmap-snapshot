@@ -3551,126 +3551,89 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
 
 
 def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
-    """Explainer — how the four real inputs to opportunity_score (sourced
-    from the live refresh_branch_opportunity_base function, not the
-    Leave-Behind's marketing copy) converge into one score, which then
-    sorts branches into the Invest/Analyze/Defend/Justify zones used on
-    every branch-level slide later in the deck.
-
-    Built as a top-to-bottom flow diagram (forces → score → zones)
-    rather than stacked bullet lists — the underlying logic is a
-    convergence/divergence, and a vertical funnel is the natural shape
-    for that; a left-right layout would read as a sequence of steps
-    instead and would force each card into a narrow column given the
-    available height.
-
-    Each zone tile leads with its quartile band (what actually puts a
-    branch there) before the recommended action — directly answers the
-    "what does a score of 37 mean" question: a raw score means nothing
-    on its own, only its percentile rank against peer community banks
-    in-state does, which the bridge line under the score badge also
-    states explicitly."""
+    """Explainer — the exact Opportunity Score formula and zone quartiles,
+    transcribed from Brock's BMAP_Introduction_Slides.pptx slide 3
+    verbatim (weights, component descriptions, and zone actions), restyled
+    to this deck's branding. Per direct instruction, includes the literal
+    weighted formula and percentages — an earlier version of this slide
+    kept those out for a CFO audience; that guardrail was intentionally
+    overridden here."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    add_text(slide, "Four Forces. One Investment Role Per Branch.",
+    add_text(slide, "How the Opportunity Score & Zones Are Built",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, "How BMAP scores and classifies every branch in your network",
-             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+    add_text(slide, "The exact weighting behind every branch's score, and how scores become zones",
+             0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
 
-    # ── Row 1: the four forces (inputs) ──
     y = 0.98
-    add_text(slide, "WHAT BMAP MEASURES", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
-    y += 0.19
+    add_text(slide, "OPPORTUNITY SCORE  =  WEIGHTED SUM OF FOUR STATE-NORMALIZED COMPONENTS",
+             0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
+             shrink_to_fit=True)
+    y += 0.18
+    add_text(slide,
+             "0.25 × Market Growth  +  0.30 × Relative Growth  +  0.25 × Inverted Density  "
+             "+  0.20 × Deposit Size",
+             0.7, y, 8.6, 0.26, size=12, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
+             shrink_to_fit=True)
+    y += 0.26
+    add_text(slide,
+             "All components are min-max normalized within the state so every branch is "
+             "ranked only against its state peers — never a national average.",
+             0.7, y, 8.6, 0.22, size=8, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             shrink_to_fit=True)
+    y += 0.28
 
-    forces = [
-        ("Market Growth", "Expanding or contracting income, population, home values"),
-        ("Relative Performance", "Growing faster or slower than nearby competitors"),
-        ("Competitive Density", "How crowded the immediate market is"),
-        ("Deposit Size", "Branch size vs. peers statewide"),
+    components = [
+        ("25%", "Market Growth",
+         "Population & income momentum in the ZIP. Growing markets expand the deposit pie."),
+        ("30%", "Relative Growth",
+         "Your deposit YoY minus competitor average in the 10-mile radius. The strongest signal."),
+        ("25%", "Inverted Density",
+         "Fewer competitors nearby = more room to grow. Winsorized to avoid rural outliers."),
+        ("20%", "Deposit Size",
+         "Log-scaled absolute deposits. Larger base earns modest credit for established presence."),
     ]
     card_w = 1.95
     card_gap = (8.6 - card_w * 4) / 3
-    card_h = 0.85
-    for i, (name, desc) in enumerate(forces):
+    card_h = 1.15
+    for i, (pct, name, desc) in enumerate(components):
         cx = 0.7 + i * (card_w + card_gap)
         add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
         add_rect(slide, cx, y, card_w, 0.05, TEAL)
-        add_text(slide, name, cx + 0.10, y + 0.14, card_w - 0.20, 0.26, size=9.5, bold=True,
+        add_text(slide, pct, cx + 0.10, y + 0.09, card_w - 0.20, 0.26, size=14, bold=True,
+                 color=TEAL)
+        add_text(slide, name, cx + 0.10, y + 0.36, card_w - 0.20, 0.24, size=9, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.10, y + 0.50, card_w - 0.20, 0.30, size=6.5, color=GRAY3,
+        add_text(slide, desc, cx + 0.10, y + 0.60, card_w - 0.20, 0.52, size=6.5, color=GRAY3,
                  shrink_to_fit=True)
-    y += card_h
+    y += card_h + 0.10
 
-    # ── Convergence arrow into the score ──
-    arrow_w, arrow_h = 0.32, 0.16
-    arrow_x = 5.0 - arrow_w / 2
-    shp = slide.shapes.add_shape(MSO_SHAPE.DOWN_ARROW, Inches(arrow_x), Inches(y + 0.02),
-                                  Inches(arrow_w), Inches(arrow_h))
-    shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
-    shp.line.fill.background()
-    y += arrow_h + 0.08
-
-    # ── Score badge ──
-    badge_w, badge_h = 3.6, 0.46
-    badge_x = 5.0 - badge_w / 2
-    shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(badge_x), Inches(y),
-                                  Inches(badge_w), Inches(badge_h))
-    shp.fill.solid(); shp.fill.fore_color.rgb = NAVY
-    shp.line.fill.background()
-    tf = shp.text_frame
-    tf.word_wrap = True
-    from pptx.enum.text import MSO_ANCHOR
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    r = p.add_run(); r.text = "ONE OPPORTUNITY SCORE  ·  0–100"
-    r.font.bold = True; r.font.size = Pt(12.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
-    y += badge_h + 0.06
-
-    # ── Bridge line — answers "what does a raw score mean" without
-    # implying the score itself is meaningless: it's rank, not raw
-    # value, that determines the zone ──
     add_text(slide,
-             "It's rank, not raw value, that sets the zone — the same score of 37 could be "
-             "Invest in one state and Justify in another. Each branch is scored against peer "
-             "community banks in-state, by quartile, then applied across your whole network.",
-             0.7, y, 8.6, 0.34, size=8.5, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             "ZONES — STATE COMMUNITY-BANK QUARTILES CONVERT THE CONTINUOUS SCORE INTO AN "
+             "ACTIONABLE POSTURE",
+             0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.34
+    y += 0.20
 
-    # ── Divergence arrow into the four zones ──
-    shp = slide.shapes.add_shape(MSO_SHAPE.DOWN_ARROW, Inches(arrow_x), Inches(y + 0.02),
-                                  Inches(arrow_w), Inches(arrow_h))
-    shp.fill.solid(); shp.fill.fore_color.rgb = GRAY3
-    shp.line.fill.background()
-    y += arrow_h + 0.08
-
-    # ── Row 2: the four zones (outputs) — quartile band first (what
-    # puts a branch here), action second (what to do about it) ──
     roles = [
-        ("INVEST", "Top quartile in-state",
-         "Concentrate growth capital here first.", INVEST, INVEST_L),
-        ("ANALYZE", "50th–75th percentile",
-         "Focused growth leadership and targeted investment.", ANALYZE, ANALYZE_L),
-        ("DEFEND", "25th–50th percentile",
-         "Protect position; do not overspend on acquisition.", DEFEND, DEFEND_L),
-        ("JUSTIFY", "Bottom quartile in-state",
-         "Run for efficiency; right-size resource allocation.", JUSTIFY, JUSTIFY_L),
+        ("INVEST", "Top 25%", "Deploy acquisition resources", INVEST, INVEST_L),
+        ("ANALYZE", "50th–75th", "Test, then scale", ANALYZE, ANALYZE_L),
+        ("DEFEND", "25th–50th", "Retain, don't acquire", DEFEND, DEFEND_L),
+        ("JUSTIFY", "Bottom 25%", "Strategic review first", JUSTIFY, JUSTIFY_L),
     ]
     tile_w = 2.0
     tile_gap = (8.6 - tile_w * 4) / 3
-    tile_h = 1.00
+    tile_h = 0.85
     for i, (lbl, band, action, c, bg) in enumerate(roles):
         tx = 0.7 + i * (tile_w + tile_gap)
         add_rect(slide, tx, y, tile_w, tile_h, bg, c, Pt(0.8))
         add_rect(slide, tx, y, tile_w, 0.05, c)
-        add_text(slide, lbl, tx + 0.10, y + 0.09, tile_w - 0.20, 0.24, size=13, bold=True, color=c)
-        add_text(slide, band, tx + 0.10, y + 0.36, tile_w - 0.20, 0.20, size=8, bold=True,
+        add_text(slide, lbl, tx + 0.10, y + 0.08, tile_w - 0.20, 0.24, size=13, bold=True, color=c)
+        add_text(slide, band, tx + 0.10, y + 0.34, tile_w - 0.20, 0.18, size=8, bold=True,
                  color=GRAY3, shrink_to_fit=True)
-        add_text(slide, action, tx + 0.10, y + 0.58, tile_w - 0.20, 0.38, size=7.5, bold=True,
+        add_text(slide, action, tx + 0.10, y + 0.54, tile_w - 0.20, 0.26, size=8, bold=True,
                  color=c, shrink_to_fit=True)
 
 
@@ -3696,6 +3659,17 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     col_gap = 0.4
     col_x = [0.7, 0.7 + col_w + col_gap]
 
+    # ── Card boxes behind each column — same height for both, so they
+    # align visually even though Internal has 4 items and Competitive
+    # has 2. Light-blue/white fill to match the deck's palette. ──
+    pad = 0.16
+    box_top = y - pad
+    box_h = 0.24 + 4 * 0.56 + 0.14 + pad
+    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAFB"), TEAL, Pt(0.9))
+    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, 0.05, TEAL)
+    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAF7"), EMERALD, Pt(0.9))
+    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, 0.05, EMERALD)
+
     add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
              col_x[0], y, col_w, 0.16, size=8, bold=True, color=GRAY3, shrink_to_fit=True)
     add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
@@ -3704,7 +3678,8 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
 
     internal = [
         ("01", "Opportunity Score",
-         "0–100 ranking of deposit growth potential vs. peers in-state."),
+         "0–100 ranking of deposit growth potential vs. state peers. Weighted mix of "
+         "market growth, relative performance, competition density, and deposit size."),
         ("02", "Zone",
          "Strategic posture from score quartiles: Invest, Analyze, Defend, Justify."),
         ("03", "Matrix Quadrant",
@@ -3716,16 +3691,30 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     ]
     competitive = [
         ("05", "Vulnerability Score",
-         "How exposed a competitor branch is to losing deposits — starts from the "
-         "inverse of their own Opportunity Score, then rises with decline, weak "
-         "returns, credit stress, or proximity to you."),
+         "How exposed a competitor branch is to losing deposits. Base = 100 minus "
+         "their Opportunity Score, then amplified by declining deposits, low ROA, "
+         "credit stress, and proximity."),
         ("06", "Prospecting Score",
          "Ranked acquisition targets, for every branch and for the full network — "
          "the specific competitor branches whose customers are most likely to switch."),
     ]
 
-    def numbered_block(x, num, name, desc, item_h):
-        add_text(slide, num, x, y_block[0], 0.34, 0.26, size=11, bold=True, color=TEAL)
+    def numbered_block(x, num, name, desc, item_h, accent):
+        badge_d = 0.28
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y_block[0]),
+                                      Inches(badge_d), Inches(badge_d))
+        shp.fill.solid(); shp.fill.fore_color.rgb = accent
+        shp.line.fill.background()
+        tf = shp.text_frame
+        tf.word_wrap = False
+        from pptx.enum.text import MSO_ANCHOR
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = num
+        r.font.bold = True; r.font.size = Pt(9.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
+
         add_text(slide, name, x + 0.36, y_block[0], col_w - 0.36, 0.24, size=10.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
         add_text(slide, desc, x + 0.36, y_block[0] + 0.24, col_w - 0.36, item_h - 0.24,
@@ -3734,13 +3723,13 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
 
     y_block = [y]
     for num, name, desc in internal:
-        numbered_block(col_x[0], num, name, desc, 0.56)
+        numbered_block(col_x[0], num, name, desc, 0.56, TEAL)
 
     y_block[0] = y
     for num, name, desc in competitive:
-        numbered_block(col_x[1], num, name, desc, 1.05)
+        numbered_block(col_x[1], num, name, desc, 1.05, EMERALD)
 
-    y = max(y_block[0], y + 4 * 0.56) + 0.12
+    y = box_top + box_h + 0.14
 
     add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
     y += 0.14
@@ -3752,13 +3741,15 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
 
 
 def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
-    """Explainer — Vulnerability Score and Prospecting Output, adapted
-    from Brock's intro deck slide 4. No multiplier stack (×1.5 declining
-    deposits, ×1.4 low ROA, etc.) — those risk factors are described in
-    plain language instead, matching the CFO-level standard the rest of
-    this deck holds to. Closes by pointing at the Competitive Overview
-    page later in this Snapshot, where this exact scoring is already
-    applied to this bank's two most exposed nearby competitors."""
+    """Explainer — Vulnerability Score and Prospecting Output, transcribed
+    from Brock's BMAP_Introduction_Slides.pptx slide 4 verbatim: the exact
+    base formula, the full ×1.5/×1.4/×1.3 risk-factor multiplier stack,
+    and the 200+/300+ prospecting thresholds. Per direct instruction —
+    an earlier version of this slide described these risk factors in
+    plain language only; that guardrail was intentionally overridden
+    here. Still closes by pointing at the Competitive Overview page
+    later in this Snapshot, where this exact scoring is already applied
+    to this bank's two most exposed nearby competitors."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
@@ -3774,57 +3765,97 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
     col_w = 4.1
     col_gap = 0.4
     col_x = [0.7, 0.7 + col_w + col_gap]
+    pad = 0.18
 
-    add_text(slide, "VULNERABILITY SCORE", col_x[0], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
-    add_text(slide, "PROSPECTING OUTPUT", col_x[1], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
-    y += 0.20
+    # ── Card boxes, matching the treatment on the Six Scores slide —
+    # Justify-red for the risk-scoring column, Teal for the output
+    # column. Sized generously (not just to fit content) so the slide
+    # uses its full height instead of clustering everything at the top. ──
+    box_top = y - pad
+    box_h = 2.95
+    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, box_h, JUSTIFY_L, JUSTIFY, Pt(0.9))
+    add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, 0.05, JUSTIFY)
+    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAFB"), TEAL, Pt(0.9))
+    add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, 0.05, TEAL)
+
+    add_text(slide, "VULNERABILITY SCORE", col_x[0], y, col_w, 0.18, size=9, bold=True, color=JUSTIFY)
+    add_text(slide, "PROSPECTING OUTPUT", col_x[1], y, col_w, 0.18, size=9, bold=True, color=TEAL)
+    y += 0.26
 
     add_text(slide, "How exposed is a competitor branch to losing deposits?",
-             col_x[0], y, col_w, 0.30, size=10, bold=True, color=NAVY, shrink_to_fit=True)
+             col_x[0], y, col_w, 0.40, size=11, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide, "Turns vulnerability into ranked acquisition targets",
-             col_x[1], y, col_w, 0.30, size=10, bold=True, color=NAVY, shrink_to_fit=True)
-    y += 0.36
+             col_x[1], y, col_w, 0.40, size=11, bold=True, color=NAVY, shrink_to_fit=True)
+    y += 0.40
 
-    vuln_points = [
-        "Starts from the inverse of their own Opportunity Score — a low-scoring "
-        "competitor branch is already exposed.",
-        "Rises further if they're losing deposits year-over-year, running weak "
-        "returns, showing credit-quality stress, or sitting close to one of "
-        "your branches.",
-    ]
-    prospect_points = [
-        "Branch-level: the top 3 competitor branches within 10 miles of each of "
-        "your branches, ranked by vulnerability — direct input to that "
-        "location's media brief.",
-        "Network-level: one ranking across your entire footprint — total "
-        "addressable deposits, and the single highest-value institution to "
-        "target network-wide.",
-    ]
-    vy = y
-    for pt in vuln_points:
-        _bullet_line(slide, vy, pt, lead_color=JUSTIFY, size=9, height=0.55)
-        vy += 0.60
-    py = y
-    for pt in prospect_points:
-        tb = slide.shapes.add_textbox(Inches(col_x[1]), Inches(py), Inches(col_w), Inches(0.60))
-        tf = tb.text_frame; tf.word_wrap = True
-        p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(9)
-        r2 = p.add_run(); r2.text = pt; r2.font.size = Pt(9); r2.font.color.rgb = NAVY
-        for r in (r1, r2):
-            r.font.name = "Inter"
-        py += 0.60
+    # ── Left column: exact base formula + full multiplier stack, each
+    # factor as a pill badge (matching the numbered-badge style used on
+    # the Six Scores slide) rather than plain colored text ──
+    add_text(slide, "Base Score  =  100 − Competitor's Opportunity Score",
+             col_x[0], y, col_w, 0.34, size=10.5, bold=True, color=NAVY, shrink_to_fit=True)
+    vy = y + 0.36
+    add_text(slide, "Then multiply by risk factors that stack:",
+             col_x[0], vy, col_w, 0.20, size=8.5, italic=True, color=GRAY3, shrink_to_fit=True)
+    vy += 0.24
 
-    y = max(vy, py) + 0.10
+    multipliers = [
+        ("×1.5", "Declining deposits (YoY < 0)"),
+        ("×1.4", "ROA below 0.5%"),
+        ("×1.3", "Noncurrent assets > 2%"),
+        ("×1.3", "Within 1 mile of your branch"),
+        ("×1.3", "Same institution type"),
+    ]
+    pill_w, pill_h = 0.58, 0.24
+    for factor, desc in multipliers:
+        shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(col_x[0]), Inches(vy),
+                                      Inches(pill_w), Inches(pill_h))
+        shp.fill.solid(); shp.fill.fore_color.rgb = JUSTIFY
+        shp.line.fill.background()
+        tf = shp.text_frame; tf.word_wrap = False
+        from pptx.enum.text import MSO_ANCHOR
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = factor
+        r.font.bold = True; r.font.size = Pt(10); r.font.color.rgb = WHITE; r.font.name = "Inter"
+        add_text(slide, desc, col_x[0] + pill_w + 0.12, vy, col_w - pill_w - 0.12, pill_h,
+                 size=9, color=NAVY, valign="center", shrink_to_fit=True)
+        vy += pill_h + 0.06
+
+    # ── Right column: Branch-Level and Network-Level prospecting,
+    # given generous line height to match the left column's taller
+    # multiplier stack rather than leaving empty space beneath ──
+    add_text(slide, "BRANCH-LEVEL", col_x[1], y, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+    add_text(slide,
+             "Top 3 competitor branches within 10 miles of each of your branches, "
+             "ranked by vulnerability score. Direct input to the media brief for "
+             "that location.",
+             col_x[1], y + 0.24, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
+    add_text(slide, "NETWORK-LEVEL", col_x[1], y + 1.30, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+    add_text(slide,
+             "Aggregated ranking of competitor institutions across the entire "
+             "footprint. Shows total addressable deposits and the single "
+             "highest-value institution to target network-wide.",
+             col_x[1], y + 1.54, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
+    py = y + 2.50
+
+    y = box_top + box_h + 0.16
     add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
-    y += 0.14
+    y += 0.16
 
-    add_rect(slide, 0.7, y, 8.6, 0.50, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
+    add_text(slide,
+             "Scores of 200+ are high-priority targets. 300+ is critical. A size filter "
+             "keeps only competitors between 10%–500% of your branch deposits.",
+             0.7, y, 8.6, 0.26, size=9, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             shrink_to_fit=True)
+    y += 0.34
+
+    add_rect(slide, 0.7, y, 8.6, 0.56, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
     add_text(slide,
              f"This exact scoring is already applied to {bank_name}'s network — the "
              f"Competitive Overview page ahead names your two most exposed nearby "
              f"competitors using it.",
-             0.84, y, 8.3, 0.50, size=10.5, bold=True, color=NAVY, valign="center",
+             0.84, y, 8.3, 0.56, size=10.5, bold=True, color=NAVY, valign="center",
              shrink_to_fit=True)
 
 
