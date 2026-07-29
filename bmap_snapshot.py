@@ -3568,21 +3568,21 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
 
     y = 0.98
     add_text(slide, "OPPORTUNITY SCORE  =  WEIGHTED SUM OF FOUR STATE-NORMALIZED COMPONENTS",
-             0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
+             0.7, y, 8.6, 0.16, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.18
+    y += 0.20
     add_text(slide,
              "0.25 × Market Growth  +  0.30 × Relative Growth  +  0.25 × Inverted Density  "
              "+  0.20 × Deposit Size",
-             0.7, y, 8.6, 0.26, size=12, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
+             0.7, y, 8.6, 0.30, size=13, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.26
+    y += 0.34
     add_text(slide,
              "All components are min-max normalized within the state so every branch is "
              "ranked only against its state peers — never a national average.",
-             0.7, y, 8.6, 0.22, size=8, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             0.7, y, 8.6, 0.24, size=8.5, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.28
+    y += 0.44
 
     components = [
         ("25%", "Market Growth",
@@ -3596,25 +3596,25 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     ]
     card_w = 1.95
     card_gap = (8.6 - card_w * 4) / 3
-    card_h = 1.15
+    card_h = 1.55
     for i, (pct, name, desc) in enumerate(components):
         cx = 0.7 + i * (card_w + card_gap)
         add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
         add_rect(slide, cx, y, card_w, 0.05, TEAL)
-        add_text(slide, pct, cx + 0.10, y + 0.09, card_w - 0.20, 0.26, size=14, bold=True,
+        add_text(slide, pct, cx + 0.14, y + 0.14, card_w - 0.28, 0.32, size=17, bold=True,
                  color=TEAL)
-        add_text(slide, name, cx + 0.10, y + 0.36, card_w - 0.20, 0.24, size=9, bold=True,
+        add_text(slide, name, cx + 0.14, y + 0.48, card_w - 0.28, 0.26, size=10.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.10, y + 0.60, card_w - 0.20, 0.52, size=6.5, color=GRAY3,
+        add_text(slide, desc, cx + 0.14, y + 0.78, card_w - 0.28, 0.68, size=8, color=GRAY3,
                  shrink_to_fit=True)
-    y += card_h + 0.10
+    y += card_h + 0.30
 
     add_text(slide,
              "ZONES — STATE COMMUNITY-BANK QUARTILES CONVERT THE CONTINUOUS SCORE INTO AN "
              "ACTIONABLE POSTURE",
-             0.7, y, 8.6, 0.14, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
+             0.7, y, 8.6, 0.16, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.20
+    y += 0.24
 
     roles = [
         ("INVEST", "Top 25%", "Deploy acquisition resources", INVEST, INVEST_L),
@@ -3624,15 +3624,15 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     ]
     tile_w = 2.0
     tile_gap = (8.6 - tile_w * 4) / 3
-    tile_h = 0.85
+    tile_h = 0.95
     for i, (lbl, band, action, c, bg) in enumerate(roles):
         tx = 0.7 + i * (tile_w + tile_gap)
         add_rect(slide, tx, y, tile_w, tile_h, bg, c, Pt(0.8))
         add_rect(slide, tx, y, tile_w, 0.05, c)
-        add_text(slide, lbl, tx + 0.10, y + 0.08, tile_w - 0.20, 0.24, size=13, bold=True, color=c)
-        add_text(slide, band, tx + 0.10, y + 0.34, tile_w - 0.20, 0.18, size=8, bold=True,
+        add_text(slide, lbl, tx + 0.12, y + 0.12, tile_w - 0.24, 0.28, size=14, bold=True, color=c)
+        add_text(slide, band, tx + 0.12, y + 0.42, tile_w - 0.24, 0.20, size=9, bold=True,
                  color=GRAY3, shrink_to_fit=True)
-        add_text(slide, action, tx + 0.10, y + 0.54, tile_w - 0.20, 0.26, size=8, bold=True,
+        add_text(slide, action, tx + 0.12, y + 0.64, tile_w - 0.24, 0.28, size=9, bold=True,
                  color=c, shrink_to_fit=True)
 
 
@@ -3761,10 +3761,11 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
 
     # ── Card boxes, matching the treatment on the Six Scores slide —
     # Justify-red for the risk-scoring column, Teal for the output
-    # column. Sized generously (not just to fit content) so the slide
-    # uses its full height instead of clustering everything at the top. ──
+    # column. box_h is set to comfortably contain the taller (left)
+    # column's content plus a real margin above its bottom edge —
+    # earlier the pill stack landed within 0.07" of the border. ──
     box_top = y - pad
-    box_h = 2.95
+    box_h = 3.15
     add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, box_h, JUSTIFY_L, JUSTIFY, Pt(0.9))
     add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, 0.05, JUSTIFY)
     add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAFB"), TEAL, Pt(0.9))
@@ -3775,20 +3776,21 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
     y += 0.26
 
     add_text(slide, "How exposed is a competitor branch to losing deposits?",
-             col_x[0], y, col_w, 0.40, size=11, bold=True, color=NAVY, shrink_to_fit=True)
+             col_x[0], y, col_w, 0.34, size=11, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide, "Turns vulnerability into ranked acquisition targets",
-             col_x[1], y, col_w, 0.40, size=11, bold=True, color=NAVY, shrink_to_fit=True)
-    y += 0.40
+             col_x[1], y, col_w, 0.34, size=11, bold=True, color=NAVY, shrink_to_fit=True)
+    y += 0.44
 
     # ── Left column: exact base formula + full multiplier stack, each
     # factor as a pill badge (matching the numbered-badge style used on
-    # the Six Scores slide) rather than plain colored text ──
+    # the Six Scores slide) rather than plain colored text. Tracked with
+    # a running cursor (vy) so every gap is intentional. ──
     add_text(slide, "Base Score  =  100 − Competitor's Opportunity Score",
-             col_x[0], y, col_w, 0.34, size=10.5, bold=True, color=NAVY, shrink_to_fit=True)
+             col_x[0], y, col_w, 0.28, size=10.5, bold=True, color=NAVY, shrink_to_fit=True)
     vy = y + 0.36
     add_text(slide, "Then multiply by risk factors that stack:",
-             col_x[0], vy, col_w, 0.20, size=8.5, italic=True, color=GRAY3, shrink_to_fit=True)
-    vy += 0.24
+             col_x[0], vy, col_w, 0.18, size=8.5, italic=True, color=GRAY3, shrink_to_fit=True)
+    vy += 0.28
 
     multipliers = [
         ("×1.5", "Declining deposits (YoY < 0)"),
@@ -3813,41 +3815,45 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
         add_text(slide, desc, col_x[0] + pill_w + 0.12, vy, col_w - pill_w - 0.12, pill_h,
                  size=9, color=NAVY, valign="center", shrink_to_fit=True)
         vy += pill_h + 0.06
+    # vy now sits ~0.3" clear of the box's bottom edge instead of ~0.07".
 
-    # ── Right column: Branch-Level and Network-Level prospecting,
-    # given generous line height to match the left column's taller
-    # multiplier stack rather than leaving empty space beneath ──
-    add_text(slide, "BRANCH-LEVEL", col_x[1], y, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+    # ── Right column: Branch-Level and Network-Level prospecting, using
+    # its own running cursor (ry) rather than hand-picked offsets so its
+    # two sub-sections can never collide with each other or the box edge. ──
+    ry = y
+    add_text(slide, "BRANCH-LEVEL", col_x[1], ry, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+    ry += 0.26
     add_text(slide,
              "Top 3 competitor branches within 10 miles of each of your branches, "
              "ranked by vulnerability score. Direct input to the media brief for "
              "that location.",
-             col_x[1], y + 0.24, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
-    add_text(slide, "NETWORK-LEVEL", col_x[1], y + 1.30, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+             col_x[1], ry, col_w, 0.62, size=9.5, color=NAVY, shrink_to_fit=True)
+    ry += 0.62 + 0.22
+    add_text(slide, "NETWORK-LEVEL", col_x[1], ry, col_w, 0.18, size=8.5, bold=True, color=TEAL)
+    ry += 0.26
     add_text(slide,
              "Aggregated ranking of competitor institutions across the entire "
              "footprint. Shows total addressable deposits and the single "
              "highest-value institution to target network-wide.",
-             col_x[1], y + 1.54, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
-    py = y + 2.50
+             col_x[1], ry, col_w, 0.62, size=9.5, color=NAVY, shrink_to_fit=True)
 
-    y = box_top + box_h + 0.16
+    y = box_top + box_h + 0.14
     add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
-    y += 0.16
+    y += 0.12
 
     add_text(slide,
              "Scores of 200+ are high-priority targets. 300+ is critical. A size filter "
              "keeps only competitors between 10%–500% of your branch deposits.",
-             0.7, y, 8.6, 0.26, size=9, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             0.7, y, 8.6, 0.22, size=9, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.34
+    y += 0.30
 
-    add_rect(slide, 0.7, y, 8.6, 0.56, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
+    add_rect(slide, 0.7, y, 8.6, 0.44, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
     add_text(slide,
              f"This exact scoring is already applied to {bank_name}'s network — the "
              f"Competitive Overview page ahead names your two most exposed nearby "
              f"competitors using it.",
-             0.84, y, 8.3, 0.56, size=10.5, bold=True, color=NAVY, valign="center",
+             0.84, y, 8.3, 0.44, size=10.5, bold=True, color=NAVY, valign="center",
              shrink_to_fit=True)
 
 
