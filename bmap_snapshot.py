@@ -5277,11 +5277,11 @@ def build_deck(data, logo_bytes):
         next_page = 12
     else:
         print("  Skipping audience brief slide — no brief available")
-    build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
-                      page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-
-    build_scope_next_steps(prs, D, logo_bytes, page_num=next_page + 1,
+    build_scope_next_steps(prs, D, logo_bytes, page_num=next_page,
                             transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+
+    build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
+                      page_num=next_page + 1, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
