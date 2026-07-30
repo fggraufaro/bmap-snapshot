@@ -3745,15 +3745,13 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    bank_name = d.get("bankName", "")
-
     add_text(slide, "Competitive Intelligence: Vulnerability & Prospecting",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide, "How BMAP finds exposed competitors, and turns that into ranked targets",
              0.7, 0.77, 8.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
-    y = 1.05
+    y = 1.20
     col_w = 4.1
     col_gap = 0.4
     col_x = [0.7, 0.7 + col_w + col_gap]
@@ -3761,11 +3759,12 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
 
     # ── Card boxes, matching the treatment on the Six Scores slide —
     # Justify-red for the risk-scoring column, Teal for the output
-    # column. box_h is set to comfortably contain the taller (left)
-    # column's content plus a real margin above its bottom edge —
-    # earlier the pill stack landed within 0.07" of the border. ──
+    # column. box_top now starts below the subtitle (previously it
+    # started at 0.87 while the subtitle ran to 0.97, so the box's top
+    # edge covered the last ~0.10" of that line). box_h now also fills
+    # the space freed by removing the bottom divider/note/callout. ──
     box_top = y - pad
-    box_h = 3.15
+    box_h = 3.95
     add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, box_h, JUSTIFY_L, JUSTIFY, Pt(0.9))
     add_rect(slide, col_x[0] - pad, box_top, col_w + 2 * pad, 0.05, JUSTIFY)
     add_rect(slide, col_x[1] - pad, box_top, col_w + 2 * pad, box_h, rgb("F0FAFB"), TEAL, Pt(0.9))
@@ -3773,13 +3772,13 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
 
     add_text(slide, "VULNERABILITY SCORE", col_x[0], y, col_w, 0.18, size=9, bold=True, color=JUSTIFY)
     add_text(slide, "PROSPECTING OUTPUT", col_x[1], y, col_w, 0.18, size=9, bold=True, color=TEAL)
-    y += 0.26
+    y += 0.28
 
     add_text(slide, "How exposed is a competitor branch to losing deposits?",
              col_x[0], y, col_w, 0.34, size=11, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide, "Turns vulnerability into ranked acquisition targets",
              col_x[1], y, col_w, 0.34, size=11, bold=True, color=NAVY, shrink_to_fit=True)
-    y += 0.44
+    y += 0.54
 
     # ── Left column: exact base formula + full multiplier stack, each
     # factor as a pill badge (matching the numbered-badge style used on
@@ -3787,10 +3786,10 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
     # a running cursor (vy) so every gap is intentional. ──
     add_text(slide, "Base Score  =  100 − Competitor's Opportunity Score",
              col_x[0], y, col_w, 0.28, size=10.5, bold=True, color=NAVY, shrink_to_fit=True)
-    vy = y + 0.36
+    vy = y + 0.46
     add_text(slide, "Then multiply by risk factors that stack:",
              col_x[0], vy, col_w, 0.18, size=8.5, italic=True, color=GRAY3, shrink_to_fit=True)
-    vy += 0.28
+    vy += 0.40
 
     multipliers = [
         ("×1.5", "Declining deposits (YoY < 0)"),
@@ -3799,7 +3798,7 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
         ("×1.3", "Within 1 mile of your branch"),
         ("×1.3", "Same institution type"),
     ]
-    pill_w, pill_h = 0.58, 0.24
+    pill_w, pill_h = 0.60, 0.30
     for factor, desc in multipliers:
         shp = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(col_x[0]), Inches(vy),
                                       Inches(pill_w), Inches(pill_h))
@@ -3811,50 +3810,30 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
         p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
         r = p.add_run(); r.text = factor
-        r.font.bold = True; r.font.size = Pt(10); r.font.color.rgb = WHITE; r.font.name = "Inter"
-        add_text(slide, desc, col_x[0] + pill_w + 0.12, vy, col_w - pill_w - 0.12, pill_h,
-                 size=9, color=NAVY, valign="center", shrink_to_fit=True)
-        vy += pill_h + 0.06
-    # vy now sits ~0.3" clear of the box's bottom edge instead of ~0.07".
+        r.font.bold = True; r.font.size = Pt(10.5); r.font.color.rgb = WHITE; r.font.name = "Inter"
+        add_text(slide, desc, col_x[0] + pill_w + 0.14, vy, col_w - pill_w - 0.14, pill_h,
+                 size=9.5, color=NAVY, valign="center", shrink_to_fit=True)
+        vy += pill_h + 0.10
 
     # ── Right column: Branch-Level and Network-Level prospecting, using
     # its own running cursor (ry) rather than hand-picked offsets so its
     # two sub-sections can never collide with each other or the box edge. ──
     ry = y
     add_text(slide, "BRANCH-LEVEL", col_x[1], ry, col_w, 0.18, size=8.5, bold=True, color=TEAL)
-    ry += 0.26
+    ry += 0.28
     add_text(slide,
              "Top 3 competitor branches within 10 miles of each of your branches, "
              "ranked by vulnerability score. Direct input to the media brief for "
              "that location.",
-             col_x[1], ry, col_w, 0.62, size=9.5, color=NAVY, shrink_to_fit=True)
-    ry += 0.62 + 0.22
+             col_x[1], ry, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
+    ry += 0.85 + 0.35
     add_text(slide, "NETWORK-LEVEL", col_x[1], ry, col_w, 0.18, size=8.5, bold=True, color=TEAL)
-    ry += 0.26
+    ry += 0.28
     add_text(slide,
              "Aggregated ranking of competitor institutions across the entire "
              "footprint. Shows total addressable deposits and the single "
              "highest-value institution to target network-wide.",
-             col_x[1], ry, col_w, 0.62, size=9.5, color=NAVY, shrink_to_fit=True)
-
-    y = box_top + box_h + 0.14
-    add_rect(slide, 0.7, y, 8.6, 0.03, TEAL)
-    y += 0.12
-
-    add_text(slide,
-             "Scores of 200+ are high-priority targets. 300+ is critical. A size filter "
-             "keeps only competitors between 10%–500% of your branch deposits.",
-             0.7, y, 8.6, 0.22, size=9, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
-             shrink_to_fit=True)
-    y += 0.30
-
-    add_rect(slide, 0.7, y, 8.6, 0.44, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-    add_text(slide,
-             f"This exact scoring is already applied to {bank_name}'s network — the "
-             f"Competitive Overview page ahead names your two most exposed nearby "
-             f"competitors using it.",
-             0.84, y, 8.3, 0.44, size=10.5, bold=True, color=NAVY, valign="center",
-             shrink_to_fit=True)
+             col_x[1], ry, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
 
 
 def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=None, chevron_bytes=None):
