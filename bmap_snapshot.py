@@ -3911,6 +3911,85 @@ def _bullet_line(slide, y, text, lead_color=TEAL, rest_color=NAVY, size=9, heigh
     return tb
 
 
+def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
+    """Agenda slide — three-part roadmap for the deck (BMAP overview, this
+    bank's Snapshot, recommended next steps). Static structural content;
+    only item 02's title is interpolated with the bank name."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    bank_name = d.get("bankName", "")
+
+    add_text(slide, "Agenda", 0.7, 0.45, 8.6, 0.60, size=30, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 1.10, 8.6, 0.05, TEAL)
+
+    items = [
+        ("01", "BMAP Overview",
+         "What the platform is, the six scores, and how opportunity and vulnerability are calculated"),
+        ("02", f"BMAP Snapshot for {bank_name}",
+         "Network scores, Invest-zone branches, competitive exposure, fundamentals, and audience read"),
+        ("03", "Recommended Next Steps",
+         "Discovery intake through full Verlocity Growth System activation"),
+    ]
+
+    y = 1.55
+    row_h = 1.03
+    for i, (num, title, desc) in enumerate(items):
+        badge_d = 0.56
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.7), Inches(y), Inches(badge_d), Inches(badge_d))
+        shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
+        shp.line.fill.background()
+        tf = shp.text_frame; tf.word_wrap = False
+        from pptx.enum.text import MSO_ANCHOR
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = num
+        r.font.bold = True; r.font.size = Pt(16); r.font.color.rgb = WHITE; r.font.name = "Inter"
+
+        add_text(slide, title, 1.5, y - 0.02, 7.8, 0.34, size=16, bold=True, color=NAVY)
+        add_text(slide, desc, 1.5, y + 0.34, 7.8, 0.50, size=10.5, color=GRAY3, shrink_to_fit=True)
+        if i < len(items) - 1:
+            add_rect(slide, 0.7, y + row_h - 0.10, 8.6, 0.012, GRAY2)
+        y += row_h
+
+
+def build_bmap_intro(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
+    """Explainer — what BMAP is, in the fewest possible words, before the
+    Overview/Scores/Framework slides go deeper. Four one-line concept
+    cards mirror the four terms used throughout the rest of the deck."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    add_text(slide, "BMAP", 0.7, 0.35, 8.6, 0.36, size=15, bold=True, color=TEAL)
+    add_text(slide, "Branch Market Assessment Platform", 0.7, 0.68, 8.6, 0.50, size=26, bold=True, color=NAVY)
+    add_rect(slide, 0.7, 1.28, 8.6, 0.05, TEAL)
+    add_text(slide,
+             "Our proprietary data-driven system scores every branch in a community "
+             "bank's network for deposit growth opportunity, competitive vulnerability, "
+             "and the best actions to take.",
+             0.7, 1.42, 8.6, 0.65, size=12, color=NAVY, shrink_to_fit=True)
+
+    cards = [
+        ("Opportunity Score",        "0–100 growth potential"),
+        ("Strategic Zones",          "Invest · Analyze · Defend · Justify"),
+        ("Competitor Vulnerability", "Who is exposed & why"),
+        ("Named Plays",              "Next best actions to take"),
+    ]
+    card_w = 1.95
+    card_gap = (8.6 - card_w * 4) / 3
+    card_h = 2.0
+    y = 2.45
+    for i, (title, sub) in enumerate(cards):
+        cx = 0.7 + i * (card_w + card_gap)
+        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
+        add_rect(slide, cx, y, card_w, 0.05, TEAL)
+        add_text(slide, title, cx + 0.14, y + 0.24, card_w - 0.28, 0.70, size=12, bold=True,
+                 color=NAVY, shrink_to_fit=True)
+        add_text(slide, sub, cx + 0.14, y + 1.05, card_w - 0.28, 0.80, size=9.5, color=GRAY3,
+                 shrink_to_fit=True)
+
+
 def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
     """Explainer — the problem BMAP solves and what it does, two columns
     styled after the Executive Leave-Behind's own layout: regular-weight
@@ -3979,14 +4058,14 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     num_tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     num_p = num_tf.paragraphs[0]
     num_p.alignment = PP_ALIGN.LEFT
-    num_r = num_p.add_run(); num_r.text = "24"
+    num_r = num_p.add_run(); num_r.text = "24+"
     num_r.font.bold = True; num_r.font.size = Pt(34); num_r.font.color.rgb = TEAL
     num_r.font.name = "Inter"
 
-    add_text(slide, "DATA TABLES", 2.05, y + 0.135, 2.4, 0.28, size=12, bold=True, color=NAVY)
+    add_text(slide, "DATA SOURCES FUSED INTO ONE SCORING ENGINE", 2.05, y + 0.135, 6.7, 0.28,
+             size=12, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide,
-             "FDIC  ·  FFIEC  ·  NCUA  ·  Census  ·  Zillow  ·  PostGIS — public "
-             "regulatory, demographic, and market data, fused into one scoring engine.",
+             "FDIC  ·  FFIEC  ·  NCUA  ·  US Census  ·  US Labor  ·  US Housing  ·  Zillow  ·  PostGIS",
              2.05, y + 0.455, 6.7, 0.36, size=9.5, color=GRAY3, shrink_to_fit=True)
 
 
@@ -4059,8 +4138,8 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
 
     roles = [
         ("INVEST", "Top 25%", "Deploy acquisition resources", INVEST, INVEST_L),
-        ("ANALYZE", "50th–75th", "Test, then scale", ANALYZE, ANALYZE_L),
-        ("DEFEND", "25th–50th", "Retain, don't acquire", DEFEND, DEFEND_L),
+        ("ANALYZE", "50–75th", "Test, then scale", ANALYZE, ANALYZE_L),
+        ("DEFEND", "25–50th", "Retain, don't acquire", DEFEND, DEFEND_L),
         ("JUSTIFY", "Bottom 25%", "Strategic review first", JUSTIFY, JUSTIFY_L),
     ]
     tile_w = 2.0
@@ -4088,7 +4167,7 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    add_text(slide, "The Six Scores That Drive Every Decision",
+    add_text(slide, "The Five Scores That Drive Every Decision",
              0.7, 0.14, 8.6, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
     add_text(slide, "Two families of scoring, one connected system",
@@ -4277,121 +4356,58 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
              col_x[1], ry, col_w, 0.85, size=9.5, color=NAVY, shrink_to_fit=True)
 
 
-def build_network(prs, d, narr, logo_bytes, page_num=1, transparent_logo_bytes=None, chevron_bytes=None):
+def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=None, chevron_bytes=None):
+    """Network snapshot — same KPI-tile + zone-tile visual language as the
+    cover, reused here as the deck's first data slide so a reader who
+    skips straight past the cover still gets the headline numbers.
+    `narr` is accepted for call-signature compatibility but unused —
+    this slide is now purely stat tiles, no AI narrative copy."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "MARKET OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
-    add_narrative(slide, narr["network"], 0.50)
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # 4 KPI tiles right
+    bank_name = d.get("bankName", "")
+    add_text(slide, bank_name, 0.7, 0.16, 8.6, 0.50, size=26, bold=True, color=NAVY, valign="bottom")
+    add_text(slide, f"BMAP Market Snapshot  ·  {d.get('date','')}", 0.7, 0.68, 8.6, 0.26,
+             size=12, italic=True, color=NAVY_SOFT)
+    add_rect(slide, 0.7, 0.98, 8.6, 0.04, TEAL)
+
+    # 4 KPI tiles
     kpis = [
-        (d["deposits"],   "TOTAL DEPOSITS", GRAY1,    NAVY),
-        (d["avgScore"],   "AVG OPP SCORE",  GRAY1,    NAVY),
-        (d["depositYoY"], "DEPOSIT YoY",    INVEST_L if not d["gapNeg"] else JUSTIFY_L,
-                                            INVEST   if not d["gapNeg"] else JUSTIFY),
-        (d["gap"],        "GAP VS MKT PEERS",   INVEST_L if not d["gapNeg"] else JUSTIFY_L,
-                                            INVEST   if not d["gapNeg"] else JUSTIFY),
+        (d["branchCount"], "BRANCHES"),
+        (d["deposits"],    "TOTAL DEPOSITS"),
+        (d["avgScore"],    "AVG OPP SCORE"),
+        (d["gap"],         "VS PEER AVG"),
     ]
-    for i, (val, lbl, bg, vc) in enumerate(kpis):
-        kx = 6.46 + (i%2)*1.76
-        ky = 0.50 + (i//2)*0.90
-        add_rect(slide, kx, ky, 1.62, 0.78, bg, GRAY2, Pt(0.4))
-        add_text(slide, val, kx, ky+0.06, 1.62, 0.42, size=19, bold=True, color=vc, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, kx, ky+0.52, 1.62, 0.20, size=6.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+    gap_neg = d["gapNeg"]
+    y1 = 1.30
+    for i, (val, lbl) in enumerate(kpis):
+        kx = 0.7 + i*2.14
+        add_rect(slide, kx, y1, 2.0, 0.88, GRAY1, GRAY2, Pt(0.5))
+        c = JUSTIFY if (i==3 and gap_neg) else NAVY
+        add_text(slide, val, kx, y1+0.06, 2.0, 0.48, size=22, bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, kx, y1+0.52, 2.0, 0.26, size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
-    # ── ZONE CHART — horizontal paired bars, % branches vs % deposits ──
-    # Why this replaces the table: a table that lists every zone works at
-    # 4 branches but says nothing useful at 100+ branches, and it duplicates
-    # facts the narrative paragraph already states. This chart instead
-    # surfaces the thing a table can't show at a glance: the MISMATCH between
-    # how many branches sit in a zone and how much money sits there — e.g.
-    # a zone with few branches but most of the deposits, or vice versa. That
-    # mismatch is the actual strategic signal, and it reads the same way
-    # whether the bank has 4 branches or 400, because both series are
-    # normalized to % of total rather than raw counts/dollars.
-    #
-    # Native XL_CHART_TYPE (not a hand-built donut/table) — the donut chart
-    # tried earlier failed in real PowerPoint (see note on the old table
-    # below); BAR_CLUSTERED is a standard chart type with no custom XML
-    # patches needed, so it renders identically everywhere.
-    add_text(slide, "Zones", 6.0, 2.28, 3.8, 0.30, size=14, bold=True, color=NAVY)
-
-    ZONE_VIVID = {
-        "Invest":  (INVEST,  d["invest"],  d["depInvest"]),
-        "Analyze": (ANALYZE, d["analyze"], d["depAnalyze"]),
-        "Defend":  (DEFEND,  d["defend"],  d["depDefend"]),
-        "Justify": (JUSTIFY, d["justify"], d["depJustify"]),
+    # 4 zone tiles
+    ZONE_BLURBS = {
+        "INVEST":  "Move now — pour resources in before a competitor beats you to it",
+        "ANALYZE": "Dig in — validate the signal, then commit spend with confidence",
+        "DEFEND":  "Act fast — shore up share before this competitor takes more of it",
+        "JUSTIFY": "Hold the line — don't spend here without hard evidence first",
     }
-    total_branches  = sum(v[1] for v in ZONE_VIVID.values()) or 1
-    total_dep_zones = sum(v[2] for v in ZONE_VIVID.values()) or 1
-
-    # Order top-to-bottom as Invest/Analyze/Defend/Justify; chart_data
-    # categories render bottom-to-top in a horizontal bar by default, so
-    # reverse the order going in to get Invest at the top visually.
-    zone_order = ["Justify", "Defend", "Analyze", "Invest"]
-    pct_branches = [round(ZONE_VIVID[z][1] / total_branches * 100, 1) for z in zone_order]
-    pct_deposits = [round(ZONE_VIVID[z][2] / total_dep_zones * 100, 1) for z in zone_order]
-
-    chart_data = ChartData()
-    chart_data.categories = zone_order
-    chart_data.add_series("% of Branches", pct_branches)
-    chart_data.add_series("% of Deposits", pct_deposits)
-
-    chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.BAR_CLUSTERED,
-        Inches(6.0), Inches(2.62), Inches(3.8), Inches(2.20),
-        chart_data
-    )
-    chart = chart_frame.chart
-
-    chart.has_legend = True
-    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-    chart.legend.include_in_layout = False
-    chart.legend.font.size = Pt(8)
-    chart.legend.font.color.rgb = GRAY3
-    chart.has_title = False
-
-    # Branch-count series: solid zone color. Deposit series: lighter tint
-    # of the same zone color per category — done per-point since each
-    # category needs its own zone color, not one color per series.
-    series_branches, series_deposits = chart.series[0], chart.series[1]
-    for i, z in enumerate(zone_order):
-        c = ZONE_C[z]
-        series_branches.points[i].format.fill.solid()
-        series_branches.points[i].format.fill.fore_color.rgb = c
-        series_branches.points[i].format.line.fill.background()
-
-        cl = ZONE_L[z]
-        series_deposits.points[i].format.fill.solid()
-        series_deposits.points[i].format.fill.fore_color.rgb = cl
-        series_deposits.points[i].format.line.fill.background()
-
-    va = chart.value_axis
-    va.tick_labels.font.size = Pt(7.5)
-    va.tick_labels.font.color.rgb = GRAY3
-    va.has_major_gridlines = False
-    va.minimum_scale = 0
-
-    ca = chart.category_axis
-    ca.tick_labels.font.size = Pt(9.5)
-    ca.tick_labels.font.color.rgb = NAVY
-    ca.tick_labels.font.bold = True
-
-    # Plot-level data labels (works across series; per-point dLbl XML like
-    # the old donut attempt is what broke in real PowerPoint, so this sticks
-    # to chart-level label settings only)
-    plot = chart.plots[0]
-    plot.has_data_labels = True
-    dl = plot.data_labels
-    dl.number_format = '0"%"'
-    dl.number_format_is_linked = False
-    dl.font.size = Pt(7.5)
-    dl.font.color.rgb = NAVY
-
-    # Small caption under the chart with the raw totals, so the % figures
-    # have an anchor — this is the one piece of raw-number context worth
-    # keeping now that the table itself is gone.
-    add_text(slide, f"{total_branches} branches  ·  ${total_dep_zones/1e6:.0f}M total deposits",
-              6.0, 4.86, 3.8, 0.22, size=8, italic=True, color=GRAY3, align=PP_ALIGN.LEFT)
+    zones = [
+        (str(d["invest"]),  "INVEST",   INVEST,  INVEST_L),
+        (str(d["analyze"]), "ANALYZE",  ANALYZE, ANALYZE_L),
+        (str(d["defend"]),  "DEFEND",   DEFEND,  DEFEND_L),
+        (str(d["justify"]), "JUSTIFY",  JUSTIFY, JUSTIFY_L),
+    ]
+    y2 = y1 + 1.00
+    for i, (val, lbl, c, bg) in enumerate(zones):
+        zx = 0.7 + i*2.14
+        add_rect(slide, zx, y2, 2.0, 1.55, bg, c, Pt(0.8))
+        add_text(slide, val, zx, y2+0.10, 2.0, 0.50, size=26, bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, zx, y2+0.62, 2.0, 0.26, size=10, bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, ZONE_BLURBS[lbl], zx+0.10, y2+0.94, 1.80, 0.56, size=7.5, color=GRAY3,
+                 align=PP_ALIGN.CENTER, shrink_to_fit=True)
 
 
 
@@ -4557,143 +4573,180 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     return slide
 
 
-def build_branches(prs, d, narr, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
+def build_branches(prs, d, narr, logo_bytes, page_num=9, transparent_logo_bytes=None, chevron_bytes=None):
+    """Priority branches — headline + description + top-3 branch cards +
+    a closing line on the Justify-zone count. `narr` kept for signature
+    compatibility but unused; headline/paragraph are computed directly
+    from d, same pattern as build_next_steps's summary paragraph."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "PRIORITY MARKETS", logo_bytes, transparent_logo_bytes, chevron_bytes)
-    add_narrative(slide, narr["priority"], 0.50)
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    for i, b in enumerate(d["branchList"][:5]):
-        by = 0.50 + i*0.90
-        zc  = ZONE_C.get(b["zone"], ANALYZE)
-        zbg = ZONE_L.get(b["zone"], ANALYZE_L)
+    bank_name = d.get("bankName", "")
+    invest, justify, branch_count = d["invest"], d["justify"], d["branchCount"]
 
-        add_rect(slide, 6.22, by, 3.6, 0.78, GRAY1, GRAY2, Pt(0.4))
-        add_rect(slide, 6.22, by, 0.06, 0.78, zc)
+    headline = f"{invest} branches ready to invest, {justify} need a harder look"
+    add_text(slide, headline, 0.7, 0.16, 8.6, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
 
-        # Rank badge
-        add_rect(slide, 6.34, by+0.26, 0.34, 0.34, zc)
-        add_text(slide, str(i+1), 6.34, by+0.26, 0.34, 0.34,
-                 size=11, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-
-        add_text(slide, b["name"], 6.76, by+0.06, 2.18, 0.28, size=9.5, bold=True, color=NAVY)
-        add_text(slide, b["city"], 6.76, by+0.34, 2.18, 0.18, size=8, color=GRAY3)
-        add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY", 6.76, by+0.53, 2.18, 0.22, size=9, color=NAVY)
-
-        # Zone pill
-        add_rect(slide, 9.0, by+0.30, 0.72, 0.24, zbg, zc, Pt(0.5))
-        add_text(slide, b["zone"], 9.0, by+0.30, 0.72, 0.24,
-                 size=7, bold=True, color=zc, align=PP_ALIGN.CENTER)
-
-
-def build_financial(prs, d, narr, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "FINANCIAL HEALTH", logo_bytes, transparent_logo_bytes, chevron_bytes)
-    add_narrative(slide, narr["financial"], 0.50)
-
-    # Column headers
-    cols = [(6.22, 1.12, "", PP_ALIGN.LEFT),
-            (7.38, 1.26, "VALUE",     PP_ALIGN.CENTER),
-            (8.68, 1.0,  "BENCHMARK", PP_ALIGN.CENTER)]
-    for cx, cw, cl, ca in cols:
-        add_rect(slide, cx, 0.50, cw, 0.30, NAVY)
-        add_text(slide, cl, cx, 0.50, cw, 0.30, size=7.5, bold=True, color=WHITE, align=ca)
-
-    for i, m in enumerate(d["metrics"]):
-        my = 0.84 + i*0.58
-        bg = GRAY1 if i%2==0 else WHITE
-        add_rect(slide, 6.22, my, 3.56, 0.58, bg, GRAY2, Pt(0.3))
-        add_text(slide, m["label"], 6.30, my+0.13, 1.0, 0.28, size=9.5, color=NAVY)
-        add_text(slide, m["value"], 7.38, my+0.10, 1.26, 0.32, size=13, bold=True, color=NAVY, align=PP_ALIGN.CENTER)
-        add_text(slide, m["bench"], 8.68, my+0.13, 1.0,  0.28, size=9, italic=True, color=GRAY3, align=PP_ALIGN.CENTER)
-
-        sc = TEAL if m["ok"] else AMBER
-        add_rect(slide, 9.74, my+0.13, 0.30, 0.30, sc)
-        add_text(slide, "✓" if m["ok"] else "!", 9.74, my+0.13, 0.30, 0.30,
-                 size=9, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-
-    if d.get("competitor"):
-        add_rect(slide, 6.22, 4.94, 3.56, 0.30, JUSTIFY_L, JUSTIFY, Pt(0.5))
-        add_text(slide,
-            f"⚠  Primary Competitor  ·  {d['competitor']['branches']} overlap markets"
-            f"  ·  Avg branch vulnerability {d['competitor']['vuln']}/100",
-            6.32, 4.95, 3.36, 0.26, size=7.5, bold=True, color=JUSTIFY)
-
-    if d.get("brokered"):
-        b = d["brokered"]
-        # Brokered callout box — amber alert below metrics. Note: if a bank has
-        # both a competitor callout AND brokered exposure AND all 7 metrics,
-        # vertical space is genuinely tight above the banner — this fits the
-        # common case but is worth a visual check for that specific combination.
-        brok_y = 5.26 if d.get("competitor") else 4.94
-        add_rect(slide, 6.22, brok_y, 3.56, 0.30, rgb("FFF8EC"), AMBER, Pt(0.5))
-        add_text(slide,
-            f"{b['brokered_pct']}% brokered (${b['brokered_M']:.0f}M) · Direct savings: ${b['savings_M']:.0f}M",
-            6.32, brok_y + 0.05, 3.36, 0.20,
-            size=7.5, bold=True, color=AMBER)
-
-
-def build_gap(prs, d, narr, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
-    """White-background slide, matching every other slide in the deck —
-    previously a bespoke full-navy treatment, changed per client feedback
-    that it broke the deck's otherwise-consistent white theme."""
-    slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, "DEPOSIT GAP", logo_bytes, transparent_logo_bytes, chevron_bytes)
-
-    # Giant gap number
-    add_text(slide, d["gap"], 0.28, 0.16, 5.2, 1.86,
-             size=96, bold=True, color=TEAL, align=PP_ALIGN.LEFT)
-    add_text(slide, "GAP VS PEER AVERAGE", 0.28, 2.08, 5.2, 0.34,
-             size=13, bold=True, color=NAVY)
-    add_text(slide, d["gapSubtitle"], 0.28, 2.50, 5.2, 0.26,
-             size=9.5, italic=True, color=NAVY_SOFT)
-
-    # 3 stat tiles — same light-card style used on every other slide
-    tile_c = rgb("F87171") if d["gapNeg"] else TEAL
-    tiles = [
-        (f"{d['bankYoY']}%", f"{d['bankName'].upper()} YoY", tile_c),
-        (f"{d['peerYoY']}%", "PEER AVG",      GRAY3),
-        (d["gap"],           "GAP",            AMBER),
-    ]
-    for i, (val, lbl, c) in enumerate(tiles):
-        tx = 0.28 + i*1.78
-        add_rect(slide, tx, 2.96, 1.62, 1.12, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-        add_rect(slide, tx, 2.96, 1.62, 0.06, c)
-        lbl_size = 6 if i == 0 and len(d["bankName"]) > 14 else 7
-        add_text(slide, val, tx, 3.02, 1.62, 0.52, size=20, bold=True, color=c, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, tx+0.04, 3.58, 1.54, 0.42, size=lbl_size, bold=True,
-                 color=GRAY3, align=PP_ALIGN.CENTER)
-
-    # ── NATIVE VECTOR BAR CHART ──────────────────────────────────
-    chart_data = ChartData()
-    chart_data.categories = [d["bankName"], "Peer Avg"]
-    chart_data.add_series("Deposit YoY %", (float(d["bankYoY"]), float(d["peerYoY"])))
-
-    chart_frame = slide.shapes.add_chart(
-        XL_CHART_TYPE.COLUMN_CLUSTERED,
-        Inches(5.4), Inches(0.90), Inches(4.4), Inches(4.20),
-        chart_data
+    paragraph = (
+        f"BMAP scores every branch on deposit volume, growth trajectory, and competitive "
+        f"density — and across {bank_name}'s {branch_count}-branch network, {invest} locations "
+        f"score into the Invest zone, meaning the local market conditions actively support "
+        f"accelerated deposit capture right now."
     )
-    chart = chart_frame.chart
+    add_text(slide, paragraph, 0.7, 0.96, 8.6, 0.62, size=11, color=NAVY_SOFT, shrink_to_fit=True)
 
-    chart.has_legend = False
-    chart.has_title  = False
+    top3 = d["branchList"][:3]
+    taglines = ["Network's highest-scoring location", "Largest balance in top tier",
+                "Consistent growth, smaller base"]
+    card_w = 2.7
+    card_gap = (8.6 - card_w * 3) / 2
+    card_h = 1.55
+    y = 1.78
+    for i, b in enumerate(top3):
+        cx = 0.7 + i * (card_w + card_gap)
+        zc = ZONE_C.get(b["zone"], INVEST)
+        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
+        add_rect(slide, cx, y, card_w, 0.05, zc)
+        add_text(slide, b["name"], cx + 0.16, y + 0.16, card_w - 0.32, 0.30, size=12.5, bold=True,
+                 color=NAVY, shrink_to_fit=True)
+        add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY  ·  Score {b.get('score','—')}",
+                 cx + 0.16, y + 0.50, card_w - 0.32, 0.24, size=9, color=NAVY_SOFT, shrink_to_fit=True)
+        if i < len(taglines):
+            add_text(slide, taglines[i], cx + 0.16, y + 0.94, card_w - 0.32, 0.50,
+                     size=9, italic=True, color=GRAY3, shrink_to_fit=True)
 
-    # Bar colors
-    bar_colors = [rgb("A32D2D") if d["gapNeg"] else TEAL, GRAY3]
-    for i, point in enumerate(chart.series[0].points):
-        point.format.fill.solid()
-        point.format.fill.fore_color.rgb = bar_colors[i]
-        point.format.line.fill.background()
+    close_y = y + card_h + 0.30
+    add_text(slide,
+             f"{justify} branches sit in the Justify zone — their market scores and growth "
+             f"rates raise questions about current positioning that the data surfaces clearly.",
+             0.7, close_y, 8.6, 0.46, size=10.5, color=NAVY, shrink_to_fit=True)
 
-    # Style axes — dark text on white now instead of white-on-navy
-    va = chart.value_axis
-    va.tick_labels.font.color.rgb = GRAY3
-    va.tick_labels.font.size = Pt(11)
 
-    ca = chart.category_axis
-    ca.tick_labels.font.color.rgb = NAVY
-    ca.tick_labels.font.size = Pt(13) if len(d["bankName"]) <= 16 else Pt(10)
-    ca.tick_labels.font.bold = True
+def build_financial(prs, d, narr, logo_bytes, page_num=11, transparent_logo_bytes=None, chevron_bytes=None):
+    """Financial fundamentals — headline + description + a single
+    full-width metric table. `narr` kept for signature compatibility but
+    unused. Drops the old checkmark/benchmark-flag column and the
+    competitor/brokered callout boxes to match the clean table-only
+    treatment in the final deck."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    bank_name = d.get("bankName", "")
+    metrics = d["metrics"]
+    m = {mm["label"]: mm for mm in metrics}
+    roa_v = m.get("ROA", {}).get("value", "—")
+    nim_v = m.get("NIM", {}).get("value", "—")
+    ni_v  = m.get("Net Income YoY", {}).get("value", "—")
+
+    all_ok = all(mm["ok"] for mm in metrics) if metrics else False
+    if all_ok:
+        headline = "Strong fundamentals create real room to press the advantage"
+        para_tail = ("the kind of balance sheet that can support deliberate, targeted growth "
+                     "investment rather than defensive action.")
+    else:
+        headline = "Fundamentals worth watching alongside the growth opportunity"
+        para_tail = "worth factoring into how aggressively to pursue the opportunity ahead."
+    paragraph = (f"A {roa_v} ROA, {nim_v} NIM, and net income growth of {ni_v} put {bank_name} "
+                 f"in a position of financial standing — {para_tail}")
+
+    add_text(slide, headline, 0.7, 0.16, 8.6, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
+    add_text(slide, paragraph, 0.7, 0.96, 8.6, 0.55, size=11, color=NAVY_SOFT, shrink_to_fit=True)
+
+    y = 1.62
+    cols = [(0.7, 3.4, "METRIC", PP_ALIGN.LEFT), (4.3, 2.4, "VALUE", PP_ALIGN.CENTER),
+            (6.9, 2.4, "BENCHMARK", PP_ALIGN.CENTER)]
+    add_rect(slide, 0.7, y, 8.6, 0.32, NAVY)
+    for cx, cw, cl, ca in cols:
+        add_text(slide, cl, cx + 0.1, y, cw - 0.1, 0.32, size=9, bold=True, color=WHITE,
+                 align=ca, valign="center")
+    y += 0.32
+    for i, mm in enumerate(metrics):
+        bg = GRAY1 if i % 2 == 0 else WHITE
+        add_rect(slide, 0.7, y, 8.6, 0.40, bg, GRAY2, Pt(0.3))
+        add_text(slide, mm["label"], 0.85, y, 3.2, 0.40, size=10.5, color=NAVY, valign="center")
+        add_text(slide, mm["value"], 4.3, y, 2.4, 0.40, size=12.5, bold=True, color=TEAL,
+                 align=PP_ALIGN.CENTER, valign="center")
+        add_text(slide, mm["bench"], 6.9, y, 2.4, 0.40, size=9.5, italic=True, color=GRAY3,
+                 align=PP_ALIGN.CENTER, valign="center")
+        y += 0.40
+
+
+def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None, chevron_bytes=None):
+    """Deposit-gap slide — headline / description / 3 supporting bullets /
+    4 stat tiles, all computed directly from d (this slide isn't one of
+    the four AI-generated narrative ids, so headline/paragraph text is
+    deterministic — same pattern used on build_next_steps). `narr` kept
+    for signature compatibility but unused."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    bank_name = d.get("bankName", "")
+    gap_neg = d["gapNeg"]
+    bank_yoy_f = float(d.get("bankYoY", 0) or 0)
+    peer_yoy_f = float(d.get("peerYoY", 0) or 0)
+    gap_f = bank_yoy_f - peer_yoy_f
+
+    verb = "outgrowing" if not gap_neg else "underperforming"
+    headline = f"{bank_name} is {verb} its markets by {abs(gap_f):.1f} points"
+    add_text(slide, headline, 0.7, 0.16, 8.6, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 0.86, 8.6, 0.04, TEAL)
+
+    ratio = (bank_yoy_f / peer_yoy_f) if peer_yoy_f else None
+    if not gap_neg:
+        compare = f"more than {ratio:.0f} times" if ratio and ratio >= 2 else "well above"
+        tail = "reflects genuine momentum, not just favorable conditions."
+    else:
+        compare = "well below"
+        tail = "is worth investigating market by market before committing further spend."
+    paragraph = (
+        f"{bank_name} grew deposits {bank_yoy_f:.1f}% year-over-year — {compare} the "
+        f"{peer_yoy_f:.1f}% average competitors recorded in the same markets — a gap of "
+        f"{'nearly ' if abs(gap_f) % 1 >= 0.5 else 'about '}{abs(gap_f):.0f} percentage points that {tail}"
+    )
+    add_text(slide, paragraph, 0.7, 0.96, 8.6, 0.62, size=11, color=NAVY_SOFT, shrink_to_fit=True)
+
+    bullets = [
+        f"Deposit base of {d['deposits']} grew {bank_yoy_f:+.1f}% YoY against a peer average "
+        f"of {peer_yoy_f:+.1f}% in {bank_name}'s own markets"
+    ]
+    comp = d.get("competitor")
+    if comp:
+        comp_yoy = float(comp.get("yoy", 0) or 0)
+        action = "contracted" if comp_yoy < 0 else "grew"
+        bullets.append(
+            f"Primary competitor, present in {comp['branches']} overlapping markets, "
+            f"{action} {comp_yoy:+.1f}% YoY — a meaningful share-shift opportunity"
+        )
+    bullets.append(
+        f"Average opportunity score of {d['avgScore']}/100 across {d['branchCount']} branches "
+        f"signals that the network's full growth potential has not yet been captured"
+    )
+
+    y = 1.72
+    for b in bullets[:3]:
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.78), Inches(y + 0.07), Inches(0.09), Inches(0.09))
+        shp.fill.solid(); shp.fill.fore_color.rgb = NAVY
+        shp.line.fill.background()
+        add_text(slide, b, 1.02, y, 8.28, 0.44, size=11, color=NAVY, shrink_to_fit=True)
+        y += 0.48
+
+    # 4 stat tiles
+    y += 0.18
+    tiles = [
+        (f"{bank_yoy_f:+.1f}%", "DEPOSIT YoY"),
+        (d["gap"],              "GAP VS PEERS"),
+        (d["avgScore"],         "AVG OPP SCORE"),
+        (d["branchCount"],      "BRANCHES"),
+    ]
+    tile_w = 1.96
+    tile_gap = (8.6 - tile_w * 4) / 3
+    for i, (val, lbl) in enumerate(tiles):
+        tx = 0.7 + i * (tile_w + tile_gap)
+        add_rect(slide, tx, y, tile_w, 0.90, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_text(slide, val, tx, y + 0.10, tile_w, 0.44, size=20, bold=True, color=TEAL, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, tx, y + 0.58, tile_w, 0.24, size=8, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
 
 def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None, fin=None,
@@ -4725,8 +4778,12 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     opp_score = lead_branch.get("opportunity_score") if lead_branch else None
     opp_str = f"{float(opp_score):.0f}" if opp_score is not None else None
     branch_loc = None
+    branch_display_name = None
     if lead_branch:
         branch_loc = f"{lead_branch.get('citybr','')}, {lead_branch.get('stalpbr','')}".strip(", ")
+        # namebr often comes back as "Bank Name -- Branch Name" — strip to the
+        # branch name only, same convention _build_branch_list already uses.
+        branch_display_name = lead_branch.get("namebr", "").split("--")[-1].strip() or None
 
     comp_name, comp_dist, comp_yoy = None, None, None
     if top_competitor:
@@ -4746,7 +4803,7 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     # tight paragraph instead of a long narrative block ──
     para_parts = []
     if lead_branch:
-        para_parts.append(f"{bank_name}'s strongest opportunity sits at {lead_branch.get('namebr','its top branch')}"
+        para_parts.append(f"{bank_name}'s strongest opportunity sits at {branch_display_name or 'its top branch'}"
                            f"{f', in {branch_loc}' if branch_loc else ''}.")
     if comp_name:
         decline_phrase = f", down {abs(float(comp_yoy)):.1f}% YoY" if comp_yoy is not None and float(comp_yoy) < 0 else ""
@@ -4766,7 +4823,7 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     # ── Where the opportunity is strong ──
     strong = []
     if lead_branch and opp_str:
-        strong.append(f"{lead_branch.get('namebr','Your top branch')} — "
+        strong.append(f"{branch_display_name or 'Your top branch'} — "
                       f"{lead_branch.get('opportunity_zone','Invest')} zone, opportunity score {opp_str}"
                       f"{f', in {branch_loc}' if branch_loc else ''}.")
     income = lead_branch.get("household_income") if lead_branch else None
@@ -4835,6 +4892,49 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
              size=7, bold=True, color=GRAY3)
     add_text(slide, synthesis, 0.84, y + 0.17, 8.3, box_h - 0.21,
              size=8, color=NAVY, shrink_to_fit=True)
+
+
+def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_bytes=None, chevron_bytes=None):
+    """Closing slide — the four-step activation path from this Snapshot
+    into a full Verlocity Growth System engagement. Static process
+    content, not derived from bank data. Comes immediately after the
+    "What This Means" summary slide (build_next_steps)."""
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
+
+    add_text(slide, "Next Steps for Activating the Verlocity Growth System",
+             0.7, 0.28, 8.6, 0.92, size=22, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.7, 1.24, 8.6, 0.05, TEAL)
+
+    steps = [
+        ("1", "Discovery Intake", "Goals, branch profitability, key financial metrics"),
+        ("2", "Full BMAP Network Analysis", "Complete scoring across the entire branch network"),
+        ("3", "Verlocity Growth System Audit",
+         "Product, audience, media, DAO, CRM, and retention readiness"),
+        ("4", "Strategy & Tactical Recommendations",
+         "Prioritized plays, budgets, and activation roadmap"),
+    ]
+    y = 1.55
+    row_h = 0.78
+    for i, (num, title, desc) in enumerate(steps):
+        badge_d = 0.46
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.7), Inches(y), Inches(badge_d), Inches(badge_d))
+        shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
+        shp.line.fill.background()
+        tf = shp.text_frame; tf.word_wrap = False
+        from pptx.enum.text import MSO_ANCHOR
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = num
+        r.font.bold = True; r.font.size = Pt(15); r.font.color.rgb = WHITE; r.font.name = "Inter"
+
+        if i < len(steps) - 1:
+            add_rect(slide, 0.7 + badge_d/2 - 0.01, y + badge_d, 0.02, row_h - badge_d, rgb("BFE7EC"))
+
+        add_text(slide, title, 1.4, y - 0.02, 7.9, 0.32, size=14.5, bold=True, color=NAVY)
+        add_text(slide, desc, 1.4, y + 0.32, 7.9, 0.30, size=9.5, color=GRAY3, shrink_to_fit=True)
+        y += row_h
 
 
 def _explainer_card(slide, x, y, w, h, header, items, accent, bg):
@@ -5026,6 +5126,7 @@ def _build_branch_list(br, sf):
             "dep":   f"${sf(b.get('latest_dep'))/1e6:.0f}M",
             "yoy":   f"{sf(b.get('yoy_deposits'))*100:+.1f}",
             "zone":  b.get("opportunity_zone", ""),
+            "score": f"{sf(b.get('opportunity_score')):.0f}",
         }
         for b in merged
     ]
@@ -5037,104 +5138,67 @@ def _build_branch_list(br, sf):
 # PERSONA SLIDE
 # ═══════════════════════════════════════════════════════════════
 
-def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
+def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=12, transparent_logo_bytes=None, chevron_bytes=None):
     """
-    Slide: Audience Intelligence Brief — mirrors the Hub's AudienceFinder brief:
-    paragraph / named persona cards / where the opportunity is strong / where
-    to validate / what this means for targeting. Same template as every other
-    slide: white body, top-right logo, teal-rule headline, bottom banner.
+    Slide: Audience Intelligence Brief — simplified to two sections: named
+    persona cards, then where the opportunity is strong. The paragraph
+    summary, validate-before-activating section, and targeting callout
+    box were dropped to match the cleaner final layout — this is a
+    first-level read meant to be scanned, not a full brief.
     """
     slide = prs.slides.add_slide(prs.slide_layouts[6])
 
     # Same chrome as every other slide — top-right logo + bottom gradient banner
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # Headline block — narrower box so it can't wrap into the logo/label corner
-    add_text(slide, "YOUR MARKET IS TELLING YOU WHO TO TALK TO",
-             0.7, 0.14, 6.9, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
+    add_text(slide, "Your Market Is Telling You Who to Talk To",
+             0.7, 0.14, 8.6, 0.50, size=20, bold=True, color=NAVY, valign="bottom")
     add_rect(slide, 0.7, 0.70, 8.6, 0.04, TEAL)
-    add_text(slide, f"First-level audience read across priority branches · {bank_name}",
-             0.7, 0.77, 7.6, 0.20, size=9, italic=True, color=NAVY_SOFT)
+    add_text(slide, f"First-level audience read across priority branches  ·  {bank_name}",
+             0.7, 0.77, 8.6, 0.22, size=10, italic=True, color=NAVY_SOFT)
 
     brief = brief or {}
-    paragraph  = brief.get("paragraph", "")
-    personas   = (brief.get("personas", []) or [])[:2]
-    strong     = (brief.get("strong", []) or [])[:3]
-    watch      = (brief.get("watch", []) or [])[:2]
-    asymmetric = brief.get("asymmetric", "")
+    personas = (brief.get("personas", []) or [])[:2]
+    strong   = (brief.get("strong", []) or [])[:3]
 
-    y = 1.02
-    add_text(slide, "THE AUDIENCE IN ONE PARAGRAPH", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    add_text(slide, paragraph, 0.7, y + 0.15, 8.6, 0.40,
-             size=8.5, color=NAVY, shrink_to_fit=True)
-    y += 0.60
+    y = 1.16
 
     # Named persona cards — compact, 1 or 2 side by side
     if personas:
-        add_text(slide, "AUDIENCE PERSONAS", 0.7, y, 8.6, 0.14,
-                 size=7.5, bold=True, color=GRAY3)
-        y += 0.30
-        card_h = 1.05
+        card_h = 1.55
         n = len(personas)
         card_w = 8.6 if n == 1 else 4.05
         gap = 0.5
         for i, p in enumerate(personas):
             cx = 0.7 + i * (card_w + gap)
             add_rect(slide, cx, y, card_w, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-            add_text(slide, p.get("name", "—"), cx + 0.10, y + 0.05, card_w - 0.20, 0.18,
-                     size=9.5, bold=True, color=NAVY)
-            add_text(slide, p.get("descriptor", ""), cx + 0.10, y + 0.23, card_w - 0.20, 0.16,
-                     size=7, italic=True, color=GRAY3)
-            line1 = f"Life stage: {p.get('life_stage','—')}   ·   Wealth signal: {p.get('wealth_signal','—')}"
-            line2 = f"Need: {p.get('primary_need','—')}   ·   Switch driver: {p.get('switch_driver','—')}"
-            line3 = f"Markets: {p.get('markets','—')}"
-            add_text(slide, line1, cx + 0.10, y + 0.42, card_w - 0.20, 0.20,
-                     size=7, color=NAVY, shrink_to_fit=True)
-            add_text(slide, line2, cx + 0.10, y + 0.63, card_w - 0.20, 0.20,
-                     size=7, color=NAVY, shrink_to_fit=True)
-            add_text(slide, line3, cx + 0.10, y + 0.84, card_w - 0.20, 0.18,
-                     size=7, bold=True, color=GRAY3, shrink_to_fit=True)
-        y += card_h + 0.02
+            add_text(slide, p.get("name", "—"), cx + 0.14, y + 0.14, card_w - 0.28, 0.24,
+                     size=12, bold=True, color=NAVY)
+            line1 = f"Life stage: {p.get('life_stage','—')}"
+            line2 = f"Wealth signal: {p.get('wealth_signal','—')}"
+            line3 = f"Need: {p.get('primary_need','—')}"
+            line4 = f"Switch driver: {p.get('switch_driver','—')}"
+            line5 = f"Markets: {p.get('markets','—')}"
+            ly = y + 0.50
+            for line in (line1, line2, line3, line4, line5):
+                add_text(slide, line, cx + 0.14, ly, card_w - 0.28, 0.20,
+                         size=8.5, color=NAVY, shrink_to_fit=True)
+                ly += 0.205
+        y += card_h + 0.34
 
     # Where the opportunity is strong
-    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.14
+    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.7, y, 8.6, 0.16,
+             size=8.5, bold=True, color=TEAL)
+    y += 0.24
     for s in strong:
-        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
+        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.30))
         tf = tb.text_frame; tf.word_wrap = True
         p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(8)
-        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
+        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(10)
+        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(10); r2.font.color.rgb = NAVY
         for r in (r1, r2):
             r.font.name = "Inter"
-        y += 0.25
-    y += 0.02
-
-    # Where to validate before activating
-    add_text(slide, "WHERE TO VALIDATE BEFORE ACTIVATING", 0.7, y, 8.6, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.14
-    for s in watch:
-        tb = slide.shapes.add_textbox(Inches(0.7), Inches(y), Inches(8.6), Inches(0.24))
-        tf = tb.text_frame; tf.word_wrap = True
-        p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = JUSTIFY; r1.font.size = Pt(8)
-        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
-        for r in (r1, r2):
-            r.font.name = "Inter"
-        y += 0.25
-    y += 0.02
-
-    # What this means for targeting — callout box
-    if asymmetric:
-        box_h = 0.42
-        add_rect(slide, 0.7, y, 8.6, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-        add_text(slide, "WHAT THIS MEANS FOR TARGETING", 0.84, y + 0.04, 8.3, 0.13,
-                 size=7, bold=True, color=GRAY3)
-        add_text(slide, asymmetric, 0.84, y + 0.17, 8.3, box_h - 0.21,
-                 size=8, color=NAVY, shrink_to_fit=True)
+        y += 0.30
 
     return slide
 
@@ -5195,7 +5259,7 @@ def build_deck(data, logo_bytes):
             {"label":"NIM",           "value":f"{sf(fin.get('nim')):.2f}%",              "bench":"2.5–3.5%", "ok": 2.5<=sf(fin.get("nim"))<=4},
             {"label":"Efficiency",    "value":f"{sf(fin.get('efficiency_ratio')):.2f}%", "bench":"<60%",     "ok": 0<sf(fin.get("efficiency_ratio"))<60},
             {"label":"Net Income YoY","value":f"{sf(fin.get('net_income_yoy_pct')):+.1f}%",               "bench":">0%",      "ok": sf(fin.get("net_income_yoy_pct"))>0},
-            {"label":"Deposit YoY",   "value":f"{bankYoY:+.1f}%",                        "bench":">2%",      "ok": bankYoY>=2},
+            {"label":"Deposit YoY",   "value":f"{bankYoY:+.1f}%",                        "bench":"—",        "ok": True},
             {"label":"Cost of Funds", "value":f"{sf(fin.get('cost_of_funds_pct')):.2f}%","bench":"<2%",      "ok": 0<sf(fin.get("cost_of_funds_pct"))<2},
             {"label":"Tier 1 Capital","value":f"{sf(fin.get('tier1_capital_pct')):.2f}%","bench":">8%",      "ok": sf(fin.get("tier1_capital_pct"))>=8},
         ],
@@ -5237,20 +5301,24 @@ def build_deck(data, logo_bytes):
     chevron_bytes = fetch_chevron_mark()
     build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # 4 explainer slides — Verlocity/BMAP positioning content, same on every
-    # deck (pages 2-5). Structure adapted from Brock's BMAP_Introduction_Slides.pptx
-    # (slides 1/2/4 → our overview/six-scores/competitive-intel; slide 3's raw
-    # formula was kept out, since our existing Four Forces flow diagram already
-    # covers that ground CFO-appropriately; slide 5's full 16-Play grid was
-    # flagged as overkill and left out entirely). Ecosystem/5-stage-system
-    # content (formerly page 3) was dropped per direct instruction.
-    build_bmap_overview(prs, D, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_six_scores(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_framework(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_competitive_intel(prs, D, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    # ── 14-slide sequence, matching the finalized Snapshot structure ──
+    # 2: Agenda  3: BMAP intro cards  4-6: explainer trio  7: network
+    # snapshot  8: deposit gap  9: priority branches  10: competitive
+    # overview  11: financial fundamentals  12: audience personas (if
+    # available)  13: what this means (build_next_steps)  14: activation
+    # steps. build_bmap_competitive_intel (Vulnerability & Prospecting
+    # deep-dive) is intentionally NOT called here — it isn't one of the
+    # first 14 final slides; it belongs later in the full deck (pages
+    # 15-23), out of scope for this build.
+    build_agenda(prs, D, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_intro(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_overview(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_six_scores(prs, D, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_bmap_framework(prs, D, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    build_network(prs, D, narr, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_branches(prs, D, narr, logo_bytes, page_num=7, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_network(prs, D, narr, logo_bytes, page_num=7, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_gap(prs, D, narr, logo_bytes, page_num=8, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_branches(prs, D, narr, logo_bytes, page_num=9, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     # Anchor branch for Competitive Overview — the exact #1 branch shown on
     # Priority Markets (highest Opportunity Score among Invest-zone branches
@@ -5263,22 +5331,24 @@ def build_deck(data, logo_bytes):
     all_competitors = fetch_all_bank_competitors(data["ik"])
     all_competitors = filter_to_peer_institutions(all_competitors, data["ik"])
     top_competitor = (sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:1] or [None])[0]
-    build_competitive_overview(prs, D, lead_branch, all_competitors, logo_bytes, page_num=8,
+    build_competitive_overview(prs, D, lead_branch, all_competitors, logo_bytes, page_num=10,
                                 transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
-    build_financial(prs, D, narr, logo_bytes, page_num=9, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_gap(prs, D, narr, logo_bytes, page_num=10, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    # Audience brief slide — before next steps
+    build_financial(prs, D, narr, logo_bytes, page_num=11, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+
+    # Audience brief slide — before "what this means"
     brief = data.get("personas")
-    next_page = 11
+    next_page = 12
     if brief and brief.get("paragraph"):
         print(f"  Adding audience brief slide...")
-        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=11, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-        next_page = 12
+        build_persona_slide(prs, brief, bankName, logo_bytes, page_num=12, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+        next_page = 13
     else:
         print("  Skipping audience brief slide — no brief available")
     build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
                       page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
+    build_activation_steps(prs, D, logo_bytes, page_num=next_page + 1,
+                            transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
