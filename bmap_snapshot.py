@@ -4634,6 +4634,10 @@ JUSTIFY = rgb("A32D2D"); JUSTIFY_L = rgb("FCEBEB")
 
 ZONE_C = {"Invest": INVEST, "Analyze": ANALYZE, "Defend": DEFEND, "Justify": JUSTIFY}
 ZONE_L = {"Invest": INVEST_L, "Analyze": ANALYZE_L, "Defend": DEFEND_L, "Justify": JUSTIFY_L}
+# Solid-fill brand colors for zone tiles (network snapshot, zone quartile
+# tiles) — distinct from ZONE_C/ZONE_L above, which are used for text/
+# left-accent-bar treatments elsewhere (branch cards, etc).
+ZONE_SOLID = {"Invest": NAVY, "Analyze": TEAL, "Defend": EMERALD, "Justify": LEMONLIME}
 
 # Slide dimensions: 10" × 5.625" (widescreen)
 W = Inches(10)
@@ -5672,19 +5676,34 @@ def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, ch
 
 def build_bmap_intro(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
     """Explainer — what BMAP is, in the fewest possible words, before the
-    Overview/Scores/Framework slides go deeper. Four one-line concept
-    cards mirror the four terms used throughout the rest of the deck."""
+    Overview/Scores/Framework slides go deeper. Black-background treatment
+    per direct instruction — the one deliberate dark break in an otherwise
+    all-white deck. Four one-line concept cards mirror the four terms used
+    throughout the rest of the deck; gold accent rule + gold detail text
+    matches the reference."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
-    add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    add_text(slide, "BMAP", 0.7, 0.35, 8.6, 0.36, size=15, bold=True, color=TEAL)
-    add_text(slide, "Branch Market Assessment Platform", 0.7, 0.68, 8.6, 0.50, size=26, bold=True, color=NAVY)
-    add_rect(slide, 0.7, 1.28, 8.6, 0.05, TEAL)
+    # Full black background
+    bg = slide.background; fill = bg.fill; fill.solid(); fill.fore_color.rgb = rgb("000000")
+
+    # White knockout logo — the navy wordmark is invisible on black
+    logo_white_bytes = fetch_logo_white()
+    if logo_white_bytes:
+        add_logo(slide, 8.15, 0.32, 0.62, logo_white_bytes)
+    elif transparent_logo_bytes:
+        add_transparent_logo(slide, 8.15, 0.32, 0.62, transparent_logo_bytes)
+
+    # Gold accent rule
+    add_rect(slide, 0.7, 1.00, 1.55, 0.045, AMBER)
+
+    add_text(slide, "BMAP", 0.7, 1.10, 8.6, 0.72, size=44, bold=True, color=WHITE)
+    add_text(slide, "Branch Market Assessment Platform", 0.7, 1.84, 8.6, 0.40,
+             size=17, color=rgb("9FB3C8"))
     add_text(slide,
              "Our proprietary data-driven system scores every branch in a community "
              "bank's network for deposit growth opportunity, competitive vulnerability, "
              "and the best actions to take.",
-             0.7, 1.42, 8.6, 0.65, size=12, color=NAVY, shrink_to_fit=True)
+             0.7, 2.38, 8.6, 0.65, size=12, color=rgb("D7DEE5"), shrink_to_fit=True)
 
     cards = [
         ("Opportunity Score",        "0–100 growth potential"),
@@ -5694,16 +5713,20 @@ def build_bmap_intro(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None
     ]
     card_w = 1.95
     card_gap = (8.6 - card_w * 4) / 3
-    card_h = 2.0
-    y = 2.45
+    card_h = 1.55
+    y = 3.15
+    dark_navy_fill = rgb("142B45")
     for i, (title, sub) in enumerate(cards):
         cx = 0.7 + i * (card_w + card_gap)
-        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
-        add_rect(slide, cx, y, card_w, 0.05, TEAL)
-        add_text(slide, title, cx + 0.14, y + 0.24, card_w - 0.28, 0.70, size=12, bold=True,
-                 color=NAVY, shrink_to_fit=True)
-        add_text(slide, sub, cx + 0.14, y + 1.05, card_w - 0.28, 0.80, size=9.5, color=GRAY3,
-                 shrink_to_fit=True)
+        add_rect(slide, cx, y, card_w, card_h, dark_navy_fill)  # no border, matches reference
+        add_text(slide, title, cx + 0.16, y + 0.22, card_w - 0.32, 0.60,
+                 size=12.5, bold=True, color=WHITE, shrink_to_fit=True)
+        add_text(slide, sub, cx + 0.16, y + 1.00, card_w - 0.32, 0.45,
+                 size=10, color=AMBER, shrink_to_fit=True)
+
+    # Same footer treatment as every other slide — works fine over black
+    add_section_footer_banner(slide, chevron_bytes)
+    add_text(slide, str(page_num), 9.30, 5.30, 0.55, 0.20, size=9, color=WHITE, align=PP_ALIGN.RIGHT)
 
 
 def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
@@ -5835,13 +5858,13 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     card_h = 1.55
     for i, (pct, name, desc) in enumerate(components):
         cx = 0.7 + i * (card_w + card_gap)
-        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
-        add_rect(slide, cx, y, card_w, 0.05, TEAL)
-        add_text(slide, pct, cx + 0.14, y + 0.14, card_w - 0.28, 0.32, size=17, bold=True,
+        add_rect(slide, cx, y, card_w, card_h, GRAY1)  # no border
+        add_rect(slide, cx, y, 0.07, card_h, TEAL)     # left accent bar (was top bar)
+        add_text(slide, pct, cx + 0.20, y + 0.14, card_w - 0.34, 0.32, size=17, bold=True,
                  color=TEAL)
-        add_text(slide, name, cx + 0.14, y + 0.48, card_w - 0.28, 0.26, size=10.5, bold=True,
+        add_text(slide, name, cx + 0.20, y + 0.48, card_w - 0.34, 0.26, size=10.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.14, y + 0.78, card_w - 0.28, 0.68, size=8, color=GRAY3,
+        add_text(slide, desc, cx + 0.20, y + 0.78, card_w - 0.34, 0.68, size=8, color=GRAY3,
                  shrink_to_fit=True)
     y += card_h + 0.30
 
@@ -5853,23 +5876,22 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     y += 0.24
 
     roles = [
-        ("INVEST", "Top 25%", "Deploy acquisition resources", INVEST, INVEST_L),
-        ("ANALYZE", "50–75th", "Test, then scale", ANALYZE, ANALYZE_L),
-        ("DEFEND", "25–50th", "Retain, don't acquire", DEFEND, DEFEND_L),
-        ("JUSTIFY", "Bottom 25%", "Strategic review first", JUSTIFY, JUSTIFY_L),
+        ("INVEST", "Top 25%", "Deploy acquisition resources", ZONE_SOLID["Invest"]),
+        ("ANALYZE", "50–75th", "Test, then scale", ZONE_SOLID["Analyze"]),
+        ("DEFEND", "25–50th", "Retain, don't acquire", ZONE_SOLID["Defend"]),
+        ("JUSTIFY", "Bottom 25%", "Strategic review first", ZONE_SOLID["Justify"]),
     ]
     tile_w = 2.0
     tile_gap = (8.6 - tile_w * 4) / 3
     tile_h = 0.95
-    for i, (lbl, band, action, c, bg) in enumerate(roles):
+    for i, (lbl, band, action, c) in enumerate(roles):
         tx = 0.7 + i * (tile_w + tile_gap)
-        add_rect(slide, tx, y, tile_w, tile_h, bg, c, Pt(0.8))
-        add_rect(slide, tx, y, tile_w, 0.05, c)
-        add_text(slide, lbl, tx + 0.12, y + 0.12, tile_w - 0.24, 0.28, size=14, bold=True, color=c)
+        add_rect(slide, tx, y, tile_w, tile_h, c)  # solid fill, no border
+        add_text(slide, lbl, tx + 0.12, y + 0.12, tile_w - 0.24, 0.28, size=14, bold=True, color=WHITE)
         add_text(slide, band, tx + 0.12, y + 0.42, tile_w - 0.24, 0.20, size=9, bold=True,
-                 color=GRAY3, shrink_to_fit=True)
+                 color=WHITE, shrink_to_fit=True)
         add_text(slide, action, tx + 0.12, y + 0.64, tile_w - 0.24, 0.28, size=9, bold=True,
-                 color=c, shrink_to_fit=True)
+                 color=WHITE, shrink_to_fit=True)
 
 
 def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None, chevron_bytes=None):
@@ -5939,8 +5961,7 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     box_top = y - pad
     row_h = 0.95
     box_h_internal = 0.30 + 2 * row_h + 0.14 + pad
-    add_rect(slide, 0.7 - pad, box_top, 8.6 + 2 * pad, box_h_internal, rgb("F0FAFB"), TEAL, Pt(0.9))
-    add_rect(slide, 0.7 - pad, box_top, 8.6 + 2 * pad, 0.05, TEAL)
+    add_rect(slide, 0.7 - pad, box_top, 8.6 + 2 * pad, box_h_internal, rgb("F0FAFB"))
     add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
              0.7, y, 8.6, 0.22, size=11, bold=True, color=TEAL, shrink_to_fit=True)
 
@@ -5960,8 +5981,7 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     box_top2 = y - pad
     comp_h = 0.75
     box_h_comp = 0.30 + comp_h + 0.14 + pad
-    add_rect(slide, 0.7 - pad, box_top2, 8.6 + 2 * pad, box_h_comp, rgb("F0FAF7"), EMERALD, Pt(0.9))
-    add_rect(slide, 0.7 - pad, box_top2, 8.6 + 2 * pad, 0.05, EMERALD)
+    add_rect(slide, 0.7 - pad, box_top2, 8.6 + 2 * pad, box_h_comp, rgb("F0FAF7"))
     add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
              0.7, y, 8.6, 0.22, size=11, bold=True, color=EMERALD, shrink_to_fit=True)
     num, name, desc = competitive[0]
@@ -6098,7 +6118,7 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
     y1 = 1.30
     for i, (val, lbl) in enumerate(kpis):
         kx = 0.7 + i*2.14
-        add_rect(slide, kx, y1, 2.0, 0.88, GRAY1, GRAY2, Pt(0.5))
+        add_rect(slide, kx, y1, 2.0, 0.88, GRAY1)
         c = JUSTIFY if (i==3 and gap_neg) else NAVY
         add_text(slide, val, kx, y1+0.06, 2.0, 0.48, size=22, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, kx, y1+0.52, 2.0, 0.26, size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
@@ -6111,18 +6131,18 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
         "JUSTIFY": "Hold the line — don't spend here without hard evidence first",
     }
     zones = [
-        (str(d["invest"]),  "INVEST",   INVEST,  INVEST_L),
-        (str(d["analyze"]), "ANALYZE",  ANALYZE, ANALYZE_L),
-        (str(d["defend"]),  "DEFEND",   DEFEND,  DEFEND_L),
-        (str(d["justify"]), "JUSTIFY",  JUSTIFY, JUSTIFY_L),
+        (str(d["invest"]),  "INVEST",   ZONE_SOLID["Invest"]),
+        (str(d["analyze"]), "ANALYZE",  ZONE_SOLID["Analyze"]),
+        (str(d["defend"]),  "DEFEND",   ZONE_SOLID["Defend"]),
+        (str(d["justify"]), "JUSTIFY",  ZONE_SOLID["Justify"]),
     ]
     y2 = y1 + 1.00
-    for i, (val, lbl, c, bg) in enumerate(zones):
+    for i, (val, lbl, c) in enumerate(zones):
         zx = 0.7 + i*2.14
-        add_rect(slide, zx, y2, 2.0, 1.55, bg, c, Pt(0.8))
-        add_text(slide, val, zx, y2+0.10, 2.0, 0.50, size=26, bold=True, color=c, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, zx, y2+0.62, 2.0, 0.26, size=10, bold=True, color=c, align=PP_ALIGN.CENTER)
-        add_text(slide, ZONE_BLURBS[lbl], zx+0.10, y2+0.94, 1.80, 0.56, size=7.5, color=GRAY3,
+        add_rect(slide, zx, y2, 2.0, 1.55, c)  # solid fill, no border
+        add_text(slide, val, zx, y2+0.10, 2.0, 0.50, size=26, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, zx, y2+0.62, 2.0, 0.26, size=10, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, ZONE_BLURBS[lbl], zx+0.10, y2+0.94, 1.80, 0.56, size=7.5, color=WHITE,
                  align=PP_ALIGN.CENTER, shrink_to_fit=True)
 
 
