@@ -5023,6 +5023,20 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
         shape.line.fill.background()
     return _no_shadow(shape)
 
+def add_rounded_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0), radius=0.06):
+    """Same as add_rect but with rounded corners. radius is the corner-
+    roundness fraction (0-0.5) of the shorter side — 0.06 reads as a
+    small/subtle radius, PowerPoint's own default preset is ~0.167."""
+    shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    shape.adjustments[0] = radius
+    shape.fill.solid(); shape.fill.fore_color.rgb = fill_color
+    if line_color:
+        shape.line.color.rgb = line_color
+        shape.line.width = line_width
+    else:
+        shape.line.fill.background()
+    return _no_shadow(shape)
+
 def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
              align=PP_ALIGN.LEFT, italic=False, font="Inter", valign="top",
              shrink_to_fit=False):
@@ -5897,16 +5911,16 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
         ("DEFEND", "25–50th", "Retain, don't acquire", ZONE_SOLID["Defend"]),
         ("JUSTIFY", "Bottom 25%", "Strategic review first", ZONE_SOLID["Justify"]),
     ]
-    tile_w = 2.0
-    tile_gap = (8.6 - tile_w * 4) / 3
+    tile_w = card_w
+    tile_gap = card_gap
     tile_h = 0.95
     for i, (lbl, band, action, c) in enumerate(roles):
         tx = 0.7 + i * (tile_w + tile_gap)
-        add_rect(slide, tx, y, tile_w, tile_h, c)  # solid fill, no border
-        add_text(slide, lbl, tx + 0.12, y + 0.12, tile_w - 0.24, 0.28, size=14, bold=True, color=WHITE)
-        add_text(slide, band, tx + 0.12, y + 0.42, tile_w - 0.24, 0.20, size=9, bold=True,
+        add_rounded_rect(slide, tx, y, tile_w, tile_h, c, radius=0.06)  # solid fill, no border, small radius
+        add_text(slide, lbl, tx + 0.15, y + 0.12, tile_w - 0.28, 0.28, size=14, bold=True, color=WHITE)
+        add_text(slide, band, tx + 0.15, y + 0.42, tile_w - 0.28, 0.20, size=9, bold=True,
                  color=WHITE, shrink_to_fit=True)
-        add_text(slide, action, tx + 0.12, y + 0.64, tile_w - 0.24, 0.28, size=9, bold=True,
+        add_text(slide, action, tx + 0.15, y + 0.64, tile_w - 0.28, 0.28, size=9, bold=True,
                  color=WHITE, shrink_to_fit=True)
 
 
@@ -6136,7 +6150,7 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
     y1 = 1.30
     for i, (val, lbl) in enumerate(kpis):
         kx = 0.7 + i*2.14
-        add_rect(slide, kx, y1, 2.0, 0.88, GRAY1)
+        add_rounded_rect(slide, kx, y1, 2.0, 0.88, GRAY1, radius=0.06)
         c = JUSTIFY if (i==3 and gap_neg) else NAVY
         add_text(slide, val, kx, y1+0.06, 2.0, 0.48, size=22, bold=True, color=c, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, kx, y1+0.52, 2.0, 0.26, size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
@@ -6157,7 +6171,7 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
     y2 = y1 + 1.00
     for i, (val, lbl, c) in enumerate(zones):
         zx = 0.7 + i*2.14
-        add_rect(slide, zx, y2, 2.0, 1.55, c)  # solid fill, no border
+        add_rounded_rect(slide, zx, y2, 2.0, 1.55, c, radius=0.06)  # solid fill, no border, small radius
         add_text(slide, val, zx, y2+0.10, 2.0, 0.50, size=26, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, zx, y2+0.62, 2.0, 0.26, size=10, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
         add_text(slide, ZONE_BLURBS[lbl], zx+0.10, y2+0.94, 1.80, 0.56, size=7.5, color=WHITE,
@@ -6359,15 +6373,15 @@ def build_branches(prs, d, narr, logo_bytes, page_num=9, transparent_logo_bytes=
     y = 1.78
     for i, b in enumerate(top3):
         cx = 0.7 + i * (card_w + card_gap)
-        zc = ZONE_C.get(b["zone"], INVEST)
-        add_rect(slide, cx, y, card_w, card_h, GRAY1, GRAY2, Pt(0.5))
-        add_rect(slide, cx, y, card_w, 0.05, zc)
-        add_text(slide, b["name"], cx + 0.16, y + 0.16, card_w - 0.32, 0.30, size=12.5, bold=True,
+        zc = ZONE_SOLID.get(b["zone"], NAVY)
+        add_rect(slide, cx, y, card_w, card_h, GRAY1)          # no border
+        add_rect(slide, cx, y, 0.06, card_h, zc)               # left accent bar (was top), matches slide 6/7 palette
+        add_text(slide, b["name"], cx + 0.22, y + 0.16, card_w - 0.38, 0.30, size=12.5, bold=True,
                  color=NAVY, shrink_to_fit=True)
         add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY  ·  Score {b.get('score','—')}",
-                 cx + 0.16, y + 0.50, card_w - 0.32, 0.24, size=9, color=NAVY_SOFT, shrink_to_fit=True)
+                 cx + 0.22, y + 0.50, card_w - 0.38, 0.24, size=9, color=NAVY_SOFT, shrink_to_fit=True)
         if i < len(taglines):
-            add_text(slide, taglines[i], cx + 0.16, y + 0.94, card_w - 0.32, 0.50,
+            add_text(slide, taglines[i], cx + 0.22, y + 0.94, card_w - 0.38, 0.50,
                      size=9, italic=True, color=GRAY3, shrink_to_fit=True)
 
     close_y = y + card_h + 0.30
@@ -6499,7 +6513,7 @@ def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None,
     tile_gap = (8.6 - tile_w * 4) / 3
     for i, (val, lbl) in enumerate(tiles):
         tx = 0.7 + i * (tile_w + tile_gap)
-        add_rect(slide, tx, y, tile_w, 0.90, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+        add_rect(slide, tx, y, tile_w, 0.90, rgb("F7F8FA"))
         add_text(slide, val, tx, y + 0.10, tile_w, 0.44, size=20, bold=True, color=TEAL, align=PP_ALIGN.CENTER)
         add_text(slide, lbl, tx, y + 0.58, tile_w, 0.24, size=8, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
 
