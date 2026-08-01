@@ -5009,6 +5009,9 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
         shape.line.width = line_width
     else:
         shape.line.fill.background()
+    # Autoshapes silently inherit a theme drop-shadow unless told not to —
+    # kills the shadow visible under title rules and every other box.
+    shape.shadow.inherit = False
     return shape
 
 def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
