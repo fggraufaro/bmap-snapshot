@@ -5001,6 +5001,18 @@ def _audience_brief_fallback(institution_name, target_br, reason="unknown"):
 
 
 
+def _no_shadow(shape):
+    """Strip the theme-inherited shadow from a raw add_shape() call (ovals,
+    rounded rects) — same fix as add_rect applies automatically; anything
+    built via slide.shapes.add_shape() directly needs this called on it
+    explicitly."""
+    shape.shadow.inherit = False
+    style_el = shape._element.find(qn('p:style'))
+    if style_el is not None:
+        shape._element.remove(style_el)
+    return shape
+
+
 def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
     shape = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
     shape.fill.solid(); shape.fill.fore_color.rgb = fill_color
@@ -5009,10 +5021,7 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
         shape.line.width = line_width
     else:
         shape.line.fill.background()
-    # Autoshapes silently inherit a theme drop-shadow unless told not to —
-    # kills the shadow visible under title rules and every other box.
-    shape.shadow.inherit = False
-    return shape
+    return _no_shadow(shape)
 
 def add_text(slide, text, x, y, w, h, size=11, bold=False, color=NAVY,
              align=PP_ALIGN.LEFT, italic=False, font="Inter", valign="top",
@@ -5221,6 +5230,9 @@ def add_gradient_banner(slide, x, y, w, h):
     shape = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
     shape.line.fill.background()
     shape.shadow.inherit = False
+    style_el = shape._element.find(qn('p:style'))
+    if style_el is not None:
+        shape._element.remove(style_el)
     spPr = shape.fill._xPr
     # remove whatever fill python-pptx put there by default
     for tag in ("a:noFill", "a:solidFill", "a:gradFill", "a:blipFill", "a:pattFill"):
@@ -5662,6 +5674,7 @@ def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, ch
         shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.7), Inches(y), Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
         shp.line.fill.background()
+        _no_shadow(shp)
         tf = shp.text_frame; tf.word_wrap = False
         from pptx.enum.text import MSO_ANCHOR
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -5787,7 +5800,7 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     # centered as a block too. Card enlarged slightly now that the whole
     # slide has more room to breathe. ──
     card_h = 0.95
-    add_rect(slide, 0.7, y, 8.6, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
+    add_rect(slide, 0.7, y, 8.6, card_h, rgb("F7F8FA"))
     add_rect(slide, 0.7, y, 0.06, card_h, TEAL)
 
     # "24" built directly (not via add_text) so word_wrap can be forced
@@ -5942,6 +5955,7 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
                                       Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = accent
         shp.line.fill.background()
+        _no_shadow(shp)
         tf = shp.text_frame
         tf.word_wrap = False
         from pptx.enum.text import MSO_ANCHOR
@@ -6063,6 +6077,7 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
                                       Inches(pill_w), Inches(pill_h))
         shp.fill.solid(); shp.fill.fore_color.rgb = JUSTIFY
         shp.line.fill.background()
+        _no_shadow(shp)
         tf = shp.text_frame; tf.word_wrap = False
         from pptx.enum.text import MSO_ANCHOR
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -6468,6 +6483,7 @@ def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None,
         shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.78), Inches(y + 0.07), Inches(0.09), Inches(0.09))
         shp.fill.solid(); shp.fill.fore_color.rgb = NAVY
         shp.line.fill.background()
+        _no_shadow(shp)
         add_text(slide, b, 1.02, y, 8.28, 0.44, size=11, color=NAVY, shrink_to_fit=True)
         y += 0.48
 
@@ -6660,6 +6676,7 @@ def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_byt
         shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.7), Inches(y), Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
         shp.line.fill.background()
+        _no_shadow(shp)
         tf = shp.text_frame; tf.word_wrap = False
         from pptx.enum.text import MSO_ANCHOR
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
@@ -6702,6 +6719,7 @@ def _explainer_card(slide, x, y, w, h, header, items, accent, bg):
                                       Inches(0.09), Inches(0.09))
         shp.fill.solid(); shp.fill.fore_color.rgb = accent
         shp.line.fill.background()
+        _no_shadow(shp)
         add_text(slide, it, x + pad + 0.22, y=iy, w=w - 2 * pad - 0.22, h=line_h - 0.06,
                  size=11.5, bold=True, color=NAVY, valign="top", shrink_to_fit=True)
         iy += line_h
