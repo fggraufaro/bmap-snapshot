@@ -6792,7 +6792,7 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
                                      Inches(bmap_y - ring_d / 2), Inches(ring_d), Inches(ring_d))
         hl.fill.background()
         hl.line.color.rgb = WHITE; hl.line.width = Pt(2.5)
-        hl.shadow.inherit = False
+        _no_shadow(hl)
 
         add_text(slide, "▲ you are here", img_x, img_y - 0.24, img_w, 0.18, size=8,
                  italic=True, bold=True, color=TEAL, align=PP_ALIGN.CENTER)
