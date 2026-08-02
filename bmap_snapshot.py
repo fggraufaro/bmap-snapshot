@@ -4625,6 +4625,8 @@ LEMONLIME = rgb("CDD61A")  # brand secondary
 AMBER   = rgb("F5A623")
 WHITE   = rgb("FFFFFF")
 GRAY1   = rgb("F5F5F2")
+CARD_BG = rgb("F7F9FC")  # unified light card/tile fill — reference deck uses this one
+                          # value everywhere (was inconsistently F5F5F2/F7F8FA across slides)
 GRAY2   = rgb("E8E8E5")
 GRAY3   = rgb("778899")
 INVEST  = rgb("27500A"); INVEST_L = rgb("EAF3DE")
@@ -4637,7 +4639,7 @@ ZONE_L = {"Invest": INVEST_L, "Analyze": ANALYZE_L, "Defend": DEFEND_L, "Justify
 # Solid-fill brand colors for zone tiles (network snapshot, zone quartile
 # tiles) — distinct from ZONE_C/ZONE_L above, which are used for text/
 # left-accent-bar treatments elsewhere (branch cards, etc).
-ZONE_SOLID = {"Invest": NAVY, "Analyze": TEAL, "Defend": EMERALD, "Justify": LEMONLIME}
+ZONE_SOLID = {"Invest": NAVY, "Analyze": TEAL, "Defend": EMERALD, "Justify": rgb("BFC815")}
 
 # Slide dimensions: 10" × 5.625" (widescreen)
 W = Inches(10)
@@ -5023,12 +5025,15 @@ def add_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0)):
         shape.line.fill.background()
     return _no_shadow(shape)
 
-def add_rounded_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0), radius=0.06):
-    """Same as add_rect but with rounded corners. radius is the corner-
-    roundness fraction (0-0.5) of the shorter side — 0.06 reads as a
-    small/subtle radius, PowerPoint's own default preset is ~0.167."""
+def add_rounded_rect(slide, x, y, w, h, fill_color, line_color=None, line_width=Pt(0), radius=0.05):
+    """Same as add_rect but with rounded corners. `radius` is an ABSOLUTE
+    radius in inches (not a fraction) — matches the reference deck, which
+    holds corner radius constant (~0.045-0.06in) across every box size
+    rather than scaling it with the box. PowerPoint's adjustments[0] is a
+    fraction of the shorter side, so we compute that fraction here from
+    the requested absolute radius."""
     shape = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
-    shape.adjustments[0] = radius
+    shape.adjustments[0] = min(0.5, radius / min(w, h))
     shape.fill.solid(); shape.fill.fore_color.rgb = fill_color
     if line_color:
         shape.line.color.rgb = line_color
@@ -5132,7 +5137,7 @@ def add_chrome(slide, page_num, label, logo_bytes, transparent_logo_bytes=None, 
     The section label pill was removed — it collided with the headline text
     once the sidebar was gone and everything shifted left."""
     if transparent_logo_bytes:
-        add_transparent_logo(slide, 8.70, 0.06, 0.34, transparent_logo_bytes)
+        add_transparent_logo(slide, 8.44, 0.11, 0.52, transparent_logo_bytes)
     add_section_footer_banner(slide, chevron_bytes)
     add_text(slide, str(page_num), 9.30, 5.30, 0.55, 0.20, size=9, color=WHITE, align=PP_ALIGN.RIGHT)
 
@@ -5663,14 +5668,16 @@ def _bullet_line(slide, y, text, lead_color=TEAL, rest_color=NAVY, size=9, heigh
 def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, chevron_bytes=None):
     """Agenda slide — three-part roadmap for the deck (BMAP overview, this
     bank's Snapshot, recommended next steps). Static structural content;
-    only item 02's title is interpolated with the bank name."""
+    only item 02's title is interpolated with the bank name. Matches the
+    final reference deck: each item is its own rounded card, not a plain
+    row with a divider line."""
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
 
-    add_text(slide, "Agenda", 0.39, 0.45, 9.22, 0.60, size=30, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 1.10, 9.22, 0.05, TEAL)
+    add_text(slide, "Agenda", 0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     items = [
         ("01", "BMAP Overview",
@@ -5681,11 +5688,14 @@ def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, ch
          "Discovery intake through full Verlocity Growth System activation"),
     ]
 
-    y = 1.55
-    row_h = 1.03
+    y = 1.125
+    row_h = 1.125
+    badge_d = 0.488
     for i, (num, title, desc) in enumerate(items):
-        badge_d = 0.56
-        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.39), Inches(y), Inches(badge_d), Inches(badge_d))
+        add_rounded_rect(slide, 0.39, y, 9.22, 0.938, CARD_BG)
+
+        badge_y = y + 0.225
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.56), Inches(badge_y), Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
         shp.line.fill.background()
         _no_shadow(shp)
@@ -5695,12 +5705,10 @@ def build_agenda(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=None, ch
         tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
         p = tf.paragraphs[0]; p.alignment = PP_ALIGN.CENTER
         r = p.add_run(); r.text = num
-        r.font.bold = True; r.font.size = Pt(16); r.font.color.rgb = WHITE; r.font.name = "Inter"
+        r.font.bold = True; r.font.size = Pt(11); r.font.color.rgb = WHITE; r.font.name = "Inter"
 
-        add_text(slide, title, 1.5, y - 0.02, 7.8, 0.34, size=16, bold=True, color=NAVY)
-        add_text(slide, desc, 1.5, y + 0.34, 7.8, 0.50, size=10.5, color=GRAY3, shrink_to_fit=True)
-        if i < len(items) - 1:
-            add_rect(slide, 0.39, y + row_h - 0.10, 9.22, 0.012, GRAY2)
+        add_text(slide, title, 1.275, y + 0.187, 7.875, 0.3, size=14, bold=True, color=NAVY)
+        add_text(slide, desc, 1.275, y + 0.525, 7.875, 0.262, size=11, color=GRAY3, shrink_to_fit=True)
         y += row_h
 
 
@@ -5723,17 +5731,18 @@ def build_bmap_intro(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None
     elif transparent_logo_bytes:
         add_transparent_logo(slide, 8.15, 0.32, 0.62, transparent_logo_bytes)
 
-    # Gold accent rule
-    add_rect(slide, 0.39, 1.00, 1.55, 0.045, AMBER)
+    # Gold accent rule — reference uses a more muted/darker gold than our AMBER
+    GOLD = rgb("C9A227")
+    add_rect(slide, 0.39, 1.00, 1.2, 0.045, GOLD)
 
-    add_text(slide, "BMAP", 0.39, 1.10, 9.22, 0.72, size=44, bold=True, color=WHITE)
-    add_text(slide, "Branch Market Assessment Platform", 0.39, 1.84, 9.22, 0.40,
-             size=17, color=rgb("9FB3C8"))
+    add_text(slide, "BMAP", 0.39, 1.10, 9.22, 0.60, size=33, bold=True, color=WHITE)
+    add_text(slide, "Branch Market Assessment Platform", 0.39, 1.72, 9.22, 0.36,
+             size=15, color=rgb("A5B4C8"))
     add_text(slide,
              "Our proprietary data-driven system scores every branch in a community "
              "bank's network for deposit growth opportunity, competitive vulnerability, "
              "and the best actions to take.",
-             0.39, 2.38, 9.22, 0.65, size=12, color=rgb("D7DEE5"), shrink_to_fit=True)
+             0.39, 2.22, 9.22, 0.60, size=11, color=rgb("CBD5E1"), shrink_to_fit=True)
 
     cards = [
         ("Opportunity Score",        "0–100 growth potential"),
@@ -5741,18 +5750,18 @@ def build_bmap_intro(prs, d, logo_bytes, page_num=3, transparent_logo_bytes=None
         ("Competitor Vulnerability", "Who is exposed & why"),
         ("Named Plays",              "Next best actions to take"),
     ]
-    card_w = 1.95
+    card_w = 2.25
     card_gap = (9.22 - card_w * 4) / 3
-    card_h = 1.55
-    y = 3.15
-    dark_navy_fill = rgb("142B45")
+    card_h = 1.275
+    y = 3.0
+    dark_navy_fill = rgb("0F2A4A")
     for i, (title, sub) in enumerate(cards):
         cx = 0.39 + i * (card_w + card_gap)
-        add_rect(slide, cx, y, card_w, card_h, dark_navy_fill)  # no border, matches reference
-        add_text(slide, title, cx + 0.16, y + 0.22, card_w - 0.32, 0.60,
-                 size=12.5, bold=True, color=WHITE, shrink_to_fit=True)
-        add_text(slide, sub, cx + 0.16, y + 1.00, card_w - 0.32, 0.45,
-                 size=10, color=AMBER, shrink_to_fit=True)
+        add_rounded_rect(slide, cx, y, card_w, card_h, dark_navy_fill)  # no border, matches reference
+        add_text(slide, title, cx + 0.16, y + 0.22, card_w - 0.32, 0.55,
+                 size=11, bold=True, color=WHITE, shrink_to_fit=True)
+        add_text(slide, sub, cx + 0.16, y + 0.83, card_w - 0.32, 0.35,
+                 size=9, color=GOLD, shrink_to_fit=True)
 
     # Same footer treatment as every other slide — works fine over black
     add_section_footer_banner(slide, chevron_bytes)
@@ -5771,30 +5780,30 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     add_text(slide, "BMAP: Know Where to Win Before You Spend",
-             0.39, 0.14, 9.22, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+             0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     # ── Two columns: The Problem | What BMAP Does ──
-    y = 0.90
-    col_w = 4.41
-    col_gap = 0.4
+    y = 0.94
+    col_w = 4.35
+    col_gap = 0.45
     col_x = [0.39, 0.39 + col_w + col_gap]
 
-    add_text(slide, "THE PROBLEM", col_x[0], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
-    add_text(slide, "WHAT BMAP DOES", col_x[1], y, col_w, 0.16, size=8.5, bold=True, color=GRAY3)
-    y += 0.32
+    add_text(slide, "THE PROBLEM", col_x[0], y, col_w, 0.16, size=8, bold=True, color=GRAY3)
+    add_text(slide, "WHAT BMAP DOES", col_x[1], y, col_w, 0.16, size=8, bold=True, color=GRAY3)
+    y += 0.26
 
     add_text(slide,
              "Most community banks allocate marketing budgets by tradition, not by data. "
              "The result is predictable: equal investment across unequal opportunities, "
              "wasted spend in markets where the battle is already lost, and missed growth "
              "where conditions are ripe to win.",
-             col_x[0], y, col_w, 1.55, size=11.5, color=NAVY, shrink_to_fit=True)
+             col_x[0], y, col_w, 1.55, size=11, color=NAVY, shrink_to_fit=True)
     add_text(slide,
              "BMAP is a branch-level market intelligence platform that gives bank "
              "leadership a precise, data-driven answer to the most important question "
              "in deposit growth strategy.",
-             col_x[1], y, col_w, 1.15, size=11.5, color=NAVY, shrink_to_fit=True)
+             col_x[1], y, col_w, 1.15, size=11, color=NAVY, shrink_to_fit=True)
 
     # ── Pull-quote — centered across the full width, not confined to the
     # right column, since it's the single unifying line for the slide ──
@@ -5814,8 +5823,7 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     # centered as a block too. Card enlarged slightly now that the whole
     # slide has more room to breathe. ──
     card_h = 0.95
-    add_rect(slide, 0.39, y, 9.22, card_h, rgb("F7F8FA"))
-    add_rect(slide, 0.39, y, 0.06, card_h, TEAL)
+    add_rounded_rect(slide, 0.39, y, 9.22, card_h, CARD_BG)
 
     # "24" built directly (not via add_text) so word_wrap can be forced
     # off — add_text always sets word_wrap=True, which at this font size
@@ -5828,14 +5836,14 @@ def build_bmap_overview(prs, d, logo_bytes, page_num=2, transparent_logo_bytes=N
     num_p = num_tf.paragraphs[0]
     num_p.alignment = PP_ALIGN.LEFT
     num_r = num_p.add_run(); num_r.text = "24+"
-    num_r.font.bold = True; num_r.font.size = Pt(34); num_r.font.color.rgb = TEAL
+    num_r.font.bold = True; num_r.font.size = Pt(27); num_r.font.color.rgb = TEAL
     num_r.font.name = "Inter"
 
     add_text(slide, "DATA SOURCES FUSED INTO ONE SCORING ENGINE", 2.05, y + 0.135, 6.7, 0.28,
-             size=12, bold=True, color=NAVY, shrink_to_fit=True)
+             size=11, bold=True, color=NAVY, shrink_to_fit=True)
     add_text(slide,
              "FDIC  ·  FFIEC  ·  NCUA  ·  US Census  ·  US Labor  ·  US Housing  ·  Zillow  ·  PostGIS",
-             2.05, y + 0.455, 6.7, 0.36, size=9.5, color=GRAY3, shrink_to_fit=True)
+             2.05, y + 0.455, 6.7, 0.36, size=10, color=GRAY3, shrink_to_fit=True)
 
 
 def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=None, chevron_bytes=None):
@@ -5850,28 +5858,28 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     add_text(slide, "How the Opportunity Score & Zones Are Built",
-             0.39, 0.14, 9.22, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
-    add_text(slide, "The exact weighting behind every branch's score, and how scores become zones",
-             0.39, 0.77, 9.22, 0.20, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
+             0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
-    y = 0.98
-    add_text(slide, "OPPORTUNITY SCORE  =  WEIGHTED SUM OF FOUR STATE-NORMALIZED COMPONENTS",
-             0.39, y, 9.22, 0.16, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
+    SLATE = rgb("334155")
+
+    y = 1.02
+    add_text(slide, "OPPORTUNITY SCORE  =  weighted sum of four state-normalized components",
+             0.39, y, 9.22, 0.16, size=9, bold=True, color=TEAL, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.20
+    y += 0.26
     add_text(slide,
              "0.25 × Market Growth  +  0.30 × Relative Growth  +  0.25 × Inverted Density  "
              "+  0.20 × Deposit Size",
-             0.39, y, 9.22, 0.30, size=13, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
+             0.39, y, 9.22, 0.30, size=11, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.34
+    y += 0.30
     add_text(slide,
              "All components are min-max normalized within the state so every branch is "
              "ranked only against its state peers — never a national average.",
-             0.39, y, 9.22, 0.24, size=8.5, italic=True, color=NAVY_SOFT, align=PP_ALIGN.CENTER,
+             0.39, y, 9.22, 0.20, size=9, color=GRAY3, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.44
+    y += 0.40
 
     components = [
         ("25%", "Market Growth",
@@ -5885,25 +5893,25 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     ]
     card_w = 1.95
     card_gap = (9.22 - card_w * 4) / 3
-    card_h = 1.55
+    card_h = 1.5
     for i, (pct, name, desc) in enumerate(components):
         cx = 0.39 + i * (card_w + card_gap)
-        add_rect(slide, cx, y, card_w, card_h, GRAY1)  # no border
-        add_rect(slide, cx, y, 0.07, card_h, TEAL)     # left accent bar (was top bar)
-        add_text(slide, pct, cx + 0.20, y + 0.14, card_w - 0.34, 0.32, size=17, bold=True,
+        add_rounded_rect(slide, cx, y, card_w, card_h, CARD_BG)
+        add_rect(slide, cx, y, 0.075, card_h, TEAL)     # left accent bar
+        add_text(slide, pct, cx + 0.20, y + 0.11, card_w - 0.34, 0.30, size=15, bold=True,
                  color=TEAL)
-        add_text(slide, name, cx + 0.20, y + 0.48, card_w - 0.34, 0.26, size=10.5, bold=True,
+        add_text(slide, name, cx + 0.20, y + 0.41, card_w - 0.34, 0.26, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.20, y + 0.78, card_w - 0.34, 0.68, size=8, color=GRAY3,
+        add_text(slide, desc, cx + 0.20, y + 0.71, card_w - 0.34, 0.75, size=9, color=SLATE,
                  shrink_to_fit=True)
-    y += card_h + 0.30
+    y += card_h + 0.16
 
     add_text(slide,
-             "ZONES — STATE COMMUNITY-BANK QUARTILES CONVERT THE CONTINUOUS SCORE INTO AN "
-             "ACTIONABLE POSTURE",
-             0.39, y, 9.22, 0.16, size=7.5, bold=True, color=GRAY3, align=PP_ALIGN.CENTER,
+             "ZONES — State community-bank quartiles convert the continuous score into an "
+             "actionable posture",
+             0.39, y, 9.22, 0.16, size=9, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.24
+    y += 0.30
 
     roles = [
         ("INVEST", "Top 25%", "Deploy acquisition resources", ZONE_SOLID["Invest"]),
@@ -5913,14 +5921,14 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
     ]
     tile_w = card_w
     tile_gap = card_gap
-    tile_h = 0.95
+    tile_h = 1.012
     for i, (lbl, band, action, c) in enumerate(roles):
         tx = 0.39 + i * (tile_w + tile_gap)
-        add_rounded_rect(slide, tx, y, tile_w, tile_h, c, radius=0.06)  # solid fill, no border, small radius
-        add_text(slide, lbl, tx + 0.15, y + 0.12, tile_w - 0.28, 0.28, size=14, bold=True, color=WHITE)
-        add_text(slide, band, tx + 0.15, y + 0.42, tile_w - 0.28, 0.20, size=9, bold=True,
+        add_rounded_rect(slide, tx, y, tile_w, tile_h, c)  # solid fill, no border, small radius
+        add_text(slide, lbl, tx + 0.15, y + 0.112, tile_w - 0.28, 0.225, size=11, bold=True, color=WHITE)
+        add_text(slide, band, tx + 0.15, y + 0.375, tile_w - 0.28, 0.188, size=9,
                  color=WHITE, shrink_to_fit=True)
-        add_text(slide, action, tx + 0.15, y + 0.64, tile_w - 0.28, 0.28, size=9, bold=True,
+        add_text(slide, action, tx + 0.15, y + 0.637, tile_w - 0.28, 0.225, size=10,
                  color=WHITE, shrink_to_fit=True)
 
 
@@ -5936,12 +5944,12 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     add_text(slide, "The Five Scores That Drive Every Decision",
-             0.39, 0.14, 9.22, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+             0.39, 0.189, 7.875, 0.338, size=18, bold=True, color=NAVY, valign="bottom")
     add_text(slide, "Two families of scoring, one connected system",
-             0.39, 0.77, 9.22, 0.20, size=9, italic=True, color=NAVY_SOFT)
+             0.39, 0.486, 7.5, 0.225, size=10, italic=True, color=GRAY3)
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
-    y = 1.20
+    SLATE = rgb("334155")
 
     internal = [
         ("01", "Opportunity Score",
@@ -5978,27 +5986,26 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         r = p.add_run(); r.text = num
-        r.font.bold = True; r.font.size = Pt(10); r.font.color.rgb = WHITE; r.font.name = "Inter"
+        r.font.bold = True; r.font.size = Pt(8); r.font.color.rgb = WHITE; r.font.name = "Inter"
 
-        add_text(slide, name, x + 0.38, y0, w - 0.38, 0.26, size=11, bold=True,
+        add_text(slide, name, x + 0.38, y0, w - 0.38, 0.225, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, x + 0.38, y0 + 0.28, w - 0.38, item_h - 0.28,
-                 size=8.5, color=NAVY_SOFT, shrink_to_fit=True)
+        add_text(slide, desc, x + 0.38, y0 + 0.262, w - 0.38, item_h - 0.262,
+                 size=9, color=SLATE, shrink_to_fit=True)
 
     # ── INTERNAL — full-width box, 4 items as a 2x2 grid ──
-    pad = 0.16
-    inner_pad = 0.22
-    grid_gap = 0.40
-    box_top = y - pad
-    row_h = 0.95
-    box_h_internal = 0.30 + 2 * row_h + 0.14 + pad
-    add_rect(slide, 0.39 - pad, box_top, 9.22 + 2 * pad, box_h_internal, rgb("F0FAFB"))
+    box_top = 1.05
+    box_h_internal = 2.4
+    add_rounded_rect(slide, 0.3, box_top, 9.375, box_h_internal, rgb("E8F7FA"))
     add_text(slide, "INTERNAL — WHAT TO DO WITH YOUR OWN BRANCHES",
-             0.39, y, 9.22, 0.22, size=11, bold=True, color=TEAL, shrink_to_fit=True)
+             0.45, box_top + 0.113, 9.0, 0.225, size=9, bold=True, color=TEAL, shrink_to_fit=True)
 
-    grid_y = y + 0.30
-    cell_w = (9.22 - 2 * inner_pad - grid_gap) / 2
-    cell_x = [0.39 + inner_pad, 0.39 + inner_pad + cell_w + grid_gap]
+    row_h = 0.9
+    grid_y = box_top + 0.45
+    inner_pad = 0.55
+    grid_gap = 0.6
+    cell_w = (9.375 - 2 * (inner_pad - 0.3) - grid_gap) / 2
+    cell_x = [0.3 + inner_pad, 0.3 + inner_pad + cell_w + grid_gap]
     grid_positions = [
         (cell_x[0], grid_y), (cell_x[1], grid_y),
         (cell_x[0], grid_y + row_h), (cell_x[1], grid_y + row_h),
@@ -6006,17 +6013,14 @@ def build_bmap_six_scores(prs, d, logo_bytes, page_num=3, transparent_logo_bytes
     for (num, name, desc), (gx, gy) in zip(internal, grid_positions):
         score_item(gx, gy, cell_w, num, name, desc, row_h, TEAL)
 
-    y = box_top + box_h_internal + 0.30
-
     # ── COMPETITIVE — full-width box below, single item ──
-    box_top2 = y - pad
-    comp_h = 0.75
-    box_h_comp = 0.30 + comp_h + 0.14 + pad
-    add_rect(slide, 0.39 - pad, box_top2, 9.22 + 2 * pad, box_h_comp, rgb("F0FAF7"))
+    box_top2 = 3.6
+    box_h_comp = 1.275
+    add_rounded_rect(slide, 0.3, box_top2, 9.375, box_h_comp, rgb("EBFEF4"))
     add_text(slide, "COMPETITIVE — WHERE TO ATTACK",
-             0.39, y, 9.22, 0.22, size=11, bold=True, color=EMERALD, shrink_to_fit=True)
+             0.45, box_top2 + 0.112, 9.0, 0.21, size=9, bold=True, color=EMERALD, shrink_to_fit=True)
     num, name, desc = competitive[0]
-    score_item(0.39 + inner_pad, y + 0.30, 9.22 - 2 * inner_pad, num, name, desc, comp_h, EMERALD)
+    score_item(0.3 + inner_pad, box_top2 + 0.45, 9.375 - 2 * (inner_pad - 0.3), num, name, desc, 0.412, EMERALD)
 
 
 def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_logo_bytes=None, chevron_bytes=None):
@@ -6034,7 +6038,7 @@ def build_bmap_competitive_intel(prs, d, logo_bytes, page_num=5, transparent_log
 
     add_text(slide, "Competitive Intelligence: Vulnerability & Prospecting",
              0.39, 0.14, 9.22, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+    add_rect(slide, 0.39, 0.70, 9.22, 0.03, TEAL)
     add_text(slide, "How BMAP finds exposed competitors, and turns that into ranked targets",
              0.39, 0.77, 9.22, 0.20, size=9, italic=True, color=NAVY_SOFT)
 
@@ -6134,10 +6138,10 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
-    add_text(slide, bank_name, 0.39, 0.16, 9.22, 0.50, size=26, bold=True, color=NAVY, valign="bottom")
-    add_text(slide, f"BMAP Market Snapshot  ·  {d.get('date','')}", 0.39, 0.68, 9.22, 0.26,
-             size=12, italic=True, color=NAVY_SOFT)
-    add_rect(slide, 0.39, 0.98, 9.22, 0.04, TEAL)
+    add_text(slide, bank_name, 0.39, 0.189, 7.875, 0.338, size=18, bold=True, color=NAVY, valign="bottom")
+    add_text(slide, f"BMAP Market Snapshot  ·  {d.get('date','')}", 0.39, 0.486, 7.5, 0.225,
+             size=10, italic=True, color=GRAY3)
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     # 4 KPI tiles
     kpis = [
@@ -6147,13 +6151,15 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
         (d["gap"],         "VS PEER AVG"),
     ]
     gap_neg = d["gapNeg"]
-    y1 = 1.30
+    tile_w = 2.25
+    tile_gap = 0.15
+    y1 = 1.106
     for i, (val, lbl) in enumerate(kpis):
-        kx = 0.39 + i*2.14
-        add_rounded_rect(slide, kx, y1, 2.0, 0.88, GRAY1, radius=0.06)
+        kx = 0.39 + i * (tile_w + tile_gap)
+        add_rounded_rect(slide, kx, y1, tile_w, 1.05, CARD_BG)
         c = JUSTIFY if (i==3 and gap_neg) else NAVY
-        add_text(slide, val, kx, y1+0.06, 2.0, 0.48, size=22, bold=True, color=c, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, kx, y1+0.52, 2.0, 0.26, size=7, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+        add_text(slide, val, kx + 0.075, y1 + 0.15, tile_w - 0.15, 0.488, size=21, bold=True, color=c, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, kx + 0.075, y1 + 0.675, tile_w - 0.15, 0.225, size=8, color=GRAY3, align=PP_ALIGN.CENTER)
 
     # 4 zone tiles
     ZONE_BLURBS = {
@@ -6168,13 +6174,13 @@ def build_network(prs, d, narr, logo_bytes, page_num=7, transparent_logo_bytes=N
         (str(d["defend"]),  "DEFEND",   ZONE_SOLID["Defend"]),
         (str(d["justify"]), "JUSTIFY",  ZONE_SOLID["Justify"]),
     ]
-    y2 = y1 + 1.00
+    y2 = 2.343
     for i, (val, lbl, c) in enumerate(zones):
-        zx = 0.39 + i*2.14
-        add_rounded_rect(slide, zx, y2, 2.0, 1.55, c, radius=0.06)  # solid fill, no border, small radius
-        add_text(slide, val, zx, y2+0.10, 2.0, 0.50, size=26, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, zx, y2+0.62, 2.0, 0.26, size=10, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
-        add_text(slide, ZONE_BLURBS[lbl], zx+0.10, y2+0.94, 1.80, 0.56, size=7.5, color=WHITE,
+        zx = 0.39 + i * (tile_w + tile_gap)
+        add_rounded_rect(slide, zx, y2, tile_w, 1.95, c)  # solid fill, no border, small radius
+        add_text(slide, val, zx + 0.075, y2 + 0.15, tile_w - 0.15, 0.412, size=21, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, zx + 0.075, y2 + 0.6, tile_w - 0.15, 0.225, size=11, bold=True, color=WHITE, align=PP_ALIGN.CENTER)
+        add_text(slide, ZONE_BLURBS[lbl], zx + 0.225, y2 + 0.938, tile_w - 0.45, 0.825, size=9, color=WHITE,
                  align=PP_ALIGN.CENTER, shrink_to_fit=True)
 
 
@@ -6200,8 +6206,10 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
     slide = prs.slides.add_slide(prs.slide_layouts[6])
     add_chrome(slide, page_num, "COMPETITIVE OVERVIEW", logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    add_text(slide, "Competitive Overview", 0.39, 0.14, 7.52, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+    add_text(slide, "Competitive Overview", 0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
+
+    SLATE = rgb("334155")
 
     # ── Scope narrative — data-driven, not AI-generated ──
     n_points = len(all_competitors or [])
@@ -6212,31 +6220,31 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
         + (f" across {n_inst} institutions" if n_inst else "")
         + " — the two most exposed anywhere in your footprint are called out to the right."
     ) if n_points else "No competitor data available yet."
-    add_text(slide, scope_line, 0.39, 0.77, 9.22, 0.28, size=9, italic=True, color=NAVY_SOFT, shrink_to_fit=True)
+    add_text(slide, scope_line, 0.39, 0.915, 9.22, 0.45, size=11, color=SLATE, shrink_to_fit=True)
 
     if not all_competitors:
         add_text(slide, "No competitor data available yet.",
                  0.39, 1.6, 9.22, 0.4, size=11, color=GRAY3)
         return slide
 
-    # ── Competitive Exposure by Distance — aggregate stat rows, not a
+    # ── Competitive Exposure by Distance — compact pill rows, not a
     # point-cloud. The radar/scatter attempts both hit real rendering
     # problems on live data (dot overlap, label collision) once there were
     # enough competitors to be interesting — an aggregate breakdown shows
     # the same real breadth without anything that can visually collide. ──
-    add_text(slide, "Competitive Exposure by Distance", 0.39, 1.15, 5.4, 0.24,
-             size=12, bold=True, color=NAVY)
+    add_text(slide, "Competitive Exposure by Distance", 0.39, 1.478, 4.5, 0.225,
+             size=10, bold=True, color=NAVY)
 
     usable = [c for c in all_competitors
               if c.get("target_dist_mi") is not None]
 
-    CHART_X, CHART_Y, CHART_W, CHART_H = 0.39, 1.47, 5.8, 3.05
+    CHART_X, CHART_W = 0.39, 4.65
 
     if usable:
         bands = [
-            ("< 1 mile",  0.0, 1.0,  rgb("C0392B")),
-            ("1–5 miles", 1.0, 5.0,  rgb("E08E0B")),
-            ("5–10 miles", 5.0, 10.0, rgb("D4B106")),
+            ("< 1 mile",  0.0, 1.0),
+            ("1–5 miles", 1.0, 5.0),
+            ("5–10 miles", 5.0, 10.0),
         ]
 
         def _is_vulnerable(c):
@@ -6285,58 +6293,49 @@ def build_competitive_overview(prs, d, lead_branch, all_competitors, logo_bytes,
                 return True
             return False
 
-        row_h = 0.86
-        ry = CHART_Y + 0.15
-        for label, lo, hi, color in bands:
+        row_h = 0.45
+        row_gap = 0.075
+        ry = 1.815
+        for label, lo, hi in bands:
             in_band = [c for c in usable if lo <= float(c["target_dist_mi"]) < hi]
             n_total = len(in_band)
             n_vulnerable = sum(1 for c in in_band if _is_vulnerable(c))
 
-            add_rect(slide, CHART_X, ry, 0.08, row_h - 0.14, color)
-            add_text(slide, label, CHART_X + 0.22, ry, 1.6, 0.28, size=13, bold=True, color=NAVY)
+            add_rounded_rect(slide, CHART_X, ry, CHART_W, row_h, CARD_BG, radius=0.037)
+            add_text(slide, label, CHART_X + 0.15, ry + 0.113, 1.35, 0.225, size=10, bold=True, color=NAVY)
             add_text(slide, f"{n_total} competitor{'s' if n_total != 1 else ''} tracked",
-                     CHART_X + 0.22, ry + 0.28, 2.6, 0.22, size=9.5, color=GRAY3)
+                     CHART_X + 1.575, ry + 0.038, 2.85, 0.188, size=9, color=SLATE)
             if n_total:
                 add_text(slide, f"{n_vulnerable} of {n_total} flagged vulnerable",
-                         CHART_X + 0.22, ry + 0.50, 3.6, 0.22, size=9.5, color=NAVY_SOFT)
-
-            # Simple proportional bar — share of this band flagged vulnerable
-            bar_x, bar_w = CHART_X + 3.1, 2.7
-            add_rect(slide, bar_x, ry + 0.12, bar_w, 0.16, rgb("EDEFF2"))
-            if n_total:
-                frac = n_vulnerable / n_total
-                add_rect(slide, bar_x, ry + 0.12, bar_w * frac, 0.16, color)
-            ry += row_h
+                         CHART_X + 1.575, ry + 0.225, 2.85, 0.188, size=9, color=TEAL)
+            ry += row_h + row_gap
 
         add_text(slide, "\"Vulnerable\" = multiple warning signs together, or one extreme outlier alone — "
                  "declining deposits, weak profitability, rising credit-quality strain.",
-                 CHART_X, ry + 0.05, CHART_W, 0.30, size=8, italic=True, color=GRAY3, shrink_to_fit=True)
+                 0.39, 3.84, 9.22, 0.375, size=9, italic=True, color=GRAY3, shrink_to_fit=True)
 
     # ── Top 2 by vulnerability — whole footprint, not one branch ──
     top_vuln = sorted(all_competitors, key=lambda c: float(c.get("vuln_score") or 0), reverse=True)[:2]
 
-    add_text(slide, "Top 2 Peers to Watch — Across Your Footprint", 6.4, 1.15, 3.2, 0.40,
-             size=12, bold=True, color=NAVY, shrink_to_fit=True)
-    add_text(slide,
-             "Exposure is ranked across deposit trajectory, profitability, and credit "
-             "quality together — not any single metric alone.",
-             6.4, 1.53, 3.2, 0.40, size=7.5, color=GRAY3, shrink_to_fit=True)
+    right_x, right_w = 5.34, 4.275
+    add_text(slide, "Top 2 Peers to Watch", right_x, 1.478, right_w, 0.225,
+             size=10, bold=True, color=NAVY, shrink_to_fit=True)
 
-    vy = 2.01
+    vy = 1.815
     for i, c in enumerate(top_vuln):
         name = c.get("target_namefull") or c.get("target_namebr") or "—"
         narrative = _sales_narrative(c)
 
-        add_rect(slide, 6.4, vy, 3.2, 1.32, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-        add_text(slide, f"{i+1}. {name}", 6.52, vy + 0.07, 2.96, 0.28, size=10.5, bold=True,
+        add_rounded_rect(slide, right_x, vy, right_w, 1.012, CARD_BG)
+        add_text(slide, f"{i+1}. {name}", right_x + 0.15, vy + 0.15, right_w - 0.3, 0.262, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, narrative, 6.52, vy + 0.38, 2.96, 0.88, size=8.5,
-                 color=NAVY_SOFT, shrink_to_fit=True)
-        vy += 1.45
+        add_text(slide, narrative, right_x + 0.15, vy + 0.45, right_w - 0.3, 0.45, size=10,
+                 color=SLATE, shrink_to_fit=True)
+        vy += 1.125
 
     if not top_vuln:
         add_text(slide, "No named competitor data available yet.",
-                 6.4, vy, 3.2, 0.4, size=8, color=GRAY3, shrink_to_fit=True)
+                 right_x, vy, right_w, 0.4, size=8, color=GRAY3, shrink_to_fit=True)
 
     return slide
 
@@ -6351,10 +6350,11 @@ def build_branches(prs, d, narr, logo_bytes, page_num=9, transparent_logo_bytes=
 
     bank_name = d.get("bankName", "")
     invest, justify, branch_count = d["invest"], d["justify"], d["branchCount"]
+    SLATE = rgb("334155")
 
     headline = f"{invest} branches ready to invest, {justify} need a harder look"
-    add_text(slide, headline, 0.39, 0.16, 9.22, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.86, 9.22, 0.04, TEAL)
+    add_text(slide, headline, 0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     paragraph = (
         f"BMAP scores every branch on deposit volume, growth trajectory, and competitive "
@@ -6362,33 +6362,33 @@ def build_branches(prs, d, narr, logo_bytes, page_num=9, transparent_logo_bytes=
         f"score into the Invest zone, meaning the local market conditions actively support "
         f"accelerated deposit capture right now."
     )
-    add_text(slide, paragraph, 0.39, 0.96, 9.22, 0.62, size=11, color=NAVY_SOFT, shrink_to_fit=True)
+    add_text(slide, paragraph, 0.39, 0.929, 9.22, 0.675, size=11, color=SLATE, shrink_to_fit=True)
 
     top3 = d["branchList"][:3]
     taglines = ["Network's highest-scoring location", "Largest balance in top tier",
                 "Consistent growth, smaller base"]
-    card_w = 2.7
-    card_gap = (9.22 - card_w * 3) / 2
-    card_h = 1.55
-    y = 1.78
+    card_w = 3.0
+    card_gap = 0.15
+    card_h = 1.65
+    y = 1.791
+    BRANCH_ACCENT = EMERALD  # fixed accent color on this slide, not zone-mapped
     for i, b in enumerate(top3):
         cx = 0.39 + i * (card_w + card_gap)
-        zc = ZONE_SOLID.get(b["zone"], NAVY)
-        add_rect(slide, cx, y, card_w, card_h, GRAY1)          # no border
-        add_rect(slide, cx, y, 0.06, card_h, zc)               # left accent bar (was top), matches slide 6/7 palette
-        add_text(slide, b["name"], cx + 0.22, y + 0.16, card_w - 0.38, 0.30, size=12.5, bold=True,
+        add_rounded_rect(slide, cx, y, card_w, card_h, CARD_BG)
+        add_rect(slide, cx, y, 0.09, card_h, BRANCH_ACCENT)   # left accent bar
+        add_text(slide, b["name"], cx + 0.225, y + 0.15, card_w - 0.4, 0.3, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
         add_text(slide, f"{b['dep']}  ·  {b['yoy']}% YoY  ·  Score {b.get('score','—')}",
-                 cx + 0.22, y + 0.50, card_w - 0.38, 0.24, size=9, color=NAVY_SOFT, shrink_to_fit=True)
+                 cx + 0.225, y + 0.563, card_w - 0.4, 0.262, size=10, color=TEAL, shrink_to_fit=True)
         if i < len(taglines):
-            add_text(slide, taglines[i], cx + 0.22, y + 0.94, card_w - 0.38, 0.50,
-                     size=9, italic=True, color=GRAY3, shrink_to_fit=True)
+            add_text(slide, taglines[i], cx + 0.225, y + 0.938, card_w - 0.4, 0.45,
+                     size=10, color=SLATE, shrink_to_fit=True)
 
-    close_y = y + card_h + 0.30
+    close_y = y + card_h + 0.225
     add_text(slide,
              f"{justify} branches sit in the Justify zone — their market scores and growth "
              f"rates raise questions about current positioning that the data surfaces clearly.",
-             0.39, close_y, 9.22, 0.46, size=10.5, color=NAVY, shrink_to_fit=True)
+             0.39, close_y, 9.22, 0.45, size=11, color=SLATE, shrink_to_fit=True)
 
 
 def build_financial(prs, d, narr, logo_bytes, page_num=11, transparent_logo_bytes=None, chevron_bytes=None):
@@ -6406,6 +6406,7 @@ def build_financial(prs, d, narr, logo_bytes, page_num=11, transparent_logo_byte
     roa_v = m.get("ROA", {}).get("value", "—")
     nim_v = m.get("NIM", {}).get("value", "—")
     ni_v  = m.get("Net Income YoY", {}).get("value", "—")
+    SLATE = rgb("334155")
 
     all_ok = all(mm["ok"] for mm in metrics) if metrics else False
     if all_ok:
@@ -6418,27 +6419,28 @@ def build_financial(prs, d, narr, logo_bytes, page_num=11, transparent_logo_byte
     paragraph = (f"A {roa_v} ROA, {nim_v} NIM, and net income growth of {ni_v} put {bank_name} "
                  f"in a position of financial standing — {para_tail}")
 
-    add_text(slide, headline, 0.39, 0.16, 9.22, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.86, 9.22, 0.04, TEAL)
-    add_text(slide, paragraph, 0.39, 0.96, 9.22, 0.55, size=11, color=NAVY_SOFT, shrink_to_fit=True)
+    add_text(slide, headline, 0.39, 0.30, 7.5, 0.375, size=18, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
+    add_text(slide, paragraph, 0.39, 0.881, 9.22, 0.525, size=11, color=SLATE, shrink_to_fit=True)
 
-    y = 1.62
-    cols = [(0.39, 3.4, "METRIC", PP_ALIGN.LEFT), (4.3, 2.4, "VALUE", PP_ALIGN.CENTER),
-            (6.9, 2.71, "BENCHMARK", PP_ALIGN.CENTER)]
-    add_rect(slide, 0.39, y, 9.22, 0.32, NAVY)
+    y = 1.593
+    cols = [(0.525, 3.0, "METRIC", PP_ALIGN.LEFT), (4.125, 2.25, "VALUE", PP_ALIGN.CENTER),
+            (6.75, 2.625, "BENCHMARK", PP_ALIGN.CENTER)]
+    add_rect(slide, 0.39, y, 9.22, 0.3, NAVY)
     for cx, cw, cl, ca in cols:
-        add_text(slide, cl, cx + 0.1, y, cw - 0.1, 0.32, size=9, bold=True, color=WHITE,
+        add_text(slide, cl, cx, y, cw, 0.3, size=9, bold=True, color=WHITE,
                  align=ca, valign="center")
-    y += 0.32
+    y += 0.338
+    row_h = 0.338
     for i, mm in enumerate(metrics):
-        bg = GRAY1 if i % 2 == 0 else WHITE
-        add_rect(slide, 0.39, y, 9.22, 0.40, bg, GRAY2, Pt(0.3))
-        add_text(slide, mm["label"], 0.85, y, 3.2, 0.40, size=10.5, color=NAVY, valign="center")
-        add_text(slide, mm["value"], 4.3, y, 2.4, 0.40, size=12.5, bold=True, color=TEAL,
+        bg = CARD_BG if i % 2 == 0 else WHITE
+        add_rect(slide, 0.39, y, 9.22, row_h, bg)
+        add_text(slide, mm["label"], 0.525, y, 3.0, row_h, size=10, color=NAVY, valign="center")
+        add_text(slide, mm["value"], 4.125, y, 2.25, row_h, size=10, bold=True, color=TEAL,
                  align=PP_ALIGN.CENTER, valign="center")
-        add_text(slide, mm["bench"], 6.9, y, 2.71, 0.40, size=9.5, italic=True, color=GRAY3,
+        add_text(slide, mm["bench"], 6.75, y, 2.625, row_h, size=10, color=GRAY3,
                  align=PP_ALIGN.CENTER, valign="center")
-        y += 0.40
+        y += row_h
 
 
 def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None, chevron_bytes=None):
@@ -6455,11 +6457,12 @@ def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None,
     bank_yoy_f = float(d.get("bankYoY", 0) or 0)
     peer_yoy_f = float(d.get("peerYoY", 0) or 0)
     gap_f = bank_yoy_f - peer_yoy_f
+    SLATE = rgb("334155")
 
     verb = "outgrowing" if not gap_neg else "underperforming"
     headline = f"{bank_name} is {verb} its markets by {abs(gap_f):.1f} points"
-    add_text(slide, headline, 0.39, 0.16, 9.22, 0.66, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.86, 9.22, 0.04, TEAL)
+    add_text(slide, headline, 0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     ratio = (bank_yoy_f / peer_yoy_f) if peer_yoy_f else None
     if not gap_neg:
@@ -6473,9 +6476,9 @@ def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None,
         f"{peer_yoy_f:.1f}% average competitors recorded in the same markets — a gap of "
         f"{'nearly ' if abs(gap_f) % 1 >= 0.5 else 'about '}{abs(gap_f):.0f} percentage points that {tail}"
     )
-    add_text(slide, paragraph, 0.39, 0.96, 9.22, 0.62, size=11, color=NAVY_SOFT, shrink_to_fit=True)
+    add_text(slide, paragraph, 0.39, 0.893, 9.22, 0.6, size=11, color=SLATE, shrink_to_fit=True)
 
-    bullets = [
+    lines = [
         f"Deposit base of {d['deposits']} grew {bank_yoy_f:+.1f}% YoY against a peer average "
         f"of {peer_yoy_f:+.1f}% in {bank_name}'s own markets"
     ]
@@ -6483,39 +6486,36 @@ def build_gap(prs, d, narr, logo_bytes, page_num=8, transparent_logo_bytes=None,
     if comp:
         comp_yoy = float(comp.get("yoy", 0) or 0)
         action = "contracted" if comp_yoy < 0 else "grew"
-        bullets.append(
+        lines.append(
             f"Primary competitor, present in {comp['branches']} overlapping markets, "
             f"{action} {comp_yoy:+.1f}% YoY — a meaningful share-shift opportunity"
         )
-    bullets.append(
+    lines.append(
         f"Average opportunity score of {d['avgScore']}/100 across {d['branchCount']} branches "
         f"signals that the network's full growth potential has not yet been captured"
     )
 
-    y = 1.72
-    for b in bullets[:3]:
-        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.78), Inches(y + 0.07), Inches(0.09), Inches(0.09))
-        shp.fill.solid(); shp.fill.fore_color.rgb = NAVY
-        shp.line.fill.background()
-        _no_shadow(shp)
-        add_text(slide, b, 1.02, y, 8.28, 0.44, size=11, color=NAVY, shrink_to_fit=True)
-        y += 0.48
+    # Plain paragraph lines — no bullet dots (matches reference)
+    y = 1.643
+    for line in lines[:3]:
+        add_text(slide, line, 0.39, y, 9.22, 0.45, size=11, color=NAVY, shrink_to_fit=True)
+        y += 0.525
 
     # 4 stat tiles
-    y += 0.18
+    y = 3.405
     tiles = [
         (f"{bank_yoy_f:+.1f}%", "DEPOSIT YoY"),
         (d["gap"],              "GAP VS PEERS"),
         (d["avgScore"],         "AVG OPP SCORE"),
         (d["branchCount"],      "BRANCHES"),
     ]
-    tile_w = 1.96
-    tile_gap = (9.22 - tile_w * 4) / 3
+    tile_w = 2.25
+    tile_gap = 0.15
     for i, (val, lbl) in enumerate(tiles):
         tx = 0.39 + i * (tile_w + tile_gap)
-        add_rect(slide, tx, y, tile_w, 0.90, rgb("F7F8FA"))
-        add_text(slide, val, tx, y + 0.10, tile_w, 0.44, size=20, bold=True, color=TEAL, align=PP_ALIGN.CENTER)
-        add_text(slide, lbl, tx, y + 0.58, tile_w, 0.24, size=8, bold=True, color=GRAY3, align=PP_ALIGN.CENTER)
+        add_rounded_rect(slide, tx, y, tile_w, 1.125, CARD_BG)
+        add_text(slide, val, tx, y + 0.15, tile_w, 0.45, size=20, bold=True, color=TEAL, align=PP_ALIGN.CENTER)
+        add_text(slide, lbl, tx, y + 0.675, tile_w, 0.262, size=9, color=GRAY3, align=PP_ALIGN.CENTER)
 
 
 def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=None, fin=None,
@@ -6537,12 +6537,11 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     bank_name = d.get("bankName", "")
+    SLATE = rgb("334155")
 
     add_text(slide, f"What This Means for {bank_name}",
-             0.39, 0.14, 7.52, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
-    add_text(slide, f"Key findings from this Snapshot, and where they point · {bank_name}",
-             0.39, 0.77, 8.22, 0.20, size=9, italic=True, color=NAVY_SOFT)
+             0.39, 0.30, 7.5, 0.375, size=21, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     opp_score = lead_branch.get("opportunity_score") if lead_branch else None
     opp_str = f"{float(opp_score):.0f}" if opp_score is not None else None
@@ -6582,12 +6581,7 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
         para_parts.append(f"The bank's own numbers back it up, with ROA at {roa_f:.2f}%.")
     paragraph = " ".join(para_parts) or f"{bank_name}'s branch network shows real, specific opportunity."
 
-    y = 1.16
-    add_text(slide, "THE FINDINGS IN ONE PARAGRAPH", 0.39, y, 9.22, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    add_text(slide, paragraph, 0.39, y + 0.15, 9.22, 0.45,
-             size=8.5, color=NAVY, shrink_to_fit=True)
-    y += 0.68
+    add_text(slide, paragraph, 0.39, 0.855, 9.22, 0.525, size=11, color=SLATE, shrink_to_fit=True)
 
     # ── Where the opportunity is strong ──
     strong = []
@@ -6606,19 +6600,13 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
                       f"{'behind' if d.get('gapNeg') else 'ahead of'} peers "
                       f"({d.get('bankYoY','—')}% vs. {d.get('peerYoY','—')}%).")
 
-    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.39, y, 9.22, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.16
+    y = 1.53
+    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.39, y, 9.0, 0.225,
+             size=9, bold=True, color=EMERALD)
+    y += 0.30
     for s in strong[:3]:
-        tb = slide.shapes.add_textbox(Inches(0.39), Inches(y), Inches(9.22), Inches(0.30))
-        tf = tb.text_frame; tf.word_wrap = True
-        p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(8)
-        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
-        for r in (r1, r2):
-            r.font.name = "Inter"
-        y += 0.28
-    y += 0.05
+        add_text(slide, f"→  {s}", 0.39, y, 9.22, 0.262, size=11, color=NAVY, shrink_to_fit=True)
+        y += 0.30
 
     # ── What to validate next — honest scope limits of a single snapshot,
     # same spirit as the persona slide's "where to validate" section, not
@@ -6633,19 +6621,13 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     validate.append("ROA and deposit trends here reflect a single point in time — worth tracking quarter "
                     "over quarter, not just once.")
 
-    add_text(slide, "WHAT TO VALIDATE NEXT", 0.39, y, 9.22, 0.14,
-             size=7.5, bold=True, color=GRAY3)
-    y += 0.16
+    y = 2.88
+    add_text(slide, "WHAT TO VALIDATE NEXT", 0.39, y, 9.0, 0.225,
+             size=9, bold=True, color=TEAL)
+    y += 0.30
     for s in validate[:3]:
-        tb = slide.shapes.add_textbox(Inches(0.39), Inches(y), Inches(9.22), Inches(0.30))
-        tf = tb.text_frame; tf.word_wrap = True
-        p = tf.paragraphs[0]
-        r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = JUSTIFY; r1.font.size = Pt(8)
-        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(8); r2.font.color.rgb = NAVY
-        for r in (r1, r2):
-            r.font.name = "Inter"
-        y += 0.28
-    y += 0.06
+        add_text(slide, f"→  {s}", 0.39, y, 9.22, 0.262, size=11, color=NAVY, shrink_to_fit=True)
+        y += 0.30
 
     # ── What this means — closing synthesis, callout box ──
     synthesis = (
@@ -6655,12 +6637,10 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
         f"{bank_name}'s branch network shows real, specific opportunity — the kind that's "
         "easy to miss without branch-level data."
     )
-    box_h = 0.46
-    add_rect(slide, 0.39, y, 9.22, box_h, rgb("F0FAFB"), rgb("D9F2F6"), Pt(0.75))
-    add_text(slide, "WHAT THIS MEANS", 0.84, y + 0.04, 8.3, 0.13,
-             size=7, bold=True, color=GRAY3)
-    add_text(slide, synthesis, 0.84, y + 0.17, 8.3, box_h - 0.21,
-             size=8, color=NAVY, shrink_to_fit=True)
+    y = 4.155
+    box_h = 0.675
+    add_rounded_rect(slide, 0.39, y, 9.22, box_h, rgb("E8F7FA"))
+    add_text(slide, synthesis, 0.525, y + 0.15, 8.925, 0.375, size=11, bold=True, italic=True, color=NAVY)
 
 
 def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_bytes=None, chevron_bytes=None):
@@ -6672,8 +6652,8 @@ def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_byt
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     add_text(slide, "Next Steps for Activating the Verlocity Growth System",
-             0.39, 0.28, 9.22, 0.92, size=22, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 1.24, 9.22, 0.05, TEAL)
+             0.39, 0.30, 7.5, 0.375, size=20, bold=True, color=NAVY, valign="bottom")
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
     steps = [
         ("1", "Discovery Intake", "Goals, branch profitability, key financial metrics"),
@@ -6683,11 +6663,11 @@ def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_byt
         ("4", "Strategy & Tactical Recommendations",
          "Prioritized plays, budgets, and activation roadmap"),
     ]
-    y = 1.55
-    row_h = 0.78
+    y = 1.163
+    row_h = 0.899
+    badge_d = 0.525
     for i, (num, title, desc) in enumerate(steps):
-        badge_d = 0.46
-        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.39), Inches(y), Inches(badge_d), Inches(badge_d))
+        shp = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(0.525), Inches(y), Inches(badge_d), Inches(badge_d))
         shp.fill.solid(); shp.fill.fore_color.rgb = TEAL
         shp.line.fill.background()
         _no_shadow(shp)
@@ -6700,10 +6680,10 @@ def build_activation_steps(prs, d, logo_bytes, page_num=14, transparent_logo_byt
         r.font.bold = True; r.font.size = Pt(15); r.font.color.rgb = WHITE; r.font.name = "Inter"
 
         if i < len(steps) - 1:
-            add_rect(slide, 0.39 + badge_d/2 - 0.01, y + badge_d, 0.02, row_h - badge_d, rgb("BFE7EC"))
+            add_rect(slide, 0.735, y + badge_d, 0.09, row_h - badge_d, rgb("B2E5EF"))
 
-        add_text(slide, title, 1.4, y - 0.02, 7.9, 0.32, size=14.5, bold=True, color=NAVY)
-        add_text(slide, desc, 1.4, y + 0.32, 7.9, 0.30, size=9.5, color=GRAY3, shrink_to_fit=True)
+        add_text(slide, title, 1.275, y, 7.875, 0.262, size=14, bold=True, color=NAVY)
+        add_text(slide, desc, 1.275, y + 0.299, 7.875, 0.225, size=11, color=GRAY3, shrink_to_fit=True)
         y += row_h
 
 
@@ -6765,7 +6745,7 @@ def build_scope_next_steps(prs, d, logo_bytes, page_num, transparent_logo_bytes=
 
     add_text(slide, "What This Snapshot Is — and What Comes Next",
              0.39, 0.14, 9.22, 0.50, size=18, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+    add_rect(slide, 0.39, 0.70, 9.22, 0.03, TEAL)
     add_text(slide,
              f"Where this Snapshot stands, what a full Assessment adds, and the engine "
              f"it feeds · {bank_name}",
@@ -6923,50 +6903,51 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=12, transpar
     add_chrome(slide, page_num, None, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
     add_text(slide, "Your Market Is Telling You Who to Talk To",
-             0.39, 0.14, 9.22, 0.50, size=20, bold=True, color=NAVY, valign="bottom")
-    add_rect(slide, 0.39, 0.70, 9.22, 0.04, TEAL)
+             0.39, 0.189, 7.875, 0.338, size=18, bold=True, color=NAVY, valign="bottom")
     add_text(slide, f"First-level audience read across priority branches  ·  {bank_name}",
-             0.39, 0.77, 9.22, 0.22, size=10, italic=True, color=NAVY_SOFT)
+             0.39, 0.486, 7.5, 0.225, size=10, italic=True, color=GRAY3)
+    add_rect(slide, 0.39, 0.75, 9.22, 0.03, TEAL)
 
+    SLATE = rgb("334155")
     brief = brief or {}
     personas = (brief.get("personas", []) or [])[:2]
     strong   = (brief.get("strong", []) or [])[:3]
 
-    y = 1.16
+    y = 0.975
 
     # Named persona cards — compact, 1 or 2 side by side
     if personas:
-        card_h = 1.55
+        card_h = 1.95
         n = len(personas)
-        card_w = 9.22 if n == 1 else 4.05
-        gap = 0.5
+        card_w = 9.22 if n == 1 else 4.575
+        gap = 0.475
         for i, p in enumerate(personas):
             cx = 0.39 + i * (card_w + gap)
-            add_rect(slide, cx, y, card_w, card_h, rgb("F7F8FA"), rgb("DDE3EA"), Pt(0.5))
-            add_text(slide, p.get("name", "—"), cx + 0.14, y + 0.14, card_w - 0.28, 0.24,
-                     size=12, bold=True, color=NAVY)
+            add_rounded_rect(slide, cx, y, card_w, card_h, CARD_BG)
+            add_text(slide, p.get("name", "—"), cx + 0.15, y + 0.112, card_w - 0.3, 0.262,
+                     size=11, bold=True, color=NAVY)
             line1 = f"Life stage: {p.get('life_stage','—')}"
             line2 = f"Wealth signal: {p.get('wealth_signal','—')}"
             line3 = f"Need: {p.get('primary_need','—')}"
             line4 = f"Switch driver: {p.get('switch_driver','—')}"
             line5 = f"Markets: {p.get('markets','—')}"
-            ly = y + 0.50
+            ly = y + 0.45
             for line in (line1, line2, line3, line4, line5):
-                add_text(slide, line, cx + 0.14, ly, card_w - 0.28, 0.20,
-                         size=8.5, color=NAVY, shrink_to_fit=True)
-                ly += 0.205
-        y += card_h + 0.34
+                add_text(slide, line, cx + 0.15, ly, card_w - 0.3, 0.24,
+                         size=10, color=SLATE, shrink_to_fit=True)
+                ly += 0.27
+        y += card_h + 0.19
 
     # Where the opportunity is strong
-    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.39, y, 9.22, 0.16,
-             size=8.5, bold=True, color=TEAL)
-    y += 0.24
+    add_text(slide, "WHERE THE OPPORTUNITY IS STRONG", 0.39, y, 9.0, 0.225,
+             size=9, bold=True, color=TEAL)
+    y += 0.263
     for s in strong:
         tb = slide.shapes.add_textbox(Inches(0.39), Inches(y), Inches(9.22), Inches(0.30))
         tf = tb.text_frame; tf.word_wrap = True
         p = tf.paragraphs[0]
         r1 = p.add_run(); r1.text = "→  "; r1.font.bold = True; r1.font.color.rgb = TEAL; r1.font.size = Pt(10)
-        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(10); r2.font.color.rgb = NAVY
+        r2 = p.add_run(); r2.text = s; r2.font.size = Pt(10); r2.font.color.rgb = SLATE
         for r in (r1, r2):
             r.font.name = "Inter"
         y += 0.30
