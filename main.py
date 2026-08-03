@@ -95,7 +95,12 @@ def generate_assessment():
         print(f"[assessment] {ik} — {name_hint or 'no name hint'}")
 
         d = bad.fetch_full_network_data(ik)
-        bank_name = name_hint or d["fin"].get("namefull") or ik
+        if not d["branches"]:
+            print(f"[assessment] ✗ {ik} — no branch data found, refusing to build empty report")
+            return jsonify({"error": f"No branch data found for inst_key='{ik}'. "
+                                      f"This bank may not be ingested into BMAP yet, "
+                                      f"or the inst_key is incorrect."}), 422
+        bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
         summary = bad.summarize_network(d)
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"])
         doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr, d["branches"])
