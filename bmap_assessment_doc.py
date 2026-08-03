@@ -39,14 +39,14 @@ except ImportError:
 
 import json
 
-# ── Config (same as bmap_snapshot.py) ──────────────────────────
+# ── Config — matches current bmap_snapshot.py production pattern ──
+# (previous version of this file used a hardcoded legacy anon key, which
+# is dead now that RLS + service-role-only access is in place — fixed here)
 SUPA_URL = "https://tuiiywphoynbmkxpoyps.supabase.co"
-SUPA_KEY = os.environ.get(
-    "SUPABASE_KEY",
-    "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6"
-    "InR1aWl5d3Bob3luYm1reHBveXBzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTc0MDg0NT"
-    "MsImV4cCI6MjA3Mjk4NDQ1M30.8-JAz4WQRE3Fi6uH7xiYNTns92g-nV1A9pbUvSK549M"
-)
+SUPA_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
+if not SUPA_KEY:
+    print("  ⚠  SUPABASE_SERVICE_KEY is not set — Supabase calls will fail with 401.")
+
 ANTH_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OUT_DIR  = Path(".")
 
@@ -67,13 +67,19 @@ ZONE_COLOR = {
 # DATA FETCH — full network, no truncation
 # ═══════════════════════════════════════════════════════════════
 
-def supabase(table, params, schema="analytics"):
+# SCHEMA_MAP mirrors bmap_snapshot.py exactly — table→schema routing,
+# since PostgREST needs Accept-Profile for anything outside 'public'.
+SCHEMA_MAP = {
+    "branch_opportunity_base":        "analytics",
+    "bank_financial_snapshot_latest": "analytics",
+}
+
+def supabase(table, params):
     url = f"{SUPA_URL}/rest/v1/{table}?{params}"
-    headers = {
-        "apikey": SUPA_KEY,
-        "Authorization": f"Bearer {SUPA_KEY}",
-        "Accept-Profile": schema,
-    }
+    schema = SCHEMA_MAP.get(table, "public")
+    headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}"}
+    if schema != "public":
+        headers["Accept-Profile"] = schema
     r = requests.get(url, headers=headers, timeout=30)
     if r.status_code != 200:
         print(f"  ⚠ Supabase {table} error {r.status_code}: {r.text[:200]}")
@@ -90,7 +96,6 @@ def fetch_full_network_data(ik):
         f"inst_key=eq.{ik}&select=uninumbr,namebr,citybr,stalpbr,latest_dep,"
         "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,"
         "priority_tier,market_growth_score,rel_growth_norm&order=opportunity_score.desc",
-        schema="analytics",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
 
@@ -100,7 +105,6 @@ def fetch_full_network_data(ik):
         f"inst_key=eq.{ik}&select=namefull,roa,nim,efficiency_ratio,dep_yoy_pct,"
         "dep_qoq_pct,cost_of_funds_pct,tier1_capital_pct,net_income_yoy_pct,"
         "total_assets,total_deposits,period",
-        schema="analytics",
     )
     fin = fin_arr[0] if fin_arr else {}
 
@@ -110,7 +114,6 @@ def fetch_full_network_data(ik):
         f"my_inst_key=eq.{ik}&select=target_institution,branches_in_radius,"
         "avg_vuln_score,avg_yoy_pct,target_roa,target_efficiency_ratio,dominant_zone"
         "&order=network_rank.asc&limit=3",
-        schema="public",
     )
 
     return {
@@ -415,6 +418,13 @@ def save_doc(doc, bank_name, out_dir=OUT_DIR):
 def run(ik, name_hint=None):
     print(f"\n{'='*60}\n  BMAP Assessment — {name_hint or ik}\n{'='*60}")
     d = fetch_full_network_data(ik)
+    if not d["branches"]:
+        raise ValueError(
+            f"No branch data found for inst_key='{ik}'. This bank is either "
+            f"not ingested into branch_opportunity_base, or the inst_key is "
+            f"wrong. Refusing to generate a document — an empty-data report "
+            f"would look identical to a real one and could ship by mistake."
+        )
     bank_name = name_hint or d["fin"].get("namefull") or ik
     summary = summarize_network(d)
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"])
