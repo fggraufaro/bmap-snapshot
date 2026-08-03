@@ -5863,23 +5863,19 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
 
     SLATE = rgb("334155")
 
-    y = 1.02
     add_text(slide, "OPPORTUNITY SCORE  =  weighted sum of four state-normalized components",
-             0.39, y, 9.22, 0.16, size=9, bold=True, color=TEAL, align=PP_ALIGN.CENTER,
+             0.45, 1.017, 9.0, 0.21, size=9, bold=True, color=TEAL, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.26
     add_text(slide,
              "0.25 × Market Growth  +  0.30 × Relative Growth  +  0.25 × Inverted Density  "
              "+  0.20 × Deposit Size",
-             0.39, y, 9.22, 0.30, size=11, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
+             0.45, 1.28, 9.0, 0.225, size=11, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.30
     add_text(slide,
              "All components are min-max normalized within the state so every branch is "
              "ranked only against its state peers — never a national average.",
-             0.39, y, 9.22, 0.20, size=9, color=GRAY3, align=PP_ALIGN.CENTER,
+             0.45, 1.542, 9.0, 0.188, size=9, color=GRAY3, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.40
 
     components = [
         ("25%", "Market Growth",
@@ -5891,27 +5887,30 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
         ("20%", "Deposit Size",
          "Log-scaled absolute deposits. Larger base earns modest credit for established presence."),
     ]
-    card_w = 1.95
-    card_gap = (9.22 - card_w * 4) / 3
+    # Exact reference geometry — this row uses its own 0.3in margin / 2.4in
+    # column step (not the deck's usual 0.39/9.22 content box), and a wider
+    # 2.287in card than the 1.95in used elsewhere in this file. Using the
+    # generic formula here was the bug that made these cards read narrow.
+    card_w = 2.287
+    card_step = 2.4
     card_h = 1.5
+    card_y = 1.955
     for i, (pct, name, desc) in enumerate(components):
-        cx = 0.39 + i * (card_w + card_gap)
-        add_rounded_rect(slide, cx, y, card_w, card_h, CARD_BG)
-        add_rect(slide, cx, y, 0.075, card_h, TEAL)     # left accent bar
-        add_text(slide, pct, cx + 0.20, y + 0.11, card_w - 0.34, 0.30, size=15, bold=True,
+        cx = 0.3 + i * card_step
+        add_rounded_rect(slide, cx, card_y, card_w, card_h, CARD_BG)
+        add_rect(slide, cx, card_y, 0.075, card_h, TEAL)     # left accent bar
+        add_text(slide, pct, cx + 0.187, card_y + 0.112, 1.95, 0.262, size=15, bold=True,
                  color=TEAL)
-        add_text(slide, name, cx + 0.20, y + 0.41, card_w - 0.34, 0.26, size=11, bold=True,
+        add_text(slide, name, cx + 0.187, card_y + 0.412, 1.95, 0.225, size=11, bold=True,
                  color=NAVY, shrink_to_fit=True)
-        add_text(slide, desc, cx + 0.20, y + 0.71, card_w - 0.34, 0.75, size=9, color=SLATE,
+        add_text(slide, desc, cx + 0.187, card_y + 0.712, 1.95, 0.675, size=9, color=SLATE,
                  shrink_to_fit=True)
-    y += card_h + 0.16
 
     add_text(slide,
              "ZONES — State community-bank quartiles convert the continuous score into an "
              "actionable posture",
-             0.39, y, 9.22, 0.16, size=9, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
+             0.39, 3.605, 9.0, 0.21, size=9, bold=True, color=NAVY, align=PP_ALIGN.CENTER,
              shrink_to_fit=True)
-    y += 0.30
 
     roles = [
         ("INVEST", "Top 25%", "Deploy acquisition resources", ZONE_SOLID["Invest"]),
@@ -5920,15 +5919,16 @@ def build_bmap_framework(prs, d, logo_bytes, page_num=4, transparent_logo_bytes=
         ("JUSTIFY", "Bottom 25%", "Strategic review first", ZONE_SOLID["Justify"]),
     ]
     tile_w = card_w
-    tile_gap = card_gap
+    tile_step = card_step
     tile_h = 1.012
+    tile_y = 3.905
     for i, (lbl, band, action, c) in enumerate(roles):
-        tx = 0.39 + i * (tile_w + tile_gap)
-        add_rounded_rect(slide, tx, y, tile_w, tile_h, c)  # solid fill, no border, small radius
-        add_text(slide, lbl, tx + 0.15, y + 0.112, tile_w - 0.28, 0.225, size=11, bold=True, color=WHITE)
-        add_text(slide, band, tx + 0.15, y + 0.375, tile_w - 0.28, 0.188, size=9,
+        tx = 0.3 + i * tile_step
+        add_rounded_rect(slide, tx, tile_y, tile_w, tile_h, c)  # solid fill, no border, small radius
+        add_text(slide, lbl, tx + 0.112, tile_y + 0.112, 2.062, 0.225, size=11, bold=True, color=WHITE)
+        add_text(slide, band, tx + 0.112, tile_y + 0.375, 2.062, 0.188, size=9,
                  color=WHITE, shrink_to_fit=True)
-        add_text(slide, action, tx + 0.15, y + 0.637, tile_w - 0.28, 0.225, size=10,
+        add_text(slide, action, tx + 0.112, tile_y + 0.637, 2.062, 0.225, size=10,
                  color=WHITE, shrink_to_fit=True)
 
 
@@ -6425,20 +6425,25 @@ def build_financial(prs, d, narr, logo_bytes, page_num=11, transparent_logo_byte
 
     y = 1.593
     cols = [(0.525, 3.0, "METRIC", PP_ALIGN.LEFT), (4.125, 2.25, "VALUE", PP_ALIGN.CENTER),
-            (6.75, 2.625, "BENCHMARK", PP_ALIGN.CENTER)]
+            (6.75, 2.4, "BENCHMARK", PP_ALIGN.CENTER), (9.15, 0.46, "", PP_ALIGN.CENTER)]
     add_rect(slide, 0.39, y, 9.22, 0.3, NAVY)
     for cx, cw, cl, ca in cols:
         add_text(slide, cl, cx, y, cw, 0.3, size=9, bold=True, color=WHITE,
                  align=ca, valign="center")
     y += 0.338
     row_h = 0.338
+    STATUS_OK = EMERALD
+    STATUS_BAD = rgb("C0392B")
     for i, mm in enumerate(metrics):
         bg = CARD_BG if i % 2 == 0 else WHITE
         add_rect(slide, 0.39, y, 9.22, row_h, bg)
         add_text(slide, mm["label"], 0.525, y, 3.0, row_h, size=10, color=NAVY, valign="center")
         add_text(slide, mm["value"], 4.125, y, 2.25, row_h, size=10, bold=True, color=TEAL,
                  align=PP_ALIGN.CENTER, valign="center")
-        add_text(slide, mm["bench"], 6.75, y, 2.625, row_h, size=10, color=GRAY3,
+        add_text(slide, mm["bench"], 6.75, y, 2.4, row_h, size=10, color=GRAY3,
+                 align=PP_ALIGN.CENTER, valign="center")
+        mark, mark_c = ("✓", STATUS_OK) if mm.get("ok") else ("✗", STATUS_BAD)
+        add_text(slide, mark, 9.15, y, 0.46, row_h, size=12, bold=True, color=mark_c,
                  align=PP_ALIGN.CENTER, valign="center")
         y += row_h
 
