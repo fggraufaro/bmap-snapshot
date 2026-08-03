@@ -137,6 +137,9 @@ def _vuln_tier(score):
     if s >= 60:
         return "Elevated"
     return "Moderate"
+
+
+def _sf(v, default=0.0):
     try:
         return float(v) if v is not None else default
     except (TypeError, ValueError):
