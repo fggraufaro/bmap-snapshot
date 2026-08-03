@@ -9,6 +9,7 @@ Endpoints:
   POST /generate            { inst_key, bank_name? }  → .pptx file
   POST /generate-batch      { banks: [{inst_key, name}] } → .zip file
   POST /generate-brief      { inst_key, bank_name? }  → .pdf file
+  POST /generate-assessment { inst_key, bank_name? }  → .docx file (full-network $10K Assessment)
   GET  /health               → { status: ok }
 
   -- added by secure_proxy.py (Hub auth + data proxy) --
@@ -28,6 +29,7 @@ from flask_cors import CORS
 
 import bmap_snapshot as bm
 import bmap_board_brief as bb
+import bmap_assessment_doc as bad
 from secure_proxy import secure_proxy_bp
 
 app = Flask(__name__)
@@ -76,6 +78,49 @@ def generate_brief():
 
     except Exception as e:
         print(f"[brief] ✗ {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ── $10K Assessment Word doc — full network, no top-N slice ────
+@app.route("/generate-assessment", methods=["POST"])
+def generate_assessment():
+    body      = request.get_json(force=True)
+    ik        = (body.get("inst_key") or "").strip()
+    name_hint = (body.get("bank_name") or "").strip()
+
+    if not ik:
+        return jsonify({"error": "inst_key required"}), 400
+
+    try:
+        print(f"[assessment] {ik} — {name_hint or 'no name hint'}")
+
+        d = bad.fetch_full_network_data(ik)
+        bank_name = name_hint or d["fin"].get("namefull") or ik
+        summary = bad.summarize_network(d)
+        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"])
+        doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr, d["branches"])
+
+        buf = io.BytesIO()
+        doc.save(buf)
+        buf.seek(0)
+
+        safe = "".join(c if c.isalnum() or c in " _-" else "_"
+                       for c in bank_name).strip()
+        date = datetime.now().strftime("%Y%m%d")
+        filename = f"BMAP_Assessment_{safe}_{date}.docx"
+
+        print(f"[assessment] ✓ {filename} ({buf.getbuffer().nbytes // 1024}KB, "
+              f"{len(d['branches'])} branches)")
+
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except Exception as e:
+        print(f"[assessment] ✗ {e}")
         return jsonify({"error": str(e)}), 500
 
 
