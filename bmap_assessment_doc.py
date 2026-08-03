@@ -95,14 +95,14 @@ def fetch_full_network_data(ik):
         "branch_opportunity_base",
         f"inst_key=eq.{ik}&select=uninumbr,namebr,citybr,stalpbr,latest_dep,"
         "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,"
-        "priority_tier,market_growth_score,rel_growth_norm&order=opportunity_score.desc",
+        "priority_tier,market_growth_score,rel_growth_norm,namefull&order=opportunity_score.desc",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
 
     print(f"  Fetching financial snapshot...")
     fin_arr = supabase(
         "bank_financial_snapshot_latest",
-        f"inst_key=eq.{ik}&select=namefull,roa,nim,efficiency_ratio,dep_yoy_pct,"
+        f"inst_key=eq.{ik}&select=roa,nim,efficiency_ratio,dep_yoy_pct,"
         "dep_qoq_pct,cost_of_funds_pct,tier1_capital_pct,net_income_yoy_pct,"
         "total_assets,total_deposits,period",
     )
@@ -124,7 +124,19 @@ def fetch_full_network_data(ik):
     }
 
 
-def _sf(v, default=0.0):
+def _vuln_tier(score):
+    """vuln_score is an intentionally uncapped composite (base 0-100 x up to
+    ~4x stacked risk multipliers) - by design, not a bug. Showing the raw
+    number next to a 0-100% financial table reads as broken, so we display
+    a qualitative tier instead of implying false precision."""
+    s = _sf(score)
+    if s >= 150:
+        return "Critical"
+    if s >= 100:
+        return "High"
+    if s >= 60:
+        return "Elevated"
+    return "Moderate"
     try:
         return float(v) if v is not None else default
     except (TypeError, ValueError):
@@ -184,7 +196,7 @@ def get_narratives(bank_name, summary, fin, targets):
     )
     target_str = "; ".join(
         f"{t.get('target_institution','—')} — {t.get('branches_in_radius','—')} branches exposed, "
-        f"vuln {_sf(t.get('avg_vuln_score')):.0f}, deposit YoY {_sf(t.get('avg_yoy_pct')):.1f}%"
+        f"{_vuln_tier(t.get('avg_vuln_score'))} vulnerability, deposit YoY {_sf(t.get('avg_yoy_pct')):.1f}%"
         for t in targets
     ) or "No qualifying network-level target identified"
 
@@ -346,7 +358,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches):
             row = ct.add_row().cells
             row[0].text = str(t.get("target_institution", "—"))
             row[1].text = str(t.get("branches_in_radius", "—"))
-            row[2].text = f"{_sf(t.get('avg_vuln_score')):.0f}"
+            row[2].text = _vuln_tier(t.get("avg_vuln_score"))
             row[3].text = f"{_sf(t.get('avg_yoy_pct')):+.1f}%"
 
     # ── Financial Health Benchmarking ──
@@ -425,7 +437,7 @@ def run(ik, name_hint=None):
             f"wrong. Refusing to generate a document — an empty-data report "
             f"would look identical to a real one and could ship by mistake."
         )
-    bank_name = name_hint or d["fin"].get("namefull") or ik
+    bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     summary = summarize_network(d)
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"])
     doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr, d["branches"])
