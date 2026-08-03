@@ -50,18 +50,28 @@ if not SUPA_KEY:
 ANTH_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 OUT_DIR  = Path(".")
 
-# ── Brand colors ────────────────────────────────────────────────
-NAVY  = RGBColor(0x1A, 0x23, 0x32)
-TEAL  = RGBColor(0x1D, 0x9E, 0x75)
-AMBER = RGBColor(0xF5, 0xA6, 0x23)
-GRAY3 = RGBColor(0x8A, 0x8A, 0x80)
-GRAY_FILL = "F7F7F5"
+# ── Brand colors — matches Verlocity_Brand_Guidelines_R2.pdf + bmap_snapshot.py exactly ──
+def rgb(h): return RGBColor(int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
+
+NAVY   = rgb("083D5F")   # Primary Dark Blue
+TEAL   = rgb("02A7C2")   # Primary Light Blue
+JET    = rgb("213141")   # Jet Black
+EMERALD = rgb("66CC99")
+LEMON   = rgb("CDD61A")
+GRAY3  = rgb("778899")
+GRAY_FILL = "F5F5F2"
+
+# Zone colors — identical palette to bmap_snapshot.py, not a separate guess
 ZONE_COLOR = {
-    "Invest":  "1A2332",
-    "Analyze": "1D9E75",
-    "Defend":  "8A8A80",
-    "Justify": "C0392B",
+    "Invest":  "27500A", "Analyze": "185FA5", "Defend": "854F0B", "Justify": "A32D2D",
 }
+ZONE_LIGHT = {
+    "Invest":  "EAF3DE", "Analyze": "E6F1FB", "Defend": "FFF3E0", "Justify": "FCEBEB",
+}
+ZONE_HEX_MPL = {  # matplotlib wants '#rrggbb'
+    z: f"#{h}" for z, h in ZONE_COLOR.items()
+}
+FONT_HEAD = "Inter"   # falls back to a system serif/sans if not installed locally
 
 # ═══════════════════════════════════════════════════════════════
 # DATA FETCH — full network, no truncation
@@ -72,6 +82,7 @@ ZONE_COLOR = {
 SCHEMA_MAP = {
     "branch_opportunity_base":        "analytics",
     "bank_financial_snapshot_latest": "analytics",
+    "branches_master_v2":             "geo",
 }
 
 def supabase(table, params):
@@ -83,6 +94,19 @@ def supabase(table, params):
     r = requests.get(url, headers=headers, timeout=30)
     if r.status_code != 200:
         print(f"  ⚠ Supabase {table} error {r.status_code}: {r.text[:200]}")
+        return []
+    return r.json()
+
+
+def supabase_rpc(fn_name, payload, timeout=20):
+    """Call a Postgres function via PostgREST's /rpc/ endpoint (e.g. the
+    parametrized branches_within_radius(lat, lon, radius, exclude_bank_id))."""
+    url = f"{SUPA_URL}/rest/v1/rpc/{fn_name}"
+    headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}",
+               "Content-Type": "application/json"}
+    r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+    if r.status_code != 200:
+        print(f"  ⚠ RPC {fn_name} error {r.status_code}: {r.text[:200]}")
         return []
     return r.json()
 
@@ -116,11 +140,19 @@ def fetch_full_network_data(ik):
         "&order=network_rank.asc&limit=3",
     )
 
+    print(f"  Fetching branch geography for map...")
+    branches_geo = fetch_branch_geo(ik)
+    print(f"  ✓ {len(branches_geo)} branches geocoded")
+
+    branch_strategy = fetch_branch_competitive_strategy(ik, branches, branches_geo)
+
     return {
         "inst_key": ik,
         "branches": branches,
         "fin": fin,
         "targets": tgt_arr,
+        "branches_geo": branches_geo,
+        "branch_strategy": branch_strategy,
     }
 
 
@@ -144,6 +176,342 @@ def _sf(v, default=0.0):
         return float(v) if v is not None else default
     except (TypeError, ValueError):
         return default
+
+
+# ═══════════════════════════════════════════════════════════════
+# VISUALS — matplotlib charts + geographic map, embedded as PNGs.
+# McKinsey-style: clean, minimal chrome, brand colors, direct labels
+# instead of legends where possible.
+# ═══════════════════════════════════════════════════════════════
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+
+plt.rcParams["font.family"] = "sans-serif"
+plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
+plt.rcParams["axes.edgecolor"] = "#CCCCCC"
+plt.rcParams["axes.linewidth"] = 0.6
+
+NAVY_HEX = "#083D5F"
+GRAY_HEX = "#8A8A80"
+
+
+def chart_zone_distribution(zones, path):
+    """Horizontal bar, one bar per zone, real brand zone colors, count labeled directly."""
+    order = ["Invest", "Analyze", "Defend", "Justify"]
+    vals = [zones.get(z, 0) for z in order]
+    colors = [ZONE_HEX_MPL[z] for z in order]
+
+    fig, ax = plt.subplots(figsize=(7.2, 2.3), dpi=200)
+    y = range(len(order))
+    bars = ax.barh(y, vals, color=colors, height=0.62)
+    for i, v in enumerate(vals):
+        ax.text(v + max(vals) * 0.02, i, str(v), va="center", fontsize=12,
+                fontweight="bold", color="#222222")
+    ax.set_yticks(y)
+    ax.set_yticklabels(order, fontsize=11, color="#222222")
+    ax.invert_yaxis()
+    ax.set_xticks([])
+    for spine in ["top", "right", "bottom"]:
+        ax.spines[spine].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(left=False)
+    fig.tight_layout(pad=0.6)
+    fig.savefig(path, transparent=True)
+    plt.close(fig)
+
+
+def chart_top_bottom_branches(top5, bottom3, path):
+    """Diverging horizontal bar — top branches (green, growth) vs bottom (red, decline)."""
+    rows = [(b["namebr"], _sf(b["opportunity_score"]), True) for b in top5] + \
+           [(b["namebr"], _sf(b["opportunity_score"]), False) for b in bottom3]
+    names = [r[0] for r in rows]
+    scores = [r[1] for r in rows]
+    colors = [ZONE_HEX_MPL["Invest"] if r[2] else ZONE_HEX_MPL["Justify"] for r in rows]
+
+    fig, ax = plt.subplots(figsize=(7.2, 3.2), dpi=200)
+    y = range(len(rows))
+    ax.barh(y, scores, color=colors, height=0.6)
+    for i, v in enumerate(scores):
+        ax.text(v + 1.5, i, f"{v:.0f}", va="center", fontsize=10, fontweight="bold", color="#222222")
+    ax.set_yticks(y)
+    ax.set_yticklabels(names, fontsize=9.5, color="#222222")
+    ax.invert_yaxis()
+    ax.set_xlim(0, 105)
+    ax.set_xticks([])
+    ax.axvline(x=50, color="#CCCCCC", linewidth=0.8, linestyle="--")
+    for spine in ["top", "right", "bottom"]:
+        ax.spines[spine].set_visible(False)
+    ax.spines["left"].set_visible(False)
+    ax.tick_params(left=False)
+    fig.tight_layout(pad=0.6)
+    fig.savefig(path, transparent=True)
+    plt.close(fig)
+
+
+def chart_financial_benchmark(fin, path):
+    """Grouped bar — actual metric vs benchmark, normalized to comparable scale per metric."""
+    metrics = [
+        ("ROA", _sf(fin.get("roa")), 1.0),
+        ("NIM", _sf(fin.get("nim")), 3.0),
+        ("Efficiency", _sf(fin.get("efficiency_ratio")), 60.0),
+        ("Dep. YoY", _sf(fin.get("dep_yoy_pct")), 2.0),
+        ("Tier 1 Cap.", _sf(fin.get("tier1_capital_pct")), 8.0),
+    ]
+    labels = [m[0] for m in metrics]
+    actual = [m[1] for m in metrics]
+    bench = [m[2] for m in metrics]
+
+    x = range(len(labels))
+    w = 0.32
+    fig, ax = plt.subplots(figsize=(7.2, 2.8), dpi=200)
+    ax.bar([i - w/2 for i in x], actual, width=w, color=NAVY_HEX, label="Mid Penn")
+    ax.bar([i + w/2 for i in x], bench, width=w, color="#C9CED6", label="Benchmark")
+    ax.set_xticks(list(x))
+    ax.set_xticklabels(labels, fontsize=9.5)
+    ax.set_yticks([])
+    for spine in ["top", "right", "left"]:
+        ax.spines[spine].set_visible(False)
+    ax.legend(frameon=False, fontsize=9, loc="upper right")
+    fig.tight_layout(pad=0.6)
+    fig.savefig(path, transparent=True)
+    plt.close(fig)
+
+
+def chart_branch_map(branches_geo, path):
+    """Geographic bubble map — lat/lon scatter, sized by deposits, colored by zone.
+    No basemap tiles (no network access to a tile service in this environment) —
+    branch clustering and zone concentration are the useful signal here regardless."""
+    if not branches_geo:
+        return False
+
+    fig, ax = plt.subplots(figsize=(7.2, 5.4), dpi=200)
+    for zone in ["Justify", "Defend", "Analyze", "Invest"]:  # draw Invest last (on top)
+        pts = [b for b in branches_geo if b.get("opportunity_zone") == zone]
+        if not pts:
+            continue
+        lons = [b["lon"] for b in pts]
+        lats = [b["lat"] for b in pts]
+        sizes = [max(_sf(b.get("latest_dep")) / 3e6, 18) for b in pts]
+        ax.scatter(lons, lats, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.75,
+                   edgecolors="white", linewidths=0.5, label=zone)
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_facecolor("#FAFAF8")
+    ax.legend(frameon=False, fontsize=10, loc="lower left", markerscale=0.6)
+    ax.set_aspect("equal", adjustable="datalim")
+    fig.tight_layout(pad=0.3)
+    fig.savefig(path, transparent=False, facecolor="#FAFAF8")
+    plt.close(fig)
+    return True
+
+
+def fetch_branch_geo(ik):
+    """Lat/lon for the branch map — joined from geo.branches_master_v2.
+    branch_id in geo matches uninumbr in branch_opportunity_base."""
+    rows = supabase(
+        "branch_opportunity_base",
+        f"inst_key=eq.{ik}&select=uninumbr,opportunity_zone,latest_dep",
+    )
+    if not rows:
+        return []
+    ids = ",".join(str(r["uninumbr"]) for r in rows)
+    geo_rows = supabase(
+        "branches_master_v2",
+        f"branch_id=in.({ids})&select=branch_id,lat,lon",
+    )
+    geo_rows = geo_rows if isinstance(geo_rows, list) else []
+    geo_map = {g["branch_id"]: g for g in geo_rows}
+    out = []
+    for r in rows:
+        g = geo_map.get(r["uninumbr"])
+        if g and g.get("lat") and g.get("lon"):
+            out.append({**r, "lat": g["lat"], "lon": g["lon"]})
+    return out
+
+
+# ═══════════════════════════════════════════════════════════════
+# THE 16 PLAYS — from BMAP_Methodology_Part1.docx (Princeton Partners
+# Group proprietary methodology). Zone (row) x Quadrant (col) -> play.
+# Q1=Grow&Perform Q2=Invest&Protect Q3=Maintain&Improve Q4=Rationalize&Exit
+# ═══════════════════════════════════════════════════════════════
+PLAY_MATRIX = {
+    ("Invest",  "Q1"): "Aggressive Acquisition",
+    ("Invest",  "Q2"): "Market Domination",
+    ("Invest",  "Q3"): "Growth Opportunity",
+    ("Invest",  "Q4"): "Niche Opportunity",
+    ("Analyze", "Q1"): "Competitive Defense",
+    ("Analyze", "Q2"): "Grow Share",
+    ("Analyze", "Q3"): "Maintain",
+    ("Analyze", "Q4"): "Efficiency Review",
+    ("Defend",  "Q1"): "Urgent Competitive Push",
+    ("Defend",  "Q2"): "Targeted Defense",
+    ("Defend",  "Q3"): "Steady State",
+    ("Defend",  "Q4"): "Efficiency Review",
+    ("Justify", "Q1"): "Exit Strategy",
+    ("Justify", "Q2"): "Asset Optimization",
+    ("Justify", "Q3"): "Performance Improvement",
+    ("Justify", "Q4"): "Rationalize",
+}
+
+# Acquisition intensity per play — drives whether a branch gets an
+# acquisition-posture writeup or a no-campaign/diagnostic one, per
+# "A Rationalize play branch does not receive an acquisition campaign.
+# A Grow Share play branch does." (Methodology Part 1)
+PLAY_ACQUISITION_POSTURE = {
+    "Aggressive Acquisition": "Maximum acquisition budget — all channels appropriate.",
+    "Market Domination": "High acquisition budget — dominance posture, deter competitor response.",
+    "Growth Opportunity": "Moderate acquisition budget — efficiency-focused channel mix.",
+    "Niche Opportunity": "Targeted, modest budget — diagnose the specific niche before briefing media.",
+    "Competitive Defense": "Retention-first budget — stabilize before acquisition.",
+    "Grow Share": "Selective acquisition budget — test before scaling.",
+    "Maintain": "Low acquisition budget — retention and cross-sell focus.",
+    "Efficiency Review": "No new acquisition investment until market trajectory is assessed.",
+    "Urgent Competitive Push": "Defensive acquisition budget — rate campaigns, switching offers.",
+    "Targeted Defense": "Retention-focused budget — loyalty and relationship offers.",
+    "Steady State": "Minimal budget — operational efficiency review only.",
+    "Exit Strategy": "No acquisition investment — full strategic review required.",
+    "Asset Optimization": "No new acquisition — maximize return from existing customer base.",
+    "Performance Improvement": "Modest operational investment — no acquisition campaign.",
+    "Rationalize": "No investment pending diagnosis — board-level attention for $100M+ branches.",
+}
+
+
+def get_play(zone, matrix_quadrant):
+    """Parse 'Q1 - Grow and Perform' -> 'Q1', look up (zone, quadrant) in
+    the 16-play matrix. Falls back gracefully if either is missing/unrecognized."""
+    if not zone or not matrix_quadrant:
+        return None
+    q = matrix_quadrant.split("-")[0].split("–")[0].strip().split()[0] if matrix_quadrant else None
+    return PLAY_MATRIX.get((zone, q))
+
+
+def determine_adaptive_radius(density_1mi_count, branch_deposits):
+    """
+    Density + deposit-size adaptive radius rule (per user directive):
+    - Rural OR low-deposit branch -> widen the search. This is the safe
+      default: a thin or low-value market shouldn't risk missing the
+      few competitors that do exist.
+    - Crowded AND high-deposit -> can tighten to 0.5mi. Only be this
+      aggressive when BOTH signals confirm it's a real, contestable,
+      valuable market -- not on density or deposits alone.
+    Real validation: Camden (dense, $113M branch) -> 20 competitors within
+    1mi alone. Millersburg (rural, $534M branch -- the HQ) -> 0 competitors
+    even at 1mi. Same fixed radius cannot serve both.
+    """
+    is_rural    = density_1mi_count < 3
+    is_low_dep  = branch_deposits < 30_000_000
+    is_dense    = density_1mi_count >= 15
+    is_high_dep = branch_deposits >= 100_000_000
+
+    if is_rural or is_low_dep:
+        return 10.0
+    if is_dense and is_high_dep:
+        return 0.5
+    if is_dense:
+        return 1.0
+    return 3.0
+
+
+def fetch_branch_competitive_strategy(ik, branches, branches_geo):
+    """Per-branch adaptive-radius competitor lookup via the parametrized
+    branches_within_radius() RPC. One call per branch at a wide 10mi net,
+    then density + deposit rule locally decides the real radius and filters
+    down -- avoids a second round-trip per branch."""
+    try:
+        bank_id = int(ik.replace("bank_", ""))
+    except ValueError:
+        print(f"  ⚠ Could not derive numeric bank_id from '{ik}' (credit union or "
+              f"non-standard inst_key?) — skipping branch-level competitive strategy.")
+        return []
+
+    geo_by_uninumbr = {g["uninumbr"]: g for g in branches_geo}
+    results = []
+    print(f"  Fetching adaptive-radius competitive strategy for {len(branches)} branches...")
+    for b in branches:
+        g = geo_by_uninumbr.get(b["uninumbr"])
+        if not g:
+            continue
+        candidates = supabase_rpc("branches_within_radius", {
+            "p_lat": g["lat"], "p_lon": g["lon"],
+            "p_radius_miles": 10.0, "p_exclude_bank_id": bank_id,
+        })
+        if not isinstance(candidates, list):
+            candidates = []
+
+        density_1mi = sum(1 for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
+        deposits = _sf(b.get("latest_dep"))
+        radius = determine_adaptive_radius(density_1mi, deposits)
+        # Same size filter as branch_target_competitors (Methodology Part 2):
+        # competitor deposits between 0.10x and 5x the client branch's own
+        # deposits. Without this, giant national-bank hub branches (Wells
+        # Fargo, PNC, etc. with $1-8B at a single location) get picked as
+        # the "capture opportunity," which is not a realistic local target.
+        min_dep, max_dep = deposits * 0.10, deposits * 5.0
+        filtered = sorted(
+            (c for c in candidates
+             if _sf(c.get("distance_miles")) <= radius
+             and min_dep <= _sf(c.get("deposits")) <= max_dep),
+            key=lambda c: -_sf(c.get("deposits"))
+        )
+        top_competitor = filtered[0] if filtered else None
+
+        results.append({
+            "namebr": b.get("namebr"),
+            "citybr": b.get("citybr"),
+            "stalpbr": b.get("stalpbr"),
+            "deposits": deposits,
+            "radius_mi": radius,
+            "tier": ("Dense/High-Value" if radius == 0.5 else
+                     "Dense" if radius == 1.0 else
+                     "Suburban" if radius == 3.0 else "Low-Density"),
+            "competitor_count": len(filtered),
+            "top_competitor": top_competitor,
+        })
+    print(f"  ✓ {len(results)} branches assessed")
+    return results
+
+
+DEEP_DIVE_THRESHOLD = 20  # <20 branches -> assess every branch. >=20 -> curate top opportunities.
+
+
+def build_branch_deep_dives(branches, branch_strategy):
+    """Per-branch full assessment: zone, quadrant, play, priority tier, deposits,
+    named competitor, and per-branch $ capture scenario.
+
+    <20 branches: every branch gets a full writeup (deep coverage).
+    >=20 branches: curated to the branches with the biggest actual $ capture
+    opportunity -- ranked by their named competitor's deposits (the real
+    contestable dollar figure), not just opportunity_score alone.
+    """
+    strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in branch_strategy}
+
+    enriched = []
+    for b in branches:
+        key = (b.get("namebr"), b.get("citybr"), b.get("stalpbr"))
+        strat = strategy_by_name.get(key)
+        play = get_play(b.get("opportunity_zone"), b.get("matrix_quadrant"))
+        top_comp = strat.get("top_competitor") if strat else None
+        capture_pool = _sf(top_comp.get("deposits")) if top_comp else 0.0
+        enriched.append({
+            "branch": b,
+            "strategy": strat,
+            "play": play,
+            "capture_pool": capture_pool,
+        })
+
+    deep_mode = len(branches) < DEEP_DIVE_THRESHOLD
+    if deep_mode:
+        selected = enriched  # every branch
+    else:
+        # Biggest actual $ opportunity first, not just highest score
+        selected = sorted(enriched, key=lambda e: -e["capture_pool"])[:15]
+
+    return selected, deep_mode
 
 
 def summarize_network(d):
@@ -182,7 +550,21 @@ def summarize_network(d):
 # AI NARRATIVE — aggregated context only, not per-branch
 # ═══════════════════════════════════════════════════════════════
 
-def get_narratives(bank_name, summary, fin, targets):
+def summarize_branch_strategy(branch_strategy):
+    """Bank-wide roll-up by density/deposit tier - feeds both the narrative
+    and the 'as a full bank' strategy view, not just per-branch detail."""
+    tiers = {}
+    for r in branch_strategy:
+        t = r["tier"]
+        tiers.setdefault(t, {"count": 0, "deposits": 0.0})
+        tiers[t]["count"] += 1
+        tiers[t]["deposits"] += r["deposits"]
+    named_hits = [r for r in branch_strategy if r.get("top_competitor")]
+    return {"tiers": tiers, "named_hits": named_hits}
+
+
+def get_narratives(bank_name, summary, fin, targets, branch_strategy=None):
+    branch_strategy = branch_strategy or []
     if not ANTH_KEY or not anthropic:
         print("  ⚠ No ANTHROPIC_API_KEY — using placeholder narratives")
         return _placeholder_narratives()
@@ -203,6 +585,21 @@ def get_narratives(bank_name, summary, fin, targets):
         for t in targets
     ) or "No qualifying network-level target identified"
 
+    bs_summary = summarize_branch_strategy(branch_strategy)
+    tier_str = "; ".join(
+        f"{t}: {v['count']} branches, ${v['deposits']/1e6:.0f}M deposits"
+        for t, v in bs_summary["tiers"].items()
+    )
+    # Best 4 named, real, adaptive-radius findings for the model to draw on directly
+    named_examples = sorted(bs_summary["named_hits"], key=lambda r: -r["deposits"])[:4]
+    named_str = "; ".join(
+        f"{r['namebr']} ({r['citybr']}, {r['stalpbr']}, {r['tier']}, {r['radius_mi']}mi radius) — "
+        f"largest nearby competitor {r['top_competitor']['bank_name']} "
+        f"{r['top_competitor']['distance_miles']:.2f}mi away, "
+        f"${_sf(r['top_competitor']['deposits'])/1e6:.0f}M deposits"
+        for r in named_examples
+    ) or "No adaptive-radius competitor matches found"
+
     ctx = f"""
 Bank: {bank_name}
 Full network: {summary['branch_count']} branches, ${summary['total_deposits_B']:.1f}B total deposits
@@ -218,6 +615,13 @@ Deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}% | Cost of funds {_sf(fin.get('co
 Net income YoY {_sf(fin.get('net_income_yoy_pct')):+.1f}%
 
 Network-level competitive targets: {target_str}
+
+Branch-level adaptive-radius competitive strategy (radius scaled per branch by local
+density + deposit size -- dense/high-value branches get as tight as 0.5mi, rural or
+low-deposit branches widen to 10mi, since one fixed radius misses the real picture
+for a network spanning both dense suburbs and rural markets):
+By tier: {tier_str}
+Named examples: {named_str}
 """
 
     system = """You are writing the $10K Verlocity BMAP Assessment for a community bank CFO/CEO audience.
@@ -229,6 +633,7 @@ Return ONLY valid JSON, no markdown fences:
   "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position.",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
+  "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches."
 }"""
 
@@ -237,7 +642,7 @@ Return ONLY valid JSON, no markdown fences:
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1200,
+            max_tokens=1500,
             system=system,
             messages=[{"role": "user", "content": ctx}],
         )
@@ -252,7 +657,7 @@ Return ONLY valid JSON, no markdown fences:
 
 def _placeholder_narratives():
     return {k: "" for k in ["exec_summary", "network_narrative", "competitive_narrative",
-                             "financial_narrative", "next_step"]}
+                             "financial_narrative", "capture_strategy_narrative", "next_step"]}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -274,6 +679,7 @@ def _heading(doc, text, size=16, color=NAVY, space_before=18, space_after=6):
     run.bold = True
     run.font.size = Pt(size)
     run.font.color.rgb = color
+    run.font.name = FONT_HEAD  # Inter Bold per Verlocity_Brand_Guidelines_R2.pdf
     return p
 
 
@@ -283,10 +689,12 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
     run = p.add_run(text)
     run.font.size = Pt(size)
     run.font.color.rgb = color
+    run.font.name = FONT_HEAD  # Inter (Light per brand guide) — same family, body weight
     return p
 
 
-def build_assessment_doc(bank_name, summary, fin, targets, narr, branches):
+def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
+                          branch_strategy=None, tmpdir="."):
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21.59)   # US Letter
@@ -295,58 +703,93 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches):
     section.right_margin = Cm(2.2)
 
     # ── Cover ──
-    p = doc.add_paragraph()
-    p.paragraph_format.space_before = Pt(60)
-    run = p.add_run("VERLOCITY")
-    run.bold = True
-    run.font.size = Pt(14)
-    run.font.color.rgb = TEAL
+    p0 = doc.add_paragraph()
+    p0.paragraph_format.space_before = Pt(50)
+    logo_path = str(Path(__file__).parent / "verlocity_logo.jpg") if (Path(__file__).parent / "verlocity_logo.jpg").exists() else None
+    if logo_path:
+        run0 = p0.add_run()
+        run0.add_picture(logo_path, width=Inches(2.0))  # brand guide: min 1.0" width
+    else:
+        run0 = p0.add_run("VERLOCITY")
+        run0.bold = True
+        run0.font.size = Pt(14)
+        run0.font.color.rgb = TEAL
+        run0.font.name = FONT_HEAD
 
     p2 = doc.add_paragraph()
-    p2.paragraph_format.space_before = Pt(6)
+    p2.paragraph_format.space_before = Pt(18)
     run2 = p2.add_run(bank_name)
     run2.bold = True
     run2.font.size = Pt(28)
     run2.font.color.rgb = NAVY
+    run2.font.name = FONT_HEAD
 
     p3 = doc.add_paragraph()
     run3 = p3.add_run("BMAP Market Assessment")
     run3.font.size = Pt(14)
     run3.font.color.rgb = GRAY3
+    run3.font.name = FONT_HEAD
 
     p4 = doc.add_paragraph()
-    p4.paragraph_format.space_after = Pt(40)
+    p4.paragraph_format.space_after = Pt(30)
     run4 = p4.add_run(datetime.now().strftime("%B %Y"))
     run4.font.size = Pt(10)
     run4.font.color.rgb = GRAY3
+    run4.font.name = FONT_HEAD
+
+    # Cover hero visual — zone distribution, sets the McKinsey "big number up front" tone
+    zone_chart_path = f"{tmpdir}/_chart_zones.png"
+    chart_zone_distribution(summary["zones"], zone_chart_path)
+    doc.add_picture(zone_chart_path, width=Inches(6.3))
 
     doc.add_page_break()
 
     # ── Executive Summary ──
     _heading(doc, "Executive Summary", space_before=0)
+
+    # Pull-quote callout — the single most important number, McKinsey-style
+    top_branch = summary["top5"][0] if summary["top5"] else None
+    if top_branch:
+        callout = doc.add_table(rows=1, cols=1)
+        cell = callout.rows[0].cells[0]
+        _set_cell_shading(cell, "083D5F")
+        cell.paragraphs[0].text = ""
+        r1 = cell.paragraphs[0].add_run(
+            f"{top_branch['namebr']}: {_sf(top_branch['opportunity_score']):.0f}/100 opportunity score, "
+            f"{_sf(top_branch['yoy_deposits'])*100:+.1f}% deposit growth"
+        )
+        r1.font.size = Pt(13)
+        r1.font.bold = True
+        r1.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        cell.paragraphs[0].paragraph_format.space_before = Pt(10)
+        cell.paragraphs[0].paragraph_format.space_after = Pt(10)
+        doc.add_paragraph().paragraph_format.space_after = Pt(6)
+
     _body(doc, narr.get("exec_summary") or
           f"{bank_name} operates {summary['branch_count']} branches with ${summary['total_deposits_B']:.1f}B "
           f"in total deposits. Network average opportunity score: {summary['avg_score']:.0f}/100.")
+
+    # ── Geographic Distribution (map) ──
+    if branches_geo:
+        map_path = f"{tmpdir}/_chart_map.png"
+        if chart_branch_map(branches_geo, map_path):
+            _heading(doc, "Geographic Distribution")
+            doc.add_picture(map_path, width=Inches(6.3))
 
     # ── Network Opportunity Overview ──
     _heading(doc, "Network Opportunity Overview")
     _body(doc, narr.get("network_narrative") or "")
 
-    zt = doc.add_table(rows=2, cols=4)
-    zt.alignment = WD_TABLE_ALIGNMENT.LEFT
-    zones = summary["zones"]
-    for i, z in enumerate(["Invest", "Analyze", "Defend", "Justify"]):
-        c0 = zt.cell(0, i)
-        c0.text = z
-        _set_cell_shading(c0, ZONE_COLOR[z])
-        for run in c0.paragraphs[0].runs:
-            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-            run.bold = True
-        c1 = zt.cell(1, i)
-        c1.text = str(zones[z])
-        c1.paragraphs[0].runs[0].font.size = Pt(16)
-        c1.paragraphs[0].runs[0].bold = True
-    doc.add_paragraph().paragraph_format.space_after = Pt(10)
+    if summary["top5"] and summary["bottom3"]:
+        top_bottom_path = f"{tmpdir}/_chart_topbottom.png"
+        chart_top_bottom_branches(summary["top5"], summary["bottom3"], top_bottom_path)
+        p_lbl = doc.add_paragraph()
+        p_lbl.paragraph_format.space_before = Pt(10)
+        r = p_lbl.add_run("Highest- and Lowest-Opportunity Branches")
+        r.bold = True
+        r.font.size = Pt(11)
+        r.font.color.rgb = NAVY
+        doc.add_picture(top_bottom_path, width=Inches(6.3))
 
     # ── Competitive Overview ──
     _heading(doc, "Competitive Overview")
@@ -364,9 +807,157 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches):
             row[2].text = _vuln_tier(t.get("avg_vuln_score"))
             row[3].text = f"{_sf(t.get('avg_yoy_pct')):+.1f}%"
 
+    # ── Deposit Capture Strategy (adaptive-radius, branch + bank-wide) ──
+    if branch_strategy:
+        _heading(doc, "Deposit Capture Strategy — By Branch and Network-Wide")
+        _body(doc, narr.get("capture_strategy_narrative") or
+              "Competitive radius is scaled per branch by local density and deposit size, rather than "
+              "a single fixed distance — dense, high-value branches are assessed as tight as 0.5 miles; "
+              "rural or low-deposit branches widen to 10 miles, since a thin market can otherwise miss "
+              "the few competitors that do exist.")
+
+        bs_summary = summarize_branch_strategy(branch_strategy)
+        rt = doc.add_table(rows=1, cols=3)
+        rt.style = "Light Grid Accent 1"
+        hdr = rt.rows[0].cells
+        for i, h in enumerate(["Market Tier", "Branches", "Deposits in Tier"]):
+            hdr[i].text = h
+        for tier in ["Dense/High-Value", "Dense", "Suburban", "Low-Density"]:
+            v = bs_summary["tiers"].get(tier)
+            if not v:
+                continue
+            row = rt.add_row().cells
+            row[0].text = tier
+            row[1].text = str(v["count"])
+            row[2].text = f"${v['deposits']/1e6:.0f}M"
+        doc.add_paragraph().paragraph_format.space_after = Pt(10)
+
+        # Scenario-based $ opportunity — low/medium/aggressive annual capture rate
+        # against the contestable deposit pool per tier. Industry-informed planning
+        # assumption, not Mid Penn-specific history -- flagged as such in-doc.
+        p_lbl2 = doc.add_paragraph()
+        p_lbl2.paragraph_format.space_before = Pt(6)
+        r2 = p_lbl2.add_run("Projected Annual Capture by Scenario")
+        r2.bold = True
+        r2.font.size = Pt(11)
+        r2.font.color.rgb = NAVY
+        r2.font.name = FONT_HEAD
+
+        st = doc.add_table(rows=1, cols=4)
+        st.style = "Light Grid Accent 1"
+        hdr = st.rows[0].cells
+        for i, h in enumerate(["Market Tier", "Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
+            hdr[i].text = h
+        for tier in ["Dense/High-Value", "Dense", "Suburban", "Low-Density"]:
+            v = bs_summary["tiers"].get(tier)
+            if not v:
+                continue
+            dep = v["deposits"]
+            row = st.add_row().cells
+            row[0].text = tier
+            row[1].text = f"${dep*0.01/1e6:.1f}M"
+            row[2].text = f"${dep*0.03/1e6:.1f}M"
+            row[3].text = f"${dep*0.07/1e6:.1f}M"
+        p_note = doc.add_paragraph()
+        p_note.paragraph_format.space_before = Pt(4)
+        note_run = p_note.add_run(
+            "Industry-informed planning assumption, not Mid Penn-specific history. Retail deposit "
+            "switching is behaviorally sticky; 7-8% annual capture of a local contestable pool is close "
+            "to a realistic ceiling absent a genuine market disruption. Replace with the bank's own "
+            "historical account-opening and deposit-capture data once available, per the same "
+            "calibration principle used in the Predictive ROI model."
+        )
+        note_run.italic = True
+        note_run.font.size = Pt(8.5)
+        note_run.font.color.rgb = GRAY3
+        doc.add_paragraph().paragraph_format.space_after = Pt(10)
+
+        # Named per-branch findings — the actual capture targets, not just tier counts
+        named = [r for r in branch_strategy if r.get("top_competitor")]
+        named = sorted(named, key=lambda r: -r["deposits"])[:12]
+        if named:
+            p_lbl = doc.add_paragraph()
+            r = p_lbl.add_run("Named Nearest Competitor by Branch (adaptive radius)")
+            r.bold = True
+            r.font.size = Pt(11)
+            r.font.color.rgb = NAVY
+            nt = doc.add_table(rows=1, cols=5)
+            nt.style = "Light Grid Accent 1"
+            hdr = nt.rows[0].cells
+            for i, h in enumerate(["Branch", "Tier", "Radius", "Largest Nearby Competitor", "Distance"]):
+                hdr[i].text = h
+            for r_ in named:
+                tc = r_["top_competitor"]
+                row = nt.add_row().cells
+                row[0].text = f"{r_['namebr']} ({r_['citybr']}, {r_['stalpbr']})"
+                row[1].text = r_["tier"]
+                row[2].text = f"{r_['radius_mi']}mi"
+                row[3].text = str(tc.get("bank_name", "—"))
+                row[4].text = f"{_sf(tc.get('distance_miles')):.2f}mi"
+
+    # ── Branch Assessment — full 16-play deep dive ──
+    # <20 branches: every branch assessed. >=20: curated to the 15 with the
+    # biggest actual $ capture opportunity.
+    dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [])
+    if dives:
+        section_title = ("Branch-by-Branch Assessment" if deep_mode
+                          else f"Priority Branch Deep Dives — Top {len(dives)} by Capture Opportunity")
+        _heading(doc, section_title)
+        if deep_mode:
+            _body(doc, f"This network has {len(branches)} branches — under the 20-branch threshold for "
+                       f"full individual coverage. Every branch below is assessed on zone, competitive "
+                       f"quadrant, assigned play, and named capture opportunity.")
+        else:
+            _body(doc, f"This network has {len(branches)} branches — above the threshold for full "
+                       f"individual coverage. The {len(dives)} branches below are ranked by actual "
+                       f"dollar capture opportunity (named competitor's deposits within the branch's "
+                       f"adaptive radius), not opportunity score alone, so investment attention goes "
+                       f"to where the real dollars are winnable.")
+
+        dt = doc.add_table(rows=1, cols=6)
+        dt.style = "Light Grid Accent 1"
+        hdr = dt.rows[0].cells
+        for i, h in enumerate(["Branch", "Zone / Quadrant", "Play", "Deposits", "Capturable ($)", "Medium Scenario"]):
+            hdr[i].text = h
+        for e in dives:
+            b = e["branch"]
+            row = dt.add_row().cells
+            row[0].text = f"{b.get('namebr','—')} ({b.get('citybr','—')}, {b.get('stalpbr','—')})"
+            q_short = (b.get("matrix_quadrant") or "—").split(" - ")[0]
+            row[1].text = f"{b.get('opportunity_zone','—')} / {q_short}"
+            row[2].text = e["play"] or "—"
+            row[3].text = f"${_sf(b.get('latest_dep'))/1e6:.1f}M"
+            row[4].text = f"${e['capture_pool']/1e6:.1f}M" if e["capture_pool"] else "—"
+            row[5].text = f"${e['capture_pool']*0.03/1e6:.2f}M" if e["capture_pool"] else "—"
+
+        # Acquisition posture note for the single highest-play-intensity branch,
+        # so the table isn't just numbers with no "what does this mean" anchor
+        top_play_branch = max(dives, key=lambda e: e["capture_pool"]) if dives else None
+        if top_play_branch and top_play_branch["play"]:
+            posture = PLAY_ACQUISITION_POSTURE.get(top_play_branch["play"], "")
+            if posture:
+                p_note = doc.add_paragraph()
+                p_note.paragraph_format.space_before = Pt(8)
+                b = top_play_branch["branch"]
+                lbl = p_note.add_run(f"{b.get('namebr')} — {top_play_branch['play']}: ")
+                lbl.bold = True
+                lbl.font.size = Pt(9.5)
+                lbl.font.color.rgb = NAVY
+                lbl.font.name = FONT_HEAD
+                txt_run = p_note.add_run(posture)
+                txt_run.font.size = Pt(9.5)
+                txt_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                txt_run.font.name = FONT_HEAD
+        doc.add_paragraph().paragraph_format.space_after = Pt(10)
+
     # ── Financial Health Benchmarking ──
     _heading(doc, "Financial Health Benchmarking")
     _body(doc, narr.get("financial_narrative") or "")
+
+    fin_chart_path = f"{tmpdir}/_chart_financial.png"
+    chart_financial_benchmark(fin, fin_chart_path)
+    doc.add_picture(fin_chart_path, width=Inches(6.3))
+
     ft = doc.add_table(rows=1, cols=3)
     ft.style = "Light Grid Accent 1"
     hdr = ft.rows[0].cells
@@ -442,9 +1033,13 @@ def run(ik, name_hint=None):
         )
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     summary = summarize_network(d)
-    narr = get_narratives(bank_name, summary, d["fin"], d["targets"])
-    doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr, d["branches"])
-    path = save_doc(doc, bank_name)
+    narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"))
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmpdir:
+        doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
+                                    d["branches"], d.get("branches_geo"),
+                                    d.get("branch_strategy"), tmpdir=tmpdir)
+        path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
 
