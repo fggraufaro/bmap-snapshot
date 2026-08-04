@@ -102,12 +102,16 @@ def generate_assessment():
                                       f"or the inst_key is incorrect."}), 422
         bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
         summary = bad.summarize_network(d)
-        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"])
-        doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr, d["branches"])
-
-        buf = io.BytesIO()
-        doc.save(buf)
-        buf.seek(0)
+        dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
+        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives)
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
+                                            d["branches"], d.get("branches_geo"),
+                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
+            buf = io.BytesIO()
+            doc.save(buf)
+            buf.seek(0)
 
         safe = "".join(c if c.isalnum() or c in " _-" else "_"
                        for c in bank_name).strip()
