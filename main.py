@@ -6,10 +6,13 @@ Receives inst_key from context-generator.html,
 builds the deck, returns the .pptx as a download.
 
 Endpoints:
-  POST /generate            { inst_key, bank_name? }  → .pptx file
-  POST /generate-batch      { banks: [{inst_key, name}] } → .zip file
-  POST /generate-brief      { inst_key, bank_name? }  → .pdf file
-  POST /generate-assessment { inst_key, bank_name? }  → .docx file (full-network $10K Assessment)
+  POST /generate                   { inst_key, bank_name? }  → .pptx file
+  POST /generate-batch             { banks: [{inst_key, name}] } → .zip file
+  POST /generate-brief             { inst_key, bank_name? }  → .pdf file
+  POST /generate-assessment        { inst_key, bank_name? }  → .docx file (synchronous — small networks only)
+  POST /generate-assessment-async  { inst_key, bank_name? }  → { job_id } (returns instantly, runs in background)
+  GET  /assessment-status/<job_id>                            → { status, stage, error_message }
+  GET  /assessment-download/<job_id>                          → .docx file once status == "done"
   GET  /health               → { status: ok }
 
   -- added by secure_proxy.py (Hub auth + data proxy) --
@@ -18,11 +21,15 @@ Endpoints:
   POST /api/ai/briefing-note Bearer token required     → AI narrative JSON
 """
 
+import base64
 import io
 import json
 import os
+import threading
 import zipfile
 from datetime import datetime
+
+import requests
 
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
@@ -131,6 +138,135 @@ def generate_assessment():
     except Exception as e:
         print(f"[assessment] ✗ {e}")
         return jsonify({"error": str(e)}), 500
+
+
+# ── Async Assessment job — background generation + status polling ──
+# The synchronous /generate-assessment route above works for small networks,
+# but 25-30 page documents with 15 branch deep-dives, chart generation, and
+# an AI narrative call routinely exceed Gunicorn's worker timeout, which
+# kills the connection mid-request (ERR_CONNECTION_CLOSED client-side).
+# This runs the same pipeline in a background thread instead: the initial
+# request returns in milliseconds, and the client polls for completion —
+# so the HTTP timeout is no longer a constraint regardless of doc size.
+
+def _job_write(job_id, **fields):
+    fields["updated_at"] = datetime.now().isoformat()
+    url = f"{bad.SUPA_URL}/rest/v1/assessment_jobs?id=eq.{job_id}"
+    headers = {"apikey": bad.SUPA_KEY, "Authorization": f"Bearer {bad.SUPA_KEY}",
+               "Content-Type": "application/json", "Prefer": "return=minimal"}
+    try:
+        requests.patch(url, headers=headers, json=fields, timeout=15)
+    except Exception as e:
+        print(f"[assessment-job] ⚠ failed to write job status: {e}")
+
+
+def _job_create(ik, bank_name_hint):
+    url = f"{bad.SUPA_URL}/rest/v1/assessment_jobs"
+    headers = {"apikey": bad.SUPA_KEY, "Authorization": f"Bearer {bad.SUPA_KEY}",
+               "Content-Type": "application/json", "Prefer": "return=representation"}
+    payload = {"inst_key": ik, "bank_name": bank_name_hint, "status": "pending"}
+    r = requests.post(url, headers=headers, json=payload, timeout=15)
+    r.raise_for_status()
+    return r.json()[0]["id"]
+
+
+def _job_read(job_id, select="status,stage,error_message,filename,bank_name"):
+    url = f"{bad.SUPA_URL}/rest/v1/assessment_jobs?id=eq.{job_id}&select={select}"
+    headers = {"apikey": bad.SUPA_KEY, "Authorization": f"Bearer {bad.SUPA_KEY}"}
+    r = requests.get(url, headers=headers, timeout=15)
+    r.raise_for_status()
+    rows = r.json()
+    return rows[0] if rows else None
+
+
+def _run_assessment_job(job_id, ik, name_hint):
+    try:
+        _job_write(job_id, status="running", stage="Fetching full branch network...")
+        d = bad.fetch_full_network_data(ik)
+        if not d["branches"]:
+            _job_write(job_id, status="error",
+                       error_message=f"No branch data found for inst_key='{ik}'.")
+            return
+
+        bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
+        _job_write(job_id, stage="Computing branch strategy and plays...", bank_name=bank_name)
+        summary = bad.summarize_network(d)
+        dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
+
+        _job_write(job_id, stage="Generating AI narratives...")
+        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"],
+                                   d.get("branch_strategy"), dives)
+
+        _job_write(job_id, stage="Building document (charts, branch deep dives)...")
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
+                                            d["branches"], d.get("branches_geo"),
+                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
+            buf = io.BytesIO()
+            doc.save(buf)
+            buf.seek(0)
+            docx_bytes = buf.getvalue()
+
+        safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in bank_name).strip()
+        date = datetime.now().strftime("%Y%m%d")
+        filename = f"BMAP_Assessment_{safe}_{date}.docx"
+        docx_b64 = base64.b64encode(docx_bytes).decode("ascii")
+
+        _job_write(job_id, status="done", stage="Complete", filename=filename, docx_base64=docx_b64)
+        print(f"[assessment-job] ✓ {job_id} — {filename} ({len(docx_bytes)//1024}KB, "
+              f"{len(d['branches'])} branches)")
+
+    except Exception as e:
+        print(f"[assessment-job] ✗ {job_id}: {e}")
+        _job_write(job_id, status="error", error_message=str(e))
+
+
+@app.route("/generate-assessment-async", methods=["POST"])
+def generate_assessment_async():
+    body = request.get_json(force=True)
+    ik = (body.get("inst_key") or "").strip()
+    name_hint = (body.get("bank_name") or "").strip()
+
+    if not ik:
+        return jsonify({"error": "inst_key required"}), 400
+
+    try:
+        job_id = _job_create(ik, name_hint or None)
+    except Exception as e:
+        print(f"[assessment-job] ✗ failed to create job: {e}")
+        return jsonify({"error": f"Could not start job: {e}"}), 500
+
+    thread = threading.Thread(target=_run_assessment_job, args=(job_id, ik, name_hint or None), daemon=True)
+    thread.start()
+    print(f"[assessment-job] started {job_id} for {ik}")
+    return jsonify({"job_id": job_id}), 202
+
+
+@app.route("/assessment-status/<job_id>", methods=["GET"])
+def assessment_status(job_id):
+    row = _job_read(job_id)
+    if not row:
+        return jsonify({"error": "job not found"}), 404
+    return jsonify(row)
+
+
+@app.route("/assessment-download/<job_id>", methods=["GET"])
+def assessment_download(job_id):
+    row = _job_read(job_id, select="status,filename,docx_base64")
+    if not row:
+        return jsonify({"error": "job not found"}), 404
+    if row["status"] != "done":
+        return jsonify({"error": f"job not ready (status={row['status']})"}), 409
+
+    docx_bytes = base64.b64decode(row["docx_base64"])
+    buf = io.BytesIO(docx_bytes)
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=row["filename"]
+    )
 
 
 # ── Single deck ────────────────────────────────────────────────
