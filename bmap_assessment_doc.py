@@ -119,7 +119,9 @@ def fetch_full_network_data(ik):
         "branch_opportunity_base",
         f"inst_key=eq.{ik}&select=uninumbr,namebr,citybr,stalpbr,latest_dep,"
         "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,"
-        "priority_tier,market_growth_score,rel_growth_norm,namefull&order=opportunity_score.desc",
+        "priority_tier,market_growth_score,rel_growth_norm,namefull,"
+        "household_income,yoy_income_growth,total_population,yoy_pop_growth,"
+        "zhvi_yoy_pct&order=opportunity_score.desc",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
 
@@ -381,6 +383,25 @@ PLAY_ACQUISITION_POSTURE = {
 }
 
 
+PLAY_MEDIA_BRIEF = {
+    "Aggressive Acquisition": "Target: new-to-bank households in the branch's 10-mile radius. Product: CD or HYSA. KPIs: new accounts, deposit volume, cost per new account.",
+    "Market Domination": "Target: in-market consumers and competitive switchers. Goal: increase share of wallet and deter competitor response.",
+    "Growth Opportunity": "Prioritize high-intent audiences. Avoid broad awareness spend that the market's modest growth rate cannot return.",
+    "Niche Opportunity": "Identify the specific audience segment driving the score before briefing media.",
+    "Competitive Defense": "Priority: stop outflows. Secondary: selective new account acquisition for high-value segments only.",
+    "Grow Share": "Target: deposit-active households in Invest and Analyze zones. Product: CD or savings. Measure cost per new account vs MediaPredict forecast.",
+    "Maintain": "Minimize acquisition cost. Prioritize retention of high-balance customers.",
+    "Efficiency Review": "No brief generated. Diagnostic phase. Understand market trajectory before any media allocation.",
+    "Urgent Competitive Push": "Target: competitor bank customers. Message: switching value proposition. KPI: captured accounts from identifiable competitor customers.",
+    "Targeted Defense": "Retention posture. Existing customer focus. Minimize churn.",
+    "Steady State": "No acquisition brief. Operational focus only.",
+    "Exit Strategy": "No brief generated. Strategic escalation required.",
+    "Asset Optimization": "No acquisition brief. Existing customer focus — CD renewals, balance growth, product consolidation.",
+    "Performance Improvement": "No brief generated.",
+    "Rationalize": "No brief generated. Board-level attention for branches with $100M+ in deposits.",
+}
+
+
 def get_play(zone, matrix_quadrant):
     """Parse 'Q1 - Grow and Perform' -> 'Q1', look up (zone, quadrant) in
     the 16-play matrix. Falls back gracefully if either is missing/unrecognized."""
@@ -459,6 +480,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
             key=lambda c: -_sf(c.get("deposits"))
         )
         top_competitor = filtered[0] if filtered else None
+        top3_competitors = filtered[:3]
 
         results.append({
             "namebr": b.get("namebr"),
@@ -471,6 +493,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
                      "Suburban" if radius == 3.0 else "Low-Density"),
             "competitor_count": len(filtered),
             "top_competitor": top_competitor,
+            "top3_competitors": top3_competitors,
         })
     print(f"  ✓ {len(results)} branches assessed")
     return results
@@ -563,11 +586,12 @@ def summarize_branch_strategy(branch_strategy):
     return {"tiers": tiers, "named_hits": named_hits}
 
 
-def get_narratives(bank_name, summary, fin, targets, branch_strategy=None):
+def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None):
     branch_strategy = branch_strategy or []
+    dives = dives or []
     if not ANTH_KEY or not anthropic:
         print("  ⚠ No ANTHROPIC_API_KEY — using placeholder narratives")
-        return _placeholder_narratives()
+        return _placeholder_narratives(dives)
 
     zones = summary["zones"]
     top5_str = "; ".join(
@@ -624,6 +648,28 @@ By tier: {tier_str}
 Named examples: {named_str}
 """
 
+    # Per-branch demographic context for the batched audience narrative --
+    # ONE call covers all deep-dive branches, not one call per branch, since
+    # fetch_branch_competitive_strategy already makes N sequential RPC calls
+    # and adding N more AI calls would compound that latency risk.
+    deep_dive_ctx = ""
+    if dives:
+        lines = []
+        for e in dives:
+            b = e["branch"]
+            lines.append(
+                f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
+                f"household income ${_sf(b.get('household_income')):.0f}, "
+                f"income YoY {_sf(b.get('yoy_income_growth'))*100:+.1f}%, "
+                f"population {_sf(b.get('total_population')):.0f}, "
+                f"pop YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
+                f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%, "
+                f"zone {b.get('opportunity_zone')}, play {e['play'] or 'n/a'}"
+            )
+        deep_dive_ctx = "\n\nBranches needing a 2-3 sentence audience signal (real Census/ZHVI data, " \
+                        "no fabricated personas -- Verlocity's persona layer is still in development):\n" + \
+                        "\n".join(lines)
+
     system = """You are writing the $10K Verlocity BMAP Assessment for a community bank CFO/CEO audience.
 Tone: precise, CFO-appropriate. No superlatives, no urgency language, no self-referential commentary.
 State facts, name specific branches/competitors, quantify everything possible.
@@ -634,15 +680,19 @@ Return ONLY valid JSON, no markdown fences:
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
-  "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches."
+  "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches.",
+  "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
+
+    if deep_dive_ctx:
+        ctx += deep_dive_ctx
 
     print("  Generating AI narratives (full-network context)...")
     client = anthropic.Anthropic(api_key=ANTH_KEY)
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=1500,
+            max_tokens=4000,
             system=system,
             messages=[{"role": "user", "content": ctx}],
         )
@@ -652,12 +702,19 @@ Return ONLY valid JSON, no markdown fences:
         return narr
     except Exception as e:
         print(f"  ⚠ Narrative generation failed ({e}) — using placeholders")
-        return _placeholder_narratives()
+        return _placeholder_narratives(dives)
 
 
-def _placeholder_narratives():
-    return {k: "" for k in ["exec_summary", "network_narrative", "competitive_narrative",
+def _placeholder_narratives(dives=None):
+    base = {k: "" for k in ["exec_summary", "network_narrative", "competitive_narrative",
                              "financial_narrative", "capture_strategy_narrative", "next_step"]}
+    base["branch_audiences"] = {}
+    if dives:
+        for e in dives:
+            b = e["branch"]
+            key = f"{b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')})"
+            base["branch_audiences"][key] = ""
+    return base
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -694,7 +751,7 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
-                          branch_strategy=None, tmpdir="."):
+                          branch_strategy=None, dives=None, deep_mode=None, tmpdir="."):
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21.59)   # US Letter
@@ -897,58 +954,175 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
     # ── Branch Assessment — full 16-play deep dive ──
     # <20 branches: every branch assessed. >=20: curated to the 15 with the
-    # biggest actual $ capture opportunity.
-    dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [])
+    # biggest actual $ capture opportunity. dives/deep_mode computed once
+    # upstream (shared with get_narratives for the audience blurbs) rather
+    # than recomputed here, so narrative keys and doc content stay in sync.
+    if dives is None:
+        dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [])
+
+    branch_audiences = narr.get("branch_audiences") or {}
+
     if dives:
         section_title = ("Branch-by-Branch Assessment" if deep_mode
                           else f"Priority Branch Deep Dives — Top {len(dives)} by Capture Opportunity")
         _heading(doc, section_title)
         if deep_mode:
-            _body(doc, f"This network has {len(branches)} branches — under the 20-branch threshold for "
-                       f"full individual coverage. Every branch below is assessed on zone, competitive "
-                       f"quadrant, assigned play, and named capture opportunity.")
+            _body(doc, f"This network has {len(branches)} branches — under the {DEEP_DIVE_THRESHOLD}-branch "
+                       f"threshold for full individual coverage. Every branch below is assessed on zone, "
+                       f"competitive quadrant, assigned play, radius methodology, named competitors, and "
+                       f"audience signal.")
         else:
             _body(doc, f"This network has {len(branches)} branches — above the threshold for full "
                        f"individual coverage. The {len(dives)} branches below are ranked by actual "
                        f"dollar capture opportunity (named competitor's deposits within the branch's "
-                       f"adaptive radius), not opportunity score alone, so investment attention goes "
-                       f"to where the real dollars are winnable.")
+                       f"adaptive radius, size-filtered to 0.1x-5x the branch's own deposits per the "
+                       f"BMAP vulnerability methodology), not opportunity score alone.")
+        doc.add_page_break()
 
-        dt = doc.add_table(rows=1, cols=6)
-        dt.style = "Light Grid Accent 1"
-        hdr = dt.rows[0].cells
-        for i, h in enumerate(["Branch", "Zone / Quadrant", "Play", "Deposits", "Capturable ($)", "Medium Scenario"]):
-            hdr[i].text = h
-        for e in dives:
+        for i, e in enumerate(dives):
             b = e["branch"]
-            row = dt.add_row().cells
-            row[0].text = f"{b.get('namebr','—')} ({b.get('citybr','—')}, {b.get('stalpbr','—')})"
-            q_short = (b.get("matrix_quadrant") or "—").split(" - ")[0]
-            row[1].text = f"{b.get('opportunity_zone','—')} / {q_short}"
-            row[2].text = e["play"] or "—"
-            row[3].text = f"${_sf(b.get('latest_dep'))/1e6:.1f}M"
-            row[4].text = f"${e['capture_pool']/1e6:.1f}M" if e["capture_pool"] else "—"
-            row[5].text = f"${e['capture_pool']*0.03/1e6:.2f}M" if e["capture_pool"] else "—"
+            strat = e["strategy"]
+            play = e["play"]
+            branch_label = f"{b.get('namebr','—')} ({b.get('citybr','—')}, {b.get('stalpbr','—')})"
+            q_full = b.get("matrix_quadrant") or "—"
+            q_short = q_full.split(" - ")[0]
 
-        # Acquisition posture note for the single highest-play-intensity branch,
-        # so the table isn't just numbers with no "what does this mean" anchor
-        top_play_branch = max(dives, key=lambda e: e["capture_pool"]) if dives else None
-        if top_play_branch and top_play_branch["play"]:
-            posture = PLAY_ACQUISITION_POSTURE.get(top_play_branch["play"], "")
-            if posture:
-                p_note = doc.add_paragraph()
-                p_note.paragraph_format.space_before = Pt(8)
-                b = top_play_branch["branch"]
-                lbl = p_note.add_run(f"{b.get('namebr')} — {top_play_branch['play']}: ")
-                lbl.bold = True
-                lbl.font.size = Pt(9.5)
-                lbl.font.color.rgb = NAVY
-                lbl.font.name = FONT_HEAD
-                txt_run = p_note.add_run(posture)
-                txt_run.font.size = Pt(9.5)
-                txt_run.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-                txt_run.font.name = FONT_HEAD
-        doc.add_paragraph().paragraph_format.space_after = Pt(10)
+            # Branch name as its own heading, colored by zone for quick scanning
+            zone = b.get("opportunity_zone", "Analyze")
+            zone_rgb = rgb(ZONE_COLOR.get(zone, "185FA5"))
+            _heading(doc, branch_label, size=15, color=zone_rgb, space_before=(0 if i == 0 else 4))
+
+            # ── Overview stat block ──
+            ov = doc.add_table(rows=2, cols=4)
+            ov.style = "Light Grid Accent 1"
+            ov_hdr = ov.rows[0].cells
+            for j, h in enumerate(["Zone", "Quadrant", "Priority Tier", "Opportunity Score"]):
+                ov_hdr[j].text = h
+            ov_val = ov.rows[1].cells
+            ov_val[0].text = zone
+            ov_val[1].text = q_full
+            ov_val[2].text = str(b.get("priority_tier") or "—")
+            ov_val[3].text = f"{_sf(b.get('opportunity_score')):.0f}/100"
+            doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+            # ── Deposits & Radius ──
+            _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
+            dep = _sf(b.get("latest_dep"))
+            yoy = _sf(b.get("yoy_deposits")) * 100
+            radius_mi = strat.get("radius_mi") if strat else None
+            tier_label = strat.get("tier") if strat else None
+            dr = doc.add_table(rows=2, cols=4)
+            dr.style = "Light Grid Accent 1"
+            dr_hdr = dr.rows[0].cells
+            for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used"]):
+                dr_hdr[j].text = h
+            dr_val = dr.rows[1].cells
+            dr_val[0].text = f"${dep/1e6:.1f}M"
+            dr_val[1].text = f"{yoy:+.1f}%"
+            dr_val[2].text = tier_label or "—"
+            dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
+            p_method = doc.add_paragraph()
+            p_method.paragraph_format.space_before = Pt(4)
+            method_run = p_method.add_run(
+                "Radius scales to local density and deposit size — as tight as 0.5mi for "
+                "dense, high-value markets, up to 10mi for rural or low-deposit branches — "
+                "rather than one fixed distance for the whole network."
+            )
+            method_run.italic = True
+            method_run.font.size = Pt(8.5)
+            method_run.font.color.rgb = GRAY3
+            method_run.font.name = FONT_HEAD
+
+            # ── Competitors (top 3, size-filtered) ──
+            _heading(doc, "Named Competitors", size=11, space_before=10, space_after=4)
+            top3 = (strat.get("top3_competitors") if strat else []) or []
+            if top3:
+                cot = doc.add_table(rows=1, cols=4)
+                cot.style = "Light Grid Accent 1"
+                cot_hdr = cot.rows[0].cells
+                for j, h in enumerate(["Competitor", "City / State", "Distance", "Deposits"]):
+                    cot_hdr[j].text = h
+                for c in top3:
+                    row = cot.add_row().cells
+                    row[0].text = str(c.get("bank_name", "—"))
+                    row[1].text = f"{c.get('city','—')}, {c.get('state','—')}"
+                    row[2].text = f"{_sf(c.get('distance_miles')):.2f}mi"
+                    row[3].text = f"${_sf(c.get('deposits'))/1e6:.1f}M"
+            else:
+                _body(doc, "No competitor within the adaptive radius meets the 0.1x-5x size filter — "
+                           "this branch has natural geographic protection rather than a capture target.",
+                      size=9.5)
+
+            # ── Capture Scenario ──
+            capture_pool = e["capture_pool"]
+            if capture_pool:
+                _heading(doc, "Projected Annual Capture", size=11, space_before=10, space_after=4)
+                cst = doc.add_table(rows=2, cols=3)
+                cst.style = "Light Grid Accent 1"
+                cst_hdr = cst.rows[0].cells
+                for j, h in enumerate(["Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
+                    cst_hdr[j].text = h
+                cst_val = cst.rows[1].cells
+                cst_val[0].text = f"${capture_pool*0.01/1e6:.2f}M"
+                cst_val[1].text = f"${capture_pool*0.03/1e6:.2f}M"
+                cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
+
+            # ── Audience Signal (real Census/ZHVI, no fabricated personas) ──
+            audience_text = branch_audiences.get(branch_label, "")
+            if audience_text or b.get("household_income"):
+                _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
+                if audience_text:
+                    _body(doc, audience_text, size=9.5)
+                else:
+                    inc = _sf(b.get("household_income"))
+                    inc_yoy = _sf(b.get("yoy_income_growth")) * 100
+                    pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
+                    zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
+                    _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY). Population growth "
+                               f"{pop_yoy:+.1f}% YoY. Home values {zhvi_yoy:+.1f}% YoY.", size=9.5)
+
+            # ── Play ──
+            if play:
+                _heading(doc, "Assigned Play", size=11, color=NAVY, space_before=10, space_after=4)
+                play_box = doc.add_table(rows=1, cols=1)
+                cell = play_box.rows[0].cells[0]
+                _set_cell_shading(cell, "083D5F")
+                cell.paragraphs[0].text = ""
+                pr = cell.paragraphs[0].add_run(play.upper())
+                pr.font.size = Pt(13)
+                pr.font.bold = True
+                pr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+                pr.font.name = FONT_HEAD
+                cell.paragraphs[0].paragraph_format.space_before = Pt(8)
+                cell.paragraphs[0].paragraph_format.space_after = Pt(8)
+
+                posture = PLAY_ACQUISITION_POSTURE.get(play, "")
+                brief = PLAY_MEDIA_BRIEF.get(play, "")
+                if posture:
+                    p1 = doc.add_paragraph()
+                    p1.paragraph_format.space_before = Pt(6)
+                    lbl1 = p1.add_run("Resource posture: ")
+                    lbl1.bold = True
+                    lbl1.font.size = Pt(9.5)
+                    lbl1.font.color.rgb = NAVY
+                    lbl1.font.name = FONT_HEAD
+                    r1 = p1.add_run(posture)
+                    r1.font.size = Pt(9.5)
+                    r1.font.name = FONT_HEAD
+                if brief:
+                    p2 = doc.add_paragraph()
+                    p2.paragraph_format.space_after = Pt(4)
+                    lbl2 = p2.add_run("Media brief: ")
+                    lbl2.bold = True
+                    lbl2.font.size = Pt(9.5)
+                    lbl2.font.color.rgb = NAVY
+                    lbl2.font.name = FONT_HEAD
+                    r2 = p2.add_run(brief)
+                    r2.font.size = Pt(9.5)
+                    r2.font.name = FONT_HEAD
+
+            if i < len(dives) - 1:
+                doc.add_page_break()
 
     # ── Financial Health Benchmarking ──
     _heading(doc, "Financial Health Benchmarking")
@@ -1033,12 +1207,13 @@ def run(ik, name_hint=None):
         )
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     summary = summarize_network(d)
-    narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"))
+    dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
+    narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives)
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                     d["branches"], d.get("branches_geo"),
-                                    d.get("branch_strategy"), tmpdir=tmpdir)
+                                    d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
         path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
