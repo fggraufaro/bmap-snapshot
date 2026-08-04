@@ -439,10 +439,13 @@ def determine_adaptive_radius(density_1mi_count, branch_deposits):
 
 
 def fetch_branch_competitive_strategy(ik, branches, branches_geo):
-    """Per-branch adaptive-radius competitor lookup via the parametrized
-    branches_within_radius() RPC. One call per branch at a wide 10mi net,
-    then density + deposit rule locally decides the real radius and filters
-    down -- avoids a second round-trip per branch."""
+    """Per-branch adaptive-radius competitor lookup via ONE call to
+    branches_within_radius_batch(), grouped locally by branch. Previously
+    made one branches_within_radius() call per branch (59+ sequential
+    round-trips for a mid-size network) which was exceeding the Gunicorn
+    worker timeout in production and killing the connection mid-request.
+    Same density + deposit rule, same size filter -- only the fetch pattern
+    changed."""
     try:
         bank_id = int(ik.replace("bank_", ""))
     except ValueError:
@@ -450,19 +453,21 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
               f"non-standard inst_key?) — skipping branch-level competitive strategy.")
         return []
 
-    geo_by_uninumbr = {g["uninumbr"]: g for g in branches_geo}
+    print(f"  Fetching adaptive-radius competitive strategy for {len(branches)} branches "
+          f"(single batched call)...")
+    all_candidates = supabase_rpc("branches_within_radius_batch", {
+        "p_inst_key": ik, "p_exclude_bank_id": bank_id, "p_max_radius_miles": 10.0,
+    })
+    if not isinstance(all_candidates, list):
+        all_candidates = []
+
+    candidates_by_branch = {}
+    for c in all_candidates:
+        candidates_by_branch.setdefault(c["my_uninumbr"], []).append(c)
+
     results = []
-    print(f"  Fetching adaptive-radius competitive strategy for {len(branches)} branches...")
     for b in branches:
-        g = geo_by_uninumbr.get(b["uninumbr"])
-        if not g:
-            continue
-        candidates = supabase_rpc("branches_within_radius", {
-            "p_lat": g["lat"], "p_lon": g["lon"],
-            "p_radius_miles": 10.0, "p_exclude_bank_id": bank_id,
-        })
-        if not isinstance(candidates, list):
-            candidates = []
+        candidates = candidates_by_branch.get(b["uninumbr"], [])
 
         density_1mi = sum(1 for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
         deposits = _sf(b.get("latest_dep"))
