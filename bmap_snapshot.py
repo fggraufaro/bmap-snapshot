@@ -6993,25 +6993,36 @@ def _next_avail_num(dirpath, prefix, ext_pattern):
     return (max(nums) + 1) if nums else 1
 
 
-def merge_growth_system_intro(deck_path, template_path=GROWTH_INTRO_TEMPLATE):
+def merge_growth_system_intro(deck_path_or_buffer, template_path=GROWTH_INTRO_TEMPLATE):
     """
     Splice the static Growth-System intro/appendix slides into a freshly-
-    generated Snapshot deck at deck_path, preserving their native PowerPoint
-    formatting exactly (colors/fonts copied as-is, not rebuilt with shapes).
-    Mutates the .pptx in place. If the template asset is missing, prints a
-    warning and returns without changing the deck — a missing asset must
-    never break a Snapshot run.
+    generated Snapshot deck, preserving their native PowerPoint formatting
+    exactly (colors/fonts copied as-is, not rebuilt with shapes).
+
+    Accepts either:
+      - a filesystem path (str/Path) — mutates the file in place, or
+      - an io.BytesIO — mutates the buffer in place (reads its current
+        contents, rewrites new contents, leaves the position at 0 so the
+        caller can read/send it immediately without an extra seek).
+
+    If the template asset is missing, prints a warning and returns without
+    changing the deck — a missing asset must never break a Snapshot run.
     """
     template_path = Path(template_path)
     if not template_path.exists():
         print(f"  [merge_growth_system_intro] template not found at {template_path} — skipping")
         return
 
+    is_buffer = hasattr(deck_path_or_buffer, "read") and hasattr(deck_path_or_buffer, "seek")
+    label = "in-memory deck" if is_buffer else os.path.basename(str(deck_path_or_buffer))
+
     work = tempfile.mkdtemp(prefix="gsmerge_")
     tdir, sdir = os.path.join(work, "target"), os.path.join(work, "src")
     os.makedirs(tdir); os.makedirs(sdir)
     try:
-        with zipfile.ZipFile(deck_path) as z:
+        if is_buffer:
+            deck_path_or_buffer.seek(0)
+        with zipfile.ZipFile(deck_path_or_buffer) as z:
             z.extractall(tdir)
         with zipfile.ZipFile(template_path) as z:
             z.extractall(sdir)
@@ -7163,17 +7174,25 @@ def merge_growth_system_intro(deck_path, template_path=GROWTH_INTRO_TEMPLATE):
         ct = ct.replace("</Types>", adds + "</Types>")
         open(ct_path, "w", encoding="utf-8").write(ct)
 
-        # ---- rezip over the original deck ----
-        tmp_out = str(deck_path) + ".tmp"
-        if os.path.exists(tmp_out):
-            os.remove(tmp_out)
+        # ---- rezip into a temp file, then deliver back to path or buffer ----
+        tmp_out = os.path.join(work, "rebuilt.pptx")
         with zipfile.ZipFile(tmp_out, "w", zipfile.ZIP_DEFLATED) as zf:
             for root, _, files in os.walk(tdir):
                 for f in files:
                     full = os.path.join(root, f)
                     zf.write(full, os.path.relpath(full, tdir))
-        shutil.move(tmp_out, deck_path)
-        print(f"  [merge_growth_system_intro] merged {len(bring_in)} static slides into {os.path.basename(str(deck_path))}")
+
+        if is_buffer:
+            with open(tmp_out, "rb") as f:
+                data_bytes = f.read()
+            deck_path_or_buffer.seek(0)
+            deck_path_or_buffer.truncate(0)
+            deck_path_or_buffer.write(data_bytes)
+            deck_path_or_buffer.seek(0)
+        else:
+            shutil.move(tmp_out, deck_path_or_buffer)
+
+        print(f"  [merge_growth_system_intro] merged {len(bring_in)} static slides into {label}")
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
