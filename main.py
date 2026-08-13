@@ -297,6 +297,7 @@ def generate():
         # Save to in-memory buffer — no disk writes needed
         buf = io.BytesIO()
         prs.save(buf)
+        bm.merge_growth_system_intro(buf)
         buf.seek(0)
 
         safe = "".join(c if c.isalnum() or c in " _-" else "_"
@@ -352,6 +353,7 @@ def generate_batch():
 
                 deck_buf = io.BytesIO()
                 prs.save(deck_buf)
+                bm.merge_growth_system_intro(deck_buf)
                 deck_buf.seek(0)
 
                 safe = "".join(c if c.isalnum() or c in " _-" else "_"
