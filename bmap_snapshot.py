@@ -25,13 +25,18 @@ Output: BMAP_Snapshot_<BankName>_<date>.pptx  (or a folder for batch)
 import argparse
 import base64
 import csv
+import glob
 import io
 import json
 import hashlib
 import os
+import re
+import shutil
 import sys
+import tempfile
 import time
 import urllib.request
+import zipfile
 from datetime import datetime
 from pathlib import Path
 
@@ -6959,6 +6964,220 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=12, transpar
 
     return slide
 
+
+# ═══════════════════════════════════════════════════════════════
+# Growth System intro/appendix splice — zip/XML-level merge that
+# grafts static slides from the source "Growth System Intro to BMAP"
+# deck into every generated Snapshot, so those slides always render
+# with their own native PowerPoint formatting instead of being
+# rebuilt with python-pptx shapes.
+#   - template slides 1-5   -> become the new opening 5 slides
+#   - template slides 7-17  -> appended after the deck's last slide
+# Ship the template alongside this script at:
+#   assets/Verlocity_Growth_System_Intro_to_BMAP.pptx
+# ═══════════════════════════════════════════════════════════════
+
+GROWTH_INTRO_TEMPLATE = Path(__file__).parent / "assets" / "Verlocity_Growth_System_Intro_to_BMAP.pptx"
+REPLACE_TEMPLATE_SLIDES = [1, 2, 3, 4, 5]
+APPEND_TEMPLATE_SLIDES  = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
+
+
+def _next_avail_num(dirpath, prefix, ext_pattern):
+    """Next free NNN for files named prefix+NNN+ext in dirpath (1 if dir empty/missing)."""
+    nums = []
+    if os.path.isdir(dirpath):
+        for f in os.listdir(dirpath):
+            m = re.match(rf'^{prefix}(\d+){ext_pattern}$', f)
+            if m:
+                nums.append(int(m.group(1)))
+    return (max(nums) + 1) if nums else 1
+
+
+def merge_growth_system_intro(deck_path, template_path=GROWTH_INTRO_TEMPLATE):
+    """
+    Splice the static Growth-System intro/appendix slides into a freshly-
+    generated Snapshot deck at deck_path, preserving their native PowerPoint
+    formatting exactly (colors/fonts copied as-is, not rebuilt with shapes).
+    Mutates the .pptx in place. If the template asset is missing, prints a
+    warning and returns without changing the deck — a missing asset must
+    never break a Snapshot run.
+    """
+    template_path = Path(template_path)
+    if not template_path.exists():
+        print(f"  [merge_growth_system_intro] template not found at {template_path} — skipping")
+        return
+
+    work = tempfile.mkdtemp(prefix="gsmerge_")
+    tdir, sdir = os.path.join(work, "target"), os.path.join(work, "src")
+    os.makedirs(tdir); os.makedirs(sdir)
+    try:
+        with zipfile.ZipFile(deck_path) as z:
+            z.extractall(tdir)
+        with zipfile.ZipFile(template_path) as z:
+            z.extractall(sdir)
+
+        # ---- offsets so new parts never collide with what's already there ----
+        slide_off  = _next_avail_num(f"{tdir}/ppt/slides", "slide", r"\.xml") - 1
+        layout_off = _next_avail_num(f"{tdir}/ppt/slideLayouts", "slideLayout", r"\.xml") - 1
+        master_n   = _next_avail_num(f"{tdir}/ppt/slideMasters", "slideMaster", r"\.xml")
+        theme_n    = _next_avail_num(f"{tdir}/ppt/theme", "theme", r"\.xml")
+
+        # ---- media: explicit rename map for every file actually used in src ----
+        # Prefixed distinctly (not "image{N}") so the rename can never collide
+        # with the source's own original imageN filenames, regardless of how
+        # many media files the target deck already has.
+        os.makedirs(f"{tdir}/ppt/media", exist_ok=True)
+        media_map = {}
+        for i, fname in enumerate(sorted(os.listdir(f"{sdir}/ppt/media")), start=1):
+            ext = fname.rsplit(".", 1)[-1]
+            new_name = f"gsmimg{i}.{ext}"
+            media_map[fname] = new_name
+            shutil.copy(f"{sdir}/ppt/media/{fname}", f"{tdir}/ppt/media/{new_name}")
+
+        def remap_media(xml):
+            for src, dst in media_map.items():
+                xml = xml.replace(f'Target="../media/{src}"', f'Target="../media/{dst}"')
+            return xml
+
+        # ---- theme ----
+        shutil.copy(f"{sdir}/ppt/theme/theme1.xml", f"{tdir}/ppt/theme/theme{theme_n}.xml")
+
+        # ---- master ----
+        shutil.copy(f"{sdir}/ppt/slideMasters/slideMaster1.xml",
+                     f"{tdir}/ppt/slideMasters/slideMaster{master_n}.xml")
+        mrels = open(f"{sdir}/ppt/slideMasters/_rels/slideMaster1.xml.rels", encoding="utf-8").read()
+        mrels = re.sub(r'slideLayout(\d+)\.xml', lambda m: f"slideLayout{int(m.group(1)) + layout_off}.xml", mrels)
+        mrels = mrels.replace("theme1.xml", f"theme{theme_n}.xml")
+        open(f"{tdir}/ppt/slideMasters/_rels/slideMaster{master_n}.xml.rels", "w", encoding="utf-8").write(mrels)
+
+        # renumber the copied master's sldLayoutId values so they can't collide
+        # with any sldLayoutId/sldMasterId id already used in the target package
+        existing_ids = [int(x) for x in re.findall(
+            r'<p:sld(?:Layout|Master)Id id="(\d+)"',
+            open(f"{tdir}/ppt/presentation.xml", encoding="utf-8").read())]
+        for lm in glob.glob(f"{tdir}/ppt/slideMasters/slideMaster*.xml"):
+            existing_ids += [int(x) for x in re.findall(r'<p:sldLayoutId id="(\d+)"',
+                              open(lm, encoding="utf-8").read())]
+        next_layout_id = max(existing_ids, default=2147483648) + 1
+        m2path = f"{tdir}/ppt/slideMasters/slideMaster{master_n}.xml"
+        m2 = open(m2path, encoding="utf-8").read()
+
+        def _relabel(_m, _box=[next_layout_id]):
+            v = _box[0]; _box[0] += 1
+            return f'<p:sldLayoutId id="{v}"'
+        m2 = re.sub(r'<p:sldLayoutId id="\d+"', _relabel, m2)
+        open(m2path, "w", encoding="utf-8").write(m2)
+        new_master_id = max(existing_ids, default=2147483648) + 1000  # comfortably clear of layout ids just assigned
+
+        # ---- layouts (copy the full set the master references) ----
+        n_layouts = len([f for f in os.listdir(f"{sdir}/ppt/slideLayouts")
+                          if re.match(r'slideLayout\d+\.xml$', f)])
+        for n in range(1, n_layouts + 1):
+            shutil.copy(f"{sdir}/ppt/slideLayouts/slideLayout{n}.xml",
+                         f"{tdir}/ppt/slideLayouts/slideLayout{n + layout_off}.xml")
+            lrels = open(f"{sdir}/ppt/slideLayouts/_rels/slideLayout{n}.xml.rels", encoding="utf-8").read()
+            lrels = lrels.replace("slideMaster1.xml", f"slideMaster{master_n}.xml")
+            lrels = remap_media(lrels)
+            open(f"{tdir}/ppt/slideLayouts/_rels/slideLayout{n + layout_off}.xml.rels",
+                 "w", encoding="utf-8").write(lrels)
+
+        # ---- slides to bring in ----
+        bring_in = REPLACE_TEMPLATE_SLIDES + APPEND_TEMPLATE_SLIDES
+        new_slide_num = {}
+        for src_n in bring_in:
+            new_n = slide_off + src_n
+            new_slide_num[src_n] = new_n
+            shutil.copy(f"{sdir}/ppt/slides/slide{src_n}.xml", f"{tdir}/ppt/slides/slide{new_n}.xml")
+            srels = open(f"{sdir}/ppt/slides/_rels/slide{src_n}.xml.rels", encoding="utf-8").read()
+            srels = re.sub(r'slideLayout(\d+)\.xml', lambda m: f"slideLayout{int(m.group(1)) + layout_off}.xml", srels)
+            srels = remap_media(srels)
+            open(f"{tdir}/ppt/slides/_rels/slide{new_n}.xml.rels", "w", encoding="utf-8").write(srels)
+
+        # ---- presentation.xml.rels : register master + new slides ----
+        prels_path = f"{tdir}/ppt/_rels/presentation.xml.rels"
+        prels = open(prels_path, encoding="utf-8").read()
+        next_rid = max([int(x) for x in re.findall(r'Id="rId(\d+)"', prels)], default=0) + 1
+
+        master_rid = next_rid; next_rid += 1
+        add = (f'<Relationship Id="rId{master_rid}" '
+               f'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slideMaster" '
+               f'Target="slideMasters/slideMaster{master_n}.xml"/>')
+        slide_rid = {}
+        for src_n in bring_in:
+            rid = next_rid; next_rid += 1
+            slide_rid[src_n] = rid
+            add += (f'<Relationship Id="rId{rid}" '
+                    f'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/slide" '
+                    f'Target="slides/slide{new_slide_num[src_n]}.xml"/>')
+        prels = prels.replace("</Relationships>", add + "</Relationships>")
+        open(prels_path, "w", encoding="utf-8").write(prels)
+
+        # ---- presentation.xml : add master, rebuild sldIdLst ----
+        pres_path = f"{tdir}/ppt/presentation.xml"
+        pres = open(pres_path, encoding="utf-8").read()
+
+        pres = pres.replace(
+            "</p:sldMasterIdLst>",
+            f'<p:sldMasterId id="{new_master_id}" r:id="rId{master_rid}"/></p:sldMasterIdLst>'
+        )
+
+        existing_slide_rids = re.findall(r'<p:sldId id="\d+" r:id="rId(\d+)"/>', pres)
+        opening_rids = [str(slide_rid[n]) for n in REPLACE_TEMPLATE_SLIDES]
+        closing_rids = [str(slide_rid[n]) for n in APPEND_TEMPLATE_SLIDES]
+        final_order  = opening_rids + list(existing_slide_rids) + closing_rids
+
+        next_sldid = max([int(x) for x in re.findall(r'<p:sldId id="(\d+)"', pres)], default=255) + 1
+        new_lst = "<p:sldIdLst>"
+        for rid in final_order:
+            new_lst += f'<p:sldId id="{next_sldid}" r:id="rId{rid}"/>'
+            next_sldid += 1
+        new_lst += "</p:sldIdLst>"
+        pres = re.sub(r'<p:sldIdLst>.*?</p:sldIdLst>', new_lst, pres, flags=re.DOTALL)
+        open(pres_path, "w", encoding="utf-8").write(pres)
+
+        # ---- [Content_Types].xml ----
+        ct_path = f"{tdir}/[Content_Types].xml"
+        ct = open(ct_path, encoding="utf-8").read()
+        default_exts = {
+            "svg":  "image/svg+xml",
+            "png":  "image/png",
+            "jpeg": "image/jpeg",
+            "jpg":  "image/jpeg",
+        }
+        missing_defaults = "".join(
+            f'<Default Extension="{ext}" ContentType="{ct_type}"/>'
+            for ext, ct_type in default_exts.items() if f'Extension="{ext}"' not in ct
+        )
+        if missing_defaults:
+            ct = ct.replace('<Default Extension="rels"', missing_defaults + '<Default Extension="rels"')
+        adds = (f'<Override PartName="/ppt/theme/theme{theme_n}.xml" '
+                f'ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>')
+        adds += (f'<Override PartName="/ppt/slideMasters/slideMaster{master_n}.xml" '
+                 f'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/>')
+        for n in range(1, n_layouts + 1):
+            adds += (f'<Override PartName="/ppt/slideLayouts/slideLayout{n + layout_off}.xml" '
+                     f'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/>')
+        for src_n in bring_in:
+            adds += (f'<Override PartName="/ppt/slides/slide{new_slide_num[src_n]}.xml" '
+                     f'ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>')
+        ct = ct.replace("</Types>", adds + "</Types>")
+        open(ct_path, "w", encoding="utf-8").write(ct)
+
+        # ---- rezip over the original deck ----
+        tmp_out = str(deck_path) + ".tmp"
+        if os.path.exists(tmp_out):
+            os.remove(tmp_out)
+        with zipfile.ZipFile(tmp_out, "w", zipfile.ZIP_DEFLATED) as zf:
+            for root, _, files in os.walk(tdir):
+                for f in files:
+                    full = os.path.join(root, f)
+                    zf.write(full, os.path.relpath(full, tdir))
+        shutil.move(tmp_out, deck_path)
+        print(f"  [merge_growth_system_intro] merged {len(bring_in)} static slides into {os.path.basename(str(deck_path))}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
 def build_deck(data, logo_bytes):
     rows = data["rows"]; fin = data["fin"]; tgt = data["tgt"]
     br   = data["br"];   bankName = data["bankName"]
@@ -7056,21 +7275,20 @@ def build_deck(data, logo_bytes):
 
     transparent_logo_bytes = fetch_transparent_logo()
     chevron_bytes = fetch_chevron_mark()
-    build_cover(prs, D, logo_bytes, transparent_logo_bytes, chevron_bytes)
 
-    # ── 14-slide sequence, matching the finalized Snapshot structure ──
-    # 2: Agenda  3: BMAP intro cards  4-6: explainer trio  7: network
-    # snapshot  8: deposit gap  9: priority branches  10: competitive
-    # overview  11: financial fundamentals  12: audience personas (if
-    # available)  13: what this means (build_next_steps)  14: activation
-    # steps. build_bmap_competitive_intel (Vulnerability & Prospecting
-    # deep-dive) is intentionally NOT called here — it isn't one of the
-    # first 14 final slides; it belongs later in the full deck (pages
+    # ── Snapshot structure ──
+    # Slides 1-5 (cover, agenda, BMAP intro cards, explainer trio) and the
+    # closing activation-steps slide are NO LONGER built with python-pptx —
+    # they're spliced in from the native "Growth System Intro to BMAP" deck
+    # by merge_growth_system_intro() in save_deck(), so they keep their own
+    # PowerPoint formatting exactly. What's generated here starts at page 6:
+    # 6: explainer (framework)  7: network snapshot  8: deposit gap
+    # 9: priority branches  10: competitive overview  11: financial
+    # fundamentals  12: audience personas (if available)  13: what this
+    # means (build_next_steps). build_bmap_competitive_intel (Vulnerability
+    # & Prospecting deep-dive) is intentionally NOT called here — it isn't
+    # one of these final slides; it belongs later in the full deck (pages
     # 15-23), out of scope for this build.
-    build_agenda(prs, D, logo_bytes, page_num=2, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_intro(prs, D, logo_bytes, page_num=3, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_overview(prs, D, logo_bytes, page_num=4, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_bmap_six_scores(prs, D, logo_bytes, page_num=5, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
     build_bmap_framework(prs, D, logo_bytes, page_num=6, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     build_network(prs, D, narr, logo_bytes, page_num=7, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
@@ -7104,8 +7322,6 @@ def build_deck(data, logo_bytes):
         print("  Skipping audience brief slide — no brief available")
     build_next_steps(prs, D, narr, logo_bytes, lead_branch=lead_branch, top_competitor=top_competitor, fin=fin,
                       page_num=next_page, transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
-    build_activation_steps(prs, D, logo_bytes, page_num=next_page + 1,
-                            transparent_logo_bytes=transparent_logo_bytes, chevron_bytes=chevron_bytes)
 
     return prs
 
@@ -7115,6 +7331,7 @@ def save_deck(prs, bank_name, out_dir=OUT_DIR):
     date = datetime.now().strftime("%Y%m%d")
     fname = out_dir / f"BMAP_Snapshot_{safe}_{date}.pptx"
     prs.save(str(fname))
+    merge_growth_system_intro(fname)
     return fname
 
 
