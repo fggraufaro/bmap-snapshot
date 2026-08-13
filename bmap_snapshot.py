@@ -6977,7 +6977,7 @@ def build_persona_slide(prs, brief, bank_name, logo_bytes, page_num=12, transpar
 #   assets/Verlocity_Growth_System_Intro_to_BMAP.pptx
 # ═══════════════════════════════════════════════════════════════
 
-GROWTH_INTRO_TEMPLATE = Path(__file__).parent / "assets" / "Verlocity_Growth_System_Intro_to_BMAP.pptx"
+GROWTH_INTRO_TEMPLATE = Path(__file__).parent / "Verlocity_Growth_System_Intro_to_BMAP.pptx"
 REPLACE_TEMPLATE_SLIDES = [1, 2, 3, 4, 5]
 APPEND_TEMPLATE_SLIDES  = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17]
 
