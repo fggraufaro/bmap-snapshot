@@ -110,12 +110,14 @@ def generate_assessment():
         bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
         summary = bad.summarize_network(d)
         dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
-        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives)
+        narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
+                                   d.get("capped_yoy"))
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                             d["branches"], d.get("branches_geo"),
-                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
+                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
+                                            capped_yoy=d.get("capped_yoy"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
@@ -195,14 +197,15 @@ def _run_assessment_job(job_id, ik, name_hint):
 
         _job_write(job_id, stage="Generating AI narratives...")
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"],
-                                   d.get("branch_strategy"), dives)
+                                   d.get("branch_strategy"), dives, d.get("capped_yoy"))
 
         _job_write(job_id, stage="Building document (charts, branch deep dives)...")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                             d["branches"], d.get("branches_geo"),
-                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
+                                            d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
+                                            capped_yoy=d.get("capped_yoy"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
