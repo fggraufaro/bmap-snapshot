@@ -61,12 +61,13 @@ LEMON   = rgb("CDD61A")
 GRAY3  = rgb("778899")
 GRAY_FILL = "F5F5F2"
 
-# Zone colors — identical palette to bmap_snapshot.py, not a separate guess
+# Zone colors — matches BMAP_Snapshot_Hancock_Whitney_Bank_20260813.pptx exactly
+# (brand-guideline navy→teal→emerald→lemon progression, not a red/green traffic-light scheme)
 ZONE_COLOR = {
-    "Invest":  "27500A", "Analyze": "185FA5", "Defend": "854F0B", "Justify": "A32D2D",
+    "Invest":  "083D5F", "Analyze": "02A7C2", "Defend": "66CC99", "Justify": "BFC815",
 }
 ZONE_LIGHT = {
-    "Invest":  "EAF3DE", "Analyze": "E6F1FB", "Defend": "FFF3E0", "Justify": "FCEBEB",
+    "Invest":  "E1E9EF", "Analyze": "E1F5F8", "Defend": "EAF7F0", "Justify": "F8FAE3",
 }
 ZONE_HEX_MPL = {  # matplotlib wants '#rrggbb'
     z: f"#{h}" for z, h in ZONE_COLOR.items()
@@ -83,6 +84,7 @@ SCHEMA_MAP = {
     "branch_opportunity_base":        "analytics",
     "bank_financial_snapshot_latest": "analytics",
     "branches_master_v2":             "geo",
+    "raw_sod":                        "raw",
 }
 
 def supabase(table, params):
@@ -148,6 +150,11 @@ def fetch_full_network_data(ik):
 
     branch_strategy = fetch_branch_competitive_strategy(ik, branches, branches_geo)
 
+    print(f"  Resolving winsorized YoY values...")
+    capped_yoy = resolve_capped_yoy(branches)
+    if capped_yoy:
+        print(f"  ✓ {len(capped_yoy)} capped branch(es) resolved against raw_sod")
+
     return {
         "inst_key": ik,
         "branches": branches,
@@ -155,6 +162,7 @@ def fetch_full_network_data(ik):
         "targets": tgt_arr,
         "branches_geo": branches_geo,
         "branch_strategy": branch_strategy,
+        "capped_yoy": capped_yoy,
     }
 
 
@@ -180,6 +188,55 @@ def _sf(v, default=0.0):
         return default
 
 
+def resolve_capped_yoy(branches):
+    """yoy_deposits is winsorized/capped at 1.0 (100%) upstream -- a real,
+    known limitation (documented pending item: 'real_yoy_display'). Every
+    branch showing exactly 1.0 collapses two different real situations into
+    one misleading '+100.0%': genuine outsized growth, or a branch with no
+    prior-year row at all (new/newly-ingested branch, where YoY is undefined,
+    not 100%). This resolves both cases directly from raw.raw_sod so the
+    doc never publishes a fabricated-looking exact 100%.
+    Returns {uninumbr: display_string} for capped branches only."""
+    capped = [b for b in branches if abs(_sf(b.get("yoy_deposits")) - 1.0) < 0.001]
+    if not capped:
+        return {}
+
+    ids = ",".join(str(b["uninumbr"]) for b in capped)
+    rows = supabase("raw_sod", f"UNINUMBR=in.({ids})&select=UNINUMBR,YEAR,DEPSUMBR")
+    by_branch = {}
+    for r in rows if isinstance(rows, list) else []:
+        by_branch.setdefault(str(r["UNINUMBR"]), {})[str(r["YEAR"])] = _sf(r.get("DEPSUMBR"))
+
+    years = sorted({y for v in by_branch.values() for y in v.keys()})
+    if len(years) < 2:
+        cur_yr, prior_yr = (years[-1], None) if years else (None, None)
+    else:
+        cur_yr, prior_yr = years[-1], years[-2]
+
+    out = {}
+    for b in capped:
+        uid = str(b["uninumbr"])
+        vals = by_branch.get(uid, {})
+        cur = vals.get(cur_yr)
+        prior = vals.get(prior_yr) if prior_yr else None
+        if prior and prior > 0 and cur is not None:
+            real_pct = (cur - prior) / prior * 100
+            out[b["uninumbr"]] = f"{real_pct:+.1f}%*"
+        else:
+            out[b["uninumbr"]] = "New branch*"
+    return out
+
+
+def fmt_yoy(b, capped_map):
+    """Single formatter for yoy_deposits everywhere it's displayed --
+    routes through the capped-value resolution instead of ever printing
+    a bare '+100.0%'."""
+    override = capped_map.get(b.get("uninumbr"))
+    if override:
+        return override
+    return f"{_sf(b.get('yoy_deposits'))*100:+.1f}%"
+
+
 # ═══════════════════════════════════════════════════════════════
 # VISUALS — matplotlib charts + geographic map, embedded as PNGs.
 # McKinsey-style: clean, minimal chrome, brand colors, direct labels
@@ -189,6 +246,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+import matplotlib.patheffects as pe
 
 plt.rcParams["font.family"] = "sans-serif"
 plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
@@ -281,14 +339,70 @@ def chart_financial_benchmark(fin, path):
     plt.close(fig)
 
 
+_STATES_GEOJSON_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "us_states.geojson")
+_STATES_GEOJSON_URL = "https://raw.githubusercontent.com/PublicaMundi/MappingAPI/master/data/geojson/us-states.json"
+
+
+def _load_state_polygons():
+    """Local-first US state boundaries (Polygon/MultiPolygon per state).
+    Ships as a repo asset (us_states.geojson) so report generation never
+    depends on network access at request time; falls back to a one-time
+    fetch + cache if the asset is missing."""
+    import json as _json
+    if not os.path.exists(_STATES_GEOJSON_PATH):
+        try:
+            import urllib.request
+            with urllib.request.urlopen(_STATES_GEOJSON_URL, timeout=8) as resp:
+                data = resp.read()
+            with open(_STATES_GEOJSON_PATH, "wb") as f:
+                f.write(data)
+        except Exception:
+            return {}
+    try:
+        with open(_STATES_GEOJSON_PATH) as f:
+            gj = _json.load(f)
+    except Exception:
+        return {}
+
+    from shapely.geometry import shape
+    return {feat["properties"]["name"]: shape(feat["geometry"]) for feat in gj.get("features", [])}
+
+
+def _draw_polygon(ax, geom, **kwargs):
+    from matplotlib.patches import Polygon as MplPolygon
+    from shapely.geometry import Polygon, MultiPolygon
+    polys = geom.geoms if isinstance(geom, MultiPolygon) else [geom]
+    for poly in polys:
+        ax.add_patch(MplPolygon(list(poly.exterior.coords), closed=True, **kwargs))
+        for interior in poly.interiors:
+            ax.add_patch(MplPolygon(list(interior.coords), closed=True,
+                                     facecolor="#FAFAF8", edgecolor="none", zorder=kwargs.get("zorder", 1) + 0.1))
+
+
 def chart_branch_map(branches_geo, path):
-    """Geographic bubble map — lat/lon scatter, sized by deposits, colored by zone.
-    No basemap tiles (no network access to a tile service in this environment) —
-    branch clustering and zone concentration are the useful signal here regardless."""
+    """Geographic bubble map — lat/lon scatter, sized by deposits, colored by zone,
+    drawn over real US state outlines cropped to the branch footprint. State
+    boundaries come from a bundled GeoJSON asset (no live tile service needed)."""
     if not branches_geo:
         return False
 
+    lons_all = [b["lon"] for b in branches_geo]
+    lats_all = [b["lat"] for b in branches_geo]
+    pad_lon = max((max(lons_all) - min(lons_all)) * 0.18, 0.6)
+    pad_lat = max((max(lats_all) - min(lats_all)) * 0.18, 0.6)
+    x0, x1 = min(lons_all) - pad_lon, max(lons_all) + pad_lon
+    y0, y1 = min(lats_all) - pad_lat, max(lats_all) + pad_lat
+
     fig, ax = plt.subplots(figsize=(7.2, 5.4), dpi=200)
+
+    state_polys = _load_state_polygons()
+    from shapely.geometry import box as _box
+    view_box = _box(x0, y0, x1, y1)
+    for name, geom in state_polys.items():
+        if not geom.intersects(view_box):
+            continue
+        _draw_polygon(ax, geom, facecolor="#F2F2EE", edgecolor="#C7C7BF", linewidth=0.8, zorder=1)
+
     for zone in ["Justify", "Defend", "Analyze", "Invest"]:  # draw Invest last (on top)
         pts = [b for b in branches_geo if b.get("opportunity_zone") == zone]
         if not pts:
@@ -296,9 +410,31 @@ def chart_branch_map(branches_geo, path):
         lons = [b["lon"] for b in pts]
         lats = [b["lat"] for b in pts]
         sizes = [max(_sf(b.get("latest_dep")) / 3e6, 18) for b in pts]
-        ax.scatter(lons, lats, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.75,
-                   edgecolors="white", linewidths=0.5, label=zone)
+        ax.scatter(lons, lats, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.85,
+                   edgecolors="white", linewidths=0.5, label=zone, zorder=3)
 
+    # Label the largest state clusters directly on the map (avg position, branch count)
+    by_state = {}
+    for b in branches_geo:
+        st = b.get("stalpbr") or b.get("state")
+        if st:
+            by_state.setdefault(st, []).append(b)
+    top_states = sorted(by_state.items(), key=lambda kv: -len(kv[1]))[:4]
+    for st, pts in top_states:
+        if len(pts) < 2:
+            continue
+        clx = sum(p["lon"] for p in pts) / len(pts)
+        cly = sum(p["lat"] for p in pts) / len(pts)
+        max_r = max(max(_sf(p.get("latest_dep")) / 3e6, 18) for p in pts)
+        offset_pts = 14 + (max_r ** 0.5)  # clear large bubbles near the centroid
+        ax.annotate(f"{st} · {len(pts)}", (clx, cly), xytext=(0, offset_pts),
+                    textcoords="offset points", fontsize=8.5, fontweight="bold",
+                    color="#334155", ha="center", zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.25", facecolor="#FAFAF8",
+                              edgecolor="none", alpha=0.85))
+
+    ax.set_xlim(x0, x1)
+    ax.set_ylim(y0, y1)
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
@@ -563,6 +699,25 @@ def summarize_network(d):
     top5 = sorted(br, key=lambda b: -_sf(b.get("opportunity_score")))[:5]
     bottom3 = sorted(br, key=lambda b: _sf(b.get("opportunity_score")))[:3]
 
+    # Largest-deposit branch, tracked independent of opportunity-score rank.
+    # top5/bottom3 above are pure score rankings, so a branch that dominates
+    # the network by deposit size can rank outside both lists and never reach
+    # the AI narrative context at all — which is exactly how a flagship branch
+    # losing deposits can get buried under a small branch's growth story.
+    largest_branch = max(br, key=lambda b: _sf(b.get("latest_dep"))) if br else None
+    flagship_risk = None
+    if largest_branch and total_dep > 0 and n > 0:
+        share = _sf(largest_branch.get("latest_dep")) / total_dep
+        yoy = _sf(largest_branch.get("yoy_deposits"))
+        zone = largest_branch.get("opportunity_zone")
+        # Material relative to network size (>=3x the average branch's share),
+        # not a fixed absolute cutoff — a fixed 10% misses real cases on larger
+        # networks (e.g. 9.7% share on a 59-branch network is ~5.7x average,
+        # genuinely dominant, but would fail a flat 10% test).
+        avg_share = 1.0 / n
+        if share >= 3 * avg_share and (yoy < 0 or zone == "Justify"):
+            flagship_risk = {**largest_branch, "deposit_share_pct": share * 100}
+
     return {
         "branch_count": n,
         "zones": zones,
@@ -571,6 +726,8 @@ def summarize_network(d):
         "avg_score": avg_score,
         "top5": top5,
         "bottom3": bottom3,
+        "largest_branch": largest_branch,
+        "flagship_risk": flagship_risk,
     }
 
 
@@ -591,9 +748,10 @@ def summarize_branch_strategy(branch_strategy):
     return {"tiers": tiers, "named_hits": named_hits}
 
 
-def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None):
+def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None, capped_yoy=None):
     branch_strategy = branch_strategy or []
     dives = dives or []
+    capped_yoy = capped_yoy or {}
     if not ANTH_KEY or not anthropic:
         print("  ⚠ No ANTHROPIC_API_KEY — using placeholder narratives")
         return _placeholder_narratives(dives)
@@ -601,7 +759,7 @@ def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives
     zones = summary["zones"]
     top5_str = "; ".join(
         f"{b['namebr']} ({b['citybr']}, {b['stalpbr']}) — score {_sf(b['opportunity_score']):.0f}, "
-        f"${_sf(b['latest_dep'])/1e6:.0f}M deposits, {_sf(b['yoy_deposits'])*100:+.1f}% YoY"
+        f"${_sf(b['latest_dep'])/1e6:.0f}M deposits, {fmt_yoy(b, capped_yoy)} YoY"
         for b in summary["top5"]
     )
     bottom3_str = "; ".join(
@@ -638,6 +796,7 @@ Network avg deposit YoY: {summary['avg_yoy_pct']:+.1f}%
 
 Top 5 branches by opportunity: {top5_str}
 Bottom 3 branches by opportunity: {bottom3_str}
+{"FLAGSHIP RISK — the network's single largest branch by deposits carries the story regardless of its opportunity-score rank: " + summary['flagship_risk']['namebr'] + " (" + summary['flagship_risk']['citybr'] + ", " + summary['flagship_risk']['stalpbr'] + ") holds " + f"{summary['flagship_risk']['deposit_share_pct']:.0f}%" + " of total network deposits ($" + f"{_sf(summary['flagship_risk']['latest_dep'])/1e6:.0f}M" + "), is down " + f"{_sf(summary['flagship_risk']['yoy_deposits'])*100:+.1f}%" + " YoY, and sits in the " + str(summary['flagship_risk']['opportunity_zone']) + " zone." if summary.get('flagship_risk') else ""}
 
 Financial health: ROA {_sf(fin.get('roa')):.2f}% | NIM {_sf(fin.get('nim')):.2f}% | Efficiency {_sf(fin.get('efficiency_ratio')):.1f}%
 Deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}% | Cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}% | Tier 1 {_sf(fin.get('tier1_capital_pct')):.1f}%
@@ -680,7 +839,7 @@ Tone: precise, CFO-appropriate. No superlatives, no urgency language, no self-re
 State facts, name specific branches/competitors, quantify everything possible.
 Return ONLY valid JSON, no markdown fences:
 {
-  "exec_summary": "3-4 sentences. The single most important finding, stated plainly, with a number.",
+  "exec_summary": "3-4 sentences. The single most important finding, stated plainly, with a number. If a FLAGSHIP RISK finding is present above, lead with it explicitly by name and number — it drives the network total and outweighs a smaller branch's score, even if that branch tops the opportunity ranking.",
   "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position.",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
@@ -697,7 +856,8 @@ Return ONLY valid JSON, no markdown fences:
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=4000,
+            max_tokens=8000,
+            thinking={"type": "disabled"},
             system=system,
             messages=[{"role": "user", "content": ctx}],
         )
@@ -756,7 +916,8 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
-                          branch_strategy=None, dives=None, deep_mode=None, tmpdir="."):
+                          branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None):
+    capped_yoy = capped_yoy or {}
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21.59)   # US Letter
@@ -818,7 +979,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         cell.paragraphs[0].text = ""
         r1 = cell.paragraphs[0].add_run(
             f"{top_branch['namebr']}: {_sf(top_branch['opportunity_score']):.0f}/100 opportunity score, "
-            f"{_sf(top_branch['yoy_deposits'])*100:+.1f}% deposit growth"
+            f"{fmt_yoy(top_branch, capped_yoy)} deposit growth"
         )
         r1.font.size = Pt(13)
         r1.font.bold = True
@@ -830,6 +991,29 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     _body(doc, narr.get("exec_summary") or
           f"{bank_name} operates {summary['branch_count']} branches with ${summary['total_deposits_B']:.1f}B "
           f"in total deposits. Network average opportunity score: {summary['avg_score']:.0f}/100.")
+
+    # Flagship-risk alert — guaranteed regardless of AI narrative compliance.
+    # The pull-quote above is the top opportunity-score branch, which can be
+    # a small branch; if the network's largest branch by deposits is
+    # materially at risk, that fact belongs on page one too, not just in the
+    # 59-row appendix table.
+    fr = summary.get("flagship_risk")
+    if fr:
+        alert = doc.add_table(rows=1, cols=1)
+        cell = alert.rows[0].cells[0]
+        _set_cell_shading(cell, "BFC815")  # brand Justify color
+        cell.paragraphs[0].text = ""
+        r_alert = cell.paragraphs[0].add_run(
+            f"FLAGSHIP RISK — {fr['namebr']} holds {fr['deposit_share_pct']:.0f}% of total network "
+            f"deposits (${_sf(fr['latest_dep'])/1e6:.0f}M) and is at "
+            f"{fmt_yoy(fr, capped_yoy)} YoY, {fr['opportunity_zone']} zone."
+        )
+        r_alert.font.size = Pt(12)
+        r_alert.font.bold = True
+        r_alert.font.color.rgb = NAVY
+        cell.paragraphs[0].paragraph_format.space_before = Pt(8)
+        cell.paragraphs[0].paragraph_format.space_after = Pt(8)
+        doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
     # ── Geographic Distribution (map) ──
     if branches_geo:
@@ -1013,7 +1197,6 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             # ── Deposits & Radius ──
             _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
             dep = _sf(b.get("latest_dep"))
-            yoy = _sf(b.get("yoy_deposits")) * 100
             radius_mi = strat.get("radius_mi") if strat else None
             tier_label = strat.get("tier") if strat else None
             dr = doc.add_table(rows=2, cols=4)
@@ -1023,7 +1206,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                 dr_hdr[j].text = h
             dr_val = dr.rows[1].cells
             dr_val[0].text = f"${dep/1e6:.1f}M"
-            dr_val[1].text = f"{yoy:+.1f}%"
+            dr_val[1].text = fmt_yoy(b, capped_yoy)
             dr_val[2].text = tier_label or "—"
             dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
             p_method = doc.add_paragraph()
@@ -1159,7 +1342,23 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
     # ── Next Step Recommendation ──
     _heading(doc, "Recommendation")
-    _body(doc, narr.get("next_step") or "")
+    fallback_next_step = None
+    if not narr.get("next_step"):
+        top = summary["top5"][0] if summary["top5"] else None
+        fr = summary.get("flagship_risk")
+        parts = []
+        if fr:
+            parts.append(f"Address {fr['namebr']}'s {fmt_yoy(fr, capped_yoy)} YoY position first — "
+                          f"it holds {fr['deposit_share_pct']:.0f}% of total network deposits and outweighs "
+                          f"any single opportunity-zone branch in dollar impact.")
+        if top:
+            parts.append(f"Prioritize capital toward {top['namebr']} ({top['citybr']}, {top['stalpbr']}), "
+                          f"the network's top-scored branch at {_sf(top['opportunity_score']):.0f}/100.")
+        parts.append(f"With {summary['zones']['Justify']} branches in Justify and "
+                      f"{summary['zones']['Invest']} in Invest, the near-term agenda is reallocating "
+                      f"capacity from the former to the latter.")
+        fallback_next_step = " ".join(parts)
+    _body(doc, narr.get("next_step") or fallback_next_step)
 
     doc.add_page_break()
 
@@ -1175,9 +1374,22 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         row[0].text = str(b.get("namebr", "—"))
         row[1].text = f"{b.get('citybr','—')}, {b.get('stalpbr','—')}"
         row[2].text = f"${_sf(b.get('latest_dep'))/1e6:.1f}M"
-        row[3].text = f"{_sf(b.get('yoy_deposits'))*100:+.1f}%"
+        row[3].text = fmt_yoy(b, capped_yoy)
         row[4].text = f"{_sf(b.get('opportunity_score')):.0f}"
         row[5].text = str(b.get("opportunity_zone", "—"))
+
+    if capped_yoy:
+        fn = doc.add_paragraph()
+        fn.paragraph_format.space_before = Pt(6)
+        fn_run = fn.add_run(
+            "* YoY growth for this branch hit the standard calculation's cap and was "
+            "resolved directly against source deposit data: shown as the real computed "
+            "growth rate where a prior-year figure exists, or as \"New branch\" where none does."
+        )
+        fn_run.italic = True
+        fn_run.font.size = Pt(8.5)
+        fn_run.font.color.rgb = GRAY3
+        fn_run.font.name = FONT_HEAD
 
     # ── Session placeholder (deliberately not narrative content) ──
     doc.add_page_break()
@@ -1213,12 +1425,14 @@ def run(ik, name_hint=None):
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     summary = summarize_network(d)
     dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
-    narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives)
+    narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
+                           d.get("capped_yoy"))
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                     d["branches"], d.get("branches_geo"),
-                                    d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir)
+                                    d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
+                                    capped_yoy=d.get("capped_yoy"))
         path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
