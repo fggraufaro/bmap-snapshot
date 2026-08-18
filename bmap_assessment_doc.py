@@ -379,10 +379,108 @@ def _draw_polygon(ax, geom, **kwargs):
                                      facecolor="#FAFAF8", edgecolor="none", zorder=kwargs.get("zorder", 1) + 0.1))
 
 
+def chart_branch_map_osm(branches_geo, path):
+    """PRIMARY map — real street-map tiles (OpenStreetMap), the recognizable
+    'Google Maps view' people actually orient by, instead of a bare state
+    outline. Built with the staticmap package (pure Python, no GDAL, unlike
+    contextily) which fetches and stitches raster tiles.
+
+    Uses staticmap's own Web Mercator projection math (_lon_to_x/_lat_to_y +
+    the instance's _x_to_px/_y_to_px after render) to place matplotlib labels
+    at pixel-correct positions on top of the fetched tile image -- overlaying
+    plain lon/lat coordinates on a Mercator-projected image without this
+    conversion silently misplaces markers, worse the further from the map's
+    vertical center.
+
+    This function cannot be tested from within the dev sandbox (tile.
+    openstreetmap.org is outside the sandbox's network allowlist) -- Railway
+    has open egress, but this must be visually verified there. That's exactly
+    why this has a defensive fallback in chart_branch_map(): any failure here
+    (timeout, tile server error, missing package) falls back to the
+    already-verified state-outline map rather than failing generation."""
+    from staticmap import StaticMap, CircleMarker
+    from staticmap.staticmap import _lon_to_x, _lat_to_y
+    import math
+
+    if not branches_geo:
+        return False
+
+    W, H = 1600, 1200
+    m = StaticMap(W, H, padding_x=60, padding_y=60,
+                  tile_request_timeout=8, delay_between_retries=0)
+    for b in branches_geo:
+        zone = b.get("opportunity_zone")
+        color = ZONE_HEX_MPL.get(zone, "#778899")
+        r_px = max(4, min(22, 4 + _sf(b.get("latest_dep")) / 5e7))
+        m.add_marker(CircleMarker((b["lon"], b["lat"]), color, r_px))
+
+    img = m.render()  # network call — the thing that can fail/time out
+
+    # Attribution baked into the image itself (OSM tile usage policy),
+    # not left to doc-building code that could later drop a caption.
+    from PIL import ImageDraw
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([0, H - 22, 260, H], fill=(255, 255, 255, 200))
+    draw.text((6, H - 18), "Map data (c) OpenStreetMap contributors", fill=(60, 60, 60))
+
+    # City labels for the largest branch per city — same top-8-by-count
+    # logic as the fallback map, positioned via staticmap's own projection
+    # so they land correctly on the Mercator tile image.
+    by_city = {}
+    for b in branches_geo:
+        city = b.get("citybr") or b.get("city")
+        if city:
+            by_city.setdefault(city, []).append(b)
+    top_cities = sorted(by_city.items(), key=lambda kv: -len(kv[1]))[:8]
+
+    fig, ax = plt.subplots(figsize=(W / 200, H / 200), dpi=200)
+    ax.imshow(img)
+    for city, pts in top_cities:
+        anchor = max(pts, key=lambda p: _sf(p.get("latest_dep")))
+        px = m._x_to_px(_lon_to_x(anchor["lon"], m.zoom))
+        py = m._y_to_px(_lat_to_y(anchor["lat"], m.zoom))
+        ax.annotate(city, (px, py), xytext=(0, 12), textcoords="offset points",
+                    fontsize=7.5, color="#1A1A1A", ha="center", va="top", zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
+                              edgecolor="none", alpha=0.8))
+
+    # Legend (matplotlib proxy handles, matching the fallback map's style)
+    from matplotlib.lines import Line2D
+    handles = [Line2D([0], [0], marker="o", linestyle="", markersize=7,
+                       markerfacecolor=ZONE_HEX_MPL[z], markeredgecolor="white", label=z)
+               for z in ["Justify", "Defend", "Analyze", "Invest"]]
+    ax.legend(handles=handles, frameon=True, framealpha=0.9, fontsize=9,
+              loc="lower left", edgecolor="none")
+
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    fig.tight_layout(pad=0)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return True
+
+
 def chart_branch_map(branches_geo, path):
-    """Geographic bubble map — lat/lon scatter, sized by deposits, colored by zone,
+    """Dispatcher: real map tiles when available, state-outline fallback
+    otherwise. See chart_branch_map_osm's docstring for why this needs a
+    fallback and can't be verified from the dev sandbox."""
+    try:
+        if chart_branch_map_osm(branches_geo, path):
+            return True
+    except Exception as e:
+        print(f"  ⚠ OSM map tiles failed ({e}) — falling back to state-outline map")
+    return chart_branch_map_states(branches_geo, path)
+
+
+def chart_branch_map_states(branches_geo, path):
+    """FALLBACK map — lat/lon scatter, sized by deposits, colored by zone,
     drawn over real US state outlines cropped to the branch footprint. State
-    boundaries come from a bundled GeoJSON asset (no live tile service needed)."""
+    boundaries come from a bundled GeoJSON asset (no live tile service needed).
+    Used only if chart_branch_map_osm (real map tiles) fails for any reason —
+    missing package, tile server down, network timeout on Railway — so a
+    report never fails to generate over a map image."""
     if not branches_geo:
         return False
 
