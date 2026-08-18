@@ -1255,6 +1255,7 @@ Return ONLY valid JSON, no markdown fences:
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
+  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get.", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template."}},
   "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
@@ -1281,6 +1282,166 @@ Return ONLY valid JSON, no markdown fences:
         return _placeholder_narratives(dives)
 
 
+def _web_search_brief(system, ctx, max_tokens=3000):
+    """Shared helper for the two live-web-search-enabled signal briefs below.
+    Unlike get_narratives() (structured data only, no tools), these use
+    Anthropic's server-side web_search tool -- Claude may call it multiple
+    times within a single response, interleaving text/tool_use/tool_result
+    blocks, so the reply has to be reassembled from every text block, not
+    just the first one. Returns None on any failure so callers can skip
+    the section entirely rather than fabricate content."""
+    if not ANTH_KEY or not anthropic:
+        return None
+    client = anthropic.Anthropic(api_key=ANTH_KEY)
+    try:
+        msg = client.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=max_tokens,
+            thinking={"type": "disabled"},
+            system=system,
+            tools=[{"type": "web_search_20250305", "name": "web_search"}],
+            messages=[{"role": "user", "content": ctx}],
+        )
+        text = "".join(block.text for block in msg.content if block.type == "text").strip()
+        return text or None
+    except Exception as e:
+        print(f"  ⚠ Web-search brief failed ({e})")
+        return None
+
+
+def get_persona_signal_brief(bank_name, dives):
+    """Persona & Demographic Signal Brief — adapted from Verlocity's Hub
+    'Audience Intelligence Brief' analyst prompt. Layers current, directional
+    persona/intent signal on top of BMAP's Census-based structural data via
+    live web search. Scoped to Invest-zone (and select Analyze-zone) priority
+    branches only, per the source prompt's explicit scope limit -- this is
+    signal enrichment, not a full-network rewrite."""
+    priority = [e for e in (dives or [])
+                if e["branch"].get("opportunity_zone") in ("Invest", "Analyze")]
+    if not priority:
+        return None
+
+    lines = []
+    for e in priority[:15]:  # cap for latency/cost -- same ceiling as deep dives
+        b = e["branch"]
+        lines.append(
+            f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
+            f"zone {b.get('opportunity_zone')}, score {_sf(b.get('opportunity_score')):.0f}/100, "
+            f"household income ${_sf(b.get('household_income')):.0f} "
+            f"({_sf(b.get('yoy_income_growth'))*100:+.1f}% YoY), "
+            f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
+            f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%"
+        )
+    ctx = (f"BMAP Bank Context — {bank_name}\n\nPriority branches (Invest/select Analyze zones):\n"
+           + "\n".join(lines))
+
+    system = """You are the BMAP Persona & Demographic Signal Analyst.
+
+Your role is to enrich BMAP branch insights with CURRENT, directional persona, behavioral, and
+intent signals that are not fully captured by Census-based data. You do NOT replace BMAP, do NOT
+redefine strategy, do NOT produce marketing tactics. You exist to add fresh signal that sharpens
+strategic confidence.
+
+MODE: Web search enabled. Use current public signals, behavioral proxies, and local market context.
+Treat BMAP branch data (given below) as the structural truth layer. Directional insight only --
+never invent statistics, and never contradict the BMAP signals given.
+
+OUTPUT STRUCTURE -- follow exactly, plain text with these three headers:
+
+PERSONA SIGNAL OVERVIEW
+1-2 short paragraphs describing the dominant persona and intent signals across the priority markets
+given: lifecycle shifts (wealth accumulation, retirement, mobility), income/employment dynamics,
+and product intent (checking, CD, loans) implied by current local conditions.
+
+BRANCH-LEVEL PERSONA SIGNALS (PRIORITY ONLY)
+For each branch given, on its own line as "Branch Name (City, ST)": 1-2 dominant persona signals,
+combining the demographic baseline given with current behavioral/local context. Explain how this
+influences deposit growth potential, balance stability, switching likelihood, and digital vs.
+relationship preference. ALWAYS include branch name AND city together.
+
+STRATEGIC IMPLICATIONS (NON-TACTICAL)
+3-5 bullets on where persona signals should influence acquisition focus, timing advantage, and
+where competition is most vulnerable. NO tactics, NO campaigns, NO pricing, NO product
+recommendations, NO methodology explanation.
+
+Tone: analytical, confident, advisory, executive-ready."""
+
+    print("  Generating Persona & Demographic Signal Brief (web search)...")
+    result = _web_search_brief(system, ctx, max_tokens=3000)
+    if result:
+        print("  ✓ Persona signal brief generated")
+    else:
+        print("  ⚠ Persona signal brief unavailable — section will be omitted")
+    return result
+
+
+def get_market_offer_brief(bank_name, dives, branch_strategy):
+    """Market Offer & Competitive Signal Brief — adapted from Verlocity's
+    Hub competitive-intelligence analyst prompt. Live web search for current
+    peer deposit-rate/promotional pressure, explicitly excluding
+    money-center banks (Chase, Wells Fargo, BofA, Citi) since they rarely
+    reflect real community-bank competitive dynamics. Scoped to the same
+    priority branches as the deep dives."""
+    if not dives:
+        return None
+    strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in (branch_strategy or [])}
+
+    lines = []
+    for e in dives[:15]:
+        b = e["branch"]
+        key = (b.get("namebr"), b.get("citybr"), b.get("stalpbr"))
+        strat = strategy_by_name.get(key)
+        top_comp = strat.get("top_competitor") if strat else None
+        comp_str = (f"named competitor {top_comp.get('bank_name')} "
+                    f"{_sf(top_comp.get('distance_miles')):.1f}mi away"
+                    if top_comp else "no named competitor within adaptive radius")
+        lines.append(f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): {comp_str}")
+    ctx = f"BMAP Bank Context — {bank_name}\n\nPriority branches:\n" + "\n".join(lines)
+
+    system = """You are the BMAP Market Offer & Competitive Signal Analyst.
+
+Your purpose is to enrich BMAP strategic decision-making with real-time, peer-level competitive
+deposit pressure: community banks, regional banks, and major credit unions operating in each local
+market, plus select digital banks only when they materially impact rate-sensitive deposits. You
+explicitly DEPRIORITIZE AND EXCLUDE money-center banks (Chase, Wells Fargo, Bank of America, Citi)
+and other national brands that do not meaningfully compete for community-bank deposit relationships.
+
+MODE: Web search enabled. Use current public information -- peer bank/credit union sites, local and
+regional financial news, rate aggregators with community-bank visibility. Prioritize signals from
+the last 30-60 days.
+
+OUTPUT STRUCTURE -- follow exactly, plain text with these three headers:
+
+MARKET OFFER SIGNAL OVERVIEW
+1-2 executive paragraphs on dominant peer-competitor dynamics across the priority markets given --
+whether pressure is driven by regional bank expansion, credit union rate aggression, local
+promotional battles, or digital siphoning of rate-sensitive balances, and whether offer intensity
+is escalating, stabilizing, or cooling. Name meaningful peer institutions where relevant.
+
+BRANCH-LEVEL MARKET PRESSURE (PRIORITY ONLY)
+For each branch given, on its own line as "Branch Name (City, ST)": meaningful peer competitors by
+name, deposit products driving pressure (HYSAs, CDs, promotional checking, bundled incentives),
+directional current rate ranges or promotional structures, and how this impacts acquisition
+difficulty, retention vulnerability, and deposit mix sensitivity. Avoid national banks unless no
+peers exist in that market.
+
+STRATEGIC IMPLICATIONS (NON-TACTICAL)
+3-5 executive bullets on where peer pressure justifies accelerated acquisition focus, where
+structural competition limits short-term upside, and where defending existing balances is
+strategically critical. NO tactics, NO pricing recommendations, NO campaign ideas.
+
+Tone: executive, local-market realistic, competitive-intelligence driven. Read like a peer-level
+competitive war-room brief for bank leadership."""
+
+    print("  Generating Market Offer & Competitive Signal Brief (web search)...")
+    result = _web_search_brief(system, ctx, max_tokens=3000)
+    if result:
+        print("  ✓ Market offer brief generated")
+    else:
+        print("  ⚠ Market offer brief unavailable — section will be omitted")
+    return result
+
+
 def _placeholder_narratives(dives=None):
     base = {k: "" for k in ["exec_headline", "strategic_positioning", "network_narrative",
                              "competitive_narrative", "financial_narrative",
@@ -1289,12 +1450,14 @@ def _placeholder_narratives(dives=None):
     base["next_12_months"] = []
     base["branch_audiences"] = {}
     base["branch_verdicts"] = {}
+    base["branch_plays"] = {}
     if dives:
         for e in dives:
             b = e["branch"]
             key = f"{b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')})"
             base["branch_audiences"][key] = ""
             base["branch_verdicts"][key] = ""
+            base["branch_plays"][key] = {}
     return base
 
 
@@ -1309,11 +1472,64 @@ def _set_cell_shading(cell, hex_color):
     tcPr.append(shd)
 
 
+def _render_signal_brief(doc, title, raw_text):
+    """Renders a web-search signal brief's structured plain-text output
+    (three ALL-CAPS headers per the analyst prompts) into formatted doc
+    content. Parses defensively -- if the model didn't follow the header
+    format exactly, falls back to a single body block rather than dropping
+    the content or crashing."""
+    _heading(doc, title)
+
+    known_headers = ["PERSONA SIGNAL OVERVIEW", "BRANCH-LEVEL PERSONA SIGNALS",
+                      "MARKET OFFER SIGNAL OVERVIEW", "BRANCH-LEVEL MARKET PRESSURE",
+                      "STRATEGIC IMPLICATIONS"]
+    lines = raw_text.split("\n")
+    sections = []  # list of (header_or_None, [body_lines])
+    current_header, current_body = None, []
+    for line in lines:
+        stripped = line.strip()
+        matched = next((h for h in known_headers if stripped.upper().startswith(h)), None)
+        if matched:
+            if current_header or current_body:
+                sections.append((current_header, current_body))
+            current_header, current_body = stripped, []
+        else:
+            current_body.append(line)
+    sections.append((current_header, current_body))
+
+    if len(sections) == 1 and sections[0][0] is None:
+        _body(doc, raw_text.strip(), size=9.5)
+        return
+
+    for header, body_lines in sections:
+        text = "\n".join(body_lines).strip()
+        if not text:
+            continue
+        if header:
+            _heading(doc, header.title(), size=11, space_before=10, space_after=4)
+        if "STRATEGIC" in (header or "").upper():
+            for bl in text.split("\n"):
+                bl = bl.strip().lstrip("•-*").strip()
+                if bl:
+                    p = doc.add_paragraph(style="List Bullet")
+                    r = p.add_run(bl)
+                    r.font.size = Pt(9.5)
+                    r.font.name = FONT_HEAD
+        elif "BRANCH-LEVEL" in (header or "").upper():
+            for para in text.split("\n\n"):
+                para = para.strip()
+                if para:
+                    _body(doc, para, size=9.5)
+        else:
+            _body(doc, text, size=9.5)
+
+
 def _heading(doc, text, size=16, color=NAVY, space_before=18, space_after=6):
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(space_before)
     p.paragraph_format.space_after = Pt(space_after)
-    run = p.add_run(text)
+    p.paragraph_format.keep_with_next = True  # never let a heading get stranded
+    run = p.add_run(text)                     # alone at the bottom of a page
     run.bold = True
     run.font.size = Pt(size)
     run.font.color.rgb = color
@@ -1332,7 +1548,8 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
-                          branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None):
+                          branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None,
+                          persona_brief=None, market_offer_brief=None):
     capped_yoy = capped_yoy or {}
     geo_by_uid = {g["uninumbr"]: g for g in (branches_geo or []) if g.get("uninumbr") is not None}
     doc = Document()
@@ -1617,6 +1834,17 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             row[2].text = _vuln_tier(t.get("avg_vuln_score"))
             row[3].text = f"{_sf(t.get('avg_yoy_pct')):+.1f}%"
 
+    # ── Persona & Demographic Signal Brief / Market Offer & Competitive
+    # Signal Brief — both live-web-search enrichment layers, adapted from
+    # Verlocity's Hub analyst prompts. Rendered only if the call succeeded;
+    # a failed web-search call skips the section rather than showing
+    # placeholder text, since fabricating "current market intelligence"
+    # would be worse than omitting it. ──
+    if persona_brief:
+        _render_signal_brief(doc, "Persona & Demographic Signal Brief", persona_brief)
+    if market_offer_brief:
+        _render_signal_brief(doc, "Market Offer & Competitive Signal Brief", market_offer_brief)
+
     # ── Deposit Capture Strategy (adaptive-radius, branch + bank-wide) ──
     if branch_strategy:
         _heading(doc, "Deposit Capture Strategy — By Branch and Network-Wide")
@@ -1715,6 +1943,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
     branch_audiences = narr.get("branch_audiences") or {}
     branch_verdicts = narr.get("branch_verdicts") or {}
+    branch_plays = narr.get("branch_plays") or {}
 
     if dives:
         section_title = ("Branch-by-Branch Assessment" if deep_mode
@@ -1897,8 +2126,9 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                 cell.paragraphs[0].paragraph_format.space_before = Pt(8)
                 cell.paragraphs[0].paragraph_format.space_after = Pt(8)
 
-                posture = PLAY_ACQUISITION_POSTURE.get(play, "")
-                brief = PLAY_MEDIA_BRIEF.get(play, "")
+                branch_play_data = branch_plays.get(branch_label) or {}
+                posture = branch_play_data.get("resource_posture") or PLAY_ACQUISITION_POSTURE.get(play, "")
+                brief = branch_play_data.get("media_brief") or PLAY_MEDIA_BRIEF.get(play, "")
                 if posture:
                     p1 = doc.add_paragraph()
                     p1.paragraph_format.space_before = Pt(6)
@@ -2052,12 +2282,15 @@ def run(ik, name_hint=None):
     dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                            d.get("capped_yoy"))
+    persona_brief = get_persona_signal_brief(bank_name, dives)
+    market_offer_brief = get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                     d["branches"], d.get("branches_geo"),
                                     d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
-                                    capped_yoy=d.get("capped_yoy"))
+                                    capped_yoy=d.get("capped_yoy"),
+                                    persona_brief=persona_brief, market_offer_brief=market_offer_brief)
         path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
