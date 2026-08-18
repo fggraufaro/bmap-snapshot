@@ -433,6 +433,27 @@ def chart_branch_map(branches_geo, path):
                     bbox=dict(boxstyle="round,pad=0.25", facecolor="#FAFAF8",
                               edgecolor="none", alpha=0.85))
 
+    # City labels for individual reference points — state-level clustering
+    # alone leaves a tight-footprint network (e.g. 22 branches all in one
+    # county) with no landmark to orient by. Label the largest branch per
+    # distinct city, capped to the top cities by branch count so a dense
+    # network doesn't get cluttered with every city name.
+    by_city = {}
+    for b in branches_geo:
+        city = b.get("citybr") or b.get("city")
+        if city:
+            by_city.setdefault(city, []).append(b)
+    top_cities = sorted(by_city.items(), key=lambda kv: -len(kv[1]))[:8]
+    for city, pts in top_cities:
+        anchor = max(pts, key=lambda p: _sf(p.get("latest_dep")))
+        r = max(_sf(anchor.get("latest_dep")) / 3e6, 18)
+        offset_pts = 9 + (r ** 0.5) * 0.7
+        ax.annotate(city, (anchor["lon"], anchor["lat"]), xytext=(0, -offset_pts),
+                    textcoords="offset points", fontsize=6.5, color="#5B6472",
+                    ha="center", va="top", zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.15", facecolor="#FAFAF8",
+                              edgecolor="none", alpha=0.75))
+
     ax.set_xlim(x0, x1)
     ax.set_ylim(y0, y1)
     ax.set_xticks([])
@@ -448,12 +469,76 @@ def chart_branch_map(branches_geo, path):
     return True
 
 
+def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
+    """Small per-branch map: the branch at center, named competitors plotted
+    at their real positions (not estimated bearings — branches_within_radius_batch
+    now returns lat/lon directly), with a circle showing the adaptive radius
+    actually used for that branch. Works in local miles-based x/y (not raw
+    lon/lat degrees) so the radius circle renders as an actual circle instead
+    of an ellipse — 1 degree of longitude covers fewer real miles than 1
+    degree of latitude except at the equator, so plotting raw degrees under
+    an equal-aspect axis distorts the shape."""
+    if branch_lat is None or branch_lon is None:
+        return False
+
+    import math
+    lat_rad = math.radians(branch_lat)
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = 69.0 * max(math.cos(lat_rad), 0.15)
+
+    def to_local_mi(lat, lon):
+        return (lon - branch_lon) * mi_per_deg_lon, (lat - branch_lat) * mi_per_deg_lat
+
+    fig, ax = plt.subplots(figsize=(3.4, 3.4), dpi=200)
+
+    theta = [i / 100 * 2 * math.pi for i in range(101)]
+    circ_x = [radius_mi * math.cos(t) for t in theta]
+    circ_y = [radius_mi * math.sin(t) for t in theta]
+    ax.plot(circ_x, circ_y, color="#083D5F", linewidth=1.0, linestyle="--", alpha=0.5, zorder=2)
+
+    for c in competitors:
+        clat, clon = c.get("lat"), c.get("lon")
+        if clat is None or clon is None:
+            continue
+        cx, cy = to_local_mi(clat, clon)
+        r = max(_sf(c.get("deposits")) / 4e6, 40)
+        ax.scatter([cx], [cy], s=r, c="#A32D2D", alpha=0.75,
+                   edgecolors="white", linewidths=0.6, zorder=3)
+        label = c.get("bank_name", "")[:18]
+        ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (cx, cy),
+                    xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                    color="#334155", ha="center", va="top", zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.12", facecolor="#FAFAF8",
+                              edgecolor="none", alpha=0.8))
+
+    # The client's own branch, at the local origin, drawn last so it's on top
+    ax.scatter([0], [0], s=140, c="#083D5F", marker="*",
+               edgecolors="white", linewidths=0.8, zorder=5)
+
+    pad = radius_mi * 1.35
+    ax.set_xlim(-pad, pad)
+    ax.set_ylim(-pad, pad)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_facecolor("#FAFAF8")
+    ax.set_aspect("equal", adjustable="box")
+    fig.tight_layout(pad=0.2)
+    fig.savefig(path, transparent=False, facecolor="#FAFAF8")
+    plt.close(fig)
+    return True
+
+
 def fetch_branch_geo(ik):
     """Lat/lon for the branch map — joined from geo.branches_master_v2.
-    branch_id in geo matches uninumbr in branch_opportunity_base."""
+    branch_id in geo matches uninumbr in branch_opportunity_base.
+    stalpbr is required here (not just cosmetic) — chart_branch_map's
+    cluster labeling groups by it, and silently labels nothing if it's
+    missing rather than erroring, which is how this went unnoticed."""
     rows = supabase(
         "branch_opportunity_base",
-        f"inst_key=eq.{ik}&select=uninumbr,opportunity_zone,latest_dep",
+        f"inst_key=eq.{ik}&select=uninumbr,opportunity_zone,latest_dep,stalpbr,citybr",
     )
     if not rows:
         return []
@@ -696,6 +781,30 @@ def summarize_network(d):
     avg_yoy = sum(yoy_vals) / len(yoy_vals) if yoy_vals else 0
     avg_score = sum(_sf(b.get("opportunity_score")) for b in br) / n if n else 0
 
+    # Demographic/audience aggregates -- BMAP's exec summary has been reporting
+    # only opportunity score + financial ratios, but the platform also scores
+    # every branch on Census income/population and ZHVI home-value trend
+    # (the same signal AudienceFinder segments key off of). Without an
+    # aggregate here, that whole data dimension never reaches the exec
+    # summary — only individual branch_audiences blurbs get it.
+    inc_vals = [_sf(b.get("household_income")) for b in br if b.get("household_income") is not None]
+    inc_yoy_vals = [_sf(b.get("yoy_income_growth")) for b in br if b.get("yoy_income_growth") is not None]
+    pop_yoy_vals = [_sf(b.get("yoy_pop_growth")) for b in br if b.get("yoy_pop_growth") is not None]
+    zhvi_vals = [_sf(b.get("zhvi_yoy_pct")) for b in br if b.get("zhvi_yoy_pct") is not None]
+    avg_household_income = sum(inc_vals) / len(inc_vals) if inc_vals else 0
+    avg_income_yoy = sum(inc_yoy_vals) / len(inc_yoy_vals) if inc_yoy_vals else 0
+    avg_pop_yoy = sum(pop_yoy_vals) / len(pop_yoy_vals) if pop_yoy_vals else 0
+    avg_zhvi_yoy = sum(zhvi_vals) / len(zhvi_vals) if zhvi_vals else 0
+    # The single branch with the strongest combined demographic tailwind
+    # (income growth + population growth + home-value growth) -- gives the
+    # exec summary a concrete named example instead of only network averages.
+    strongest_demo_branch = None
+    if br:
+        strongest_demo_branch = max(
+            br, key=lambda b: (_sf(b.get("yoy_income_growth")) + _sf(b.get("yoy_pop_growth"))
+                                + _sf(b.get("zhvi_yoy_pct")) / 100)
+        )
+
     top5 = sorted(br, key=lambda b: -_sf(b.get("opportunity_score")))[:5]
     bottom3 = sorted(br, key=lambda b: _sf(b.get("opportunity_score")))[:3]
 
@@ -728,6 +837,11 @@ def summarize_network(d):
         "bottom3": bottom3,
         "largest_branch": largest_branch,
         "flagship_risk": flagship_risk,
+        "avg_household_income": avg_household_income,
+        "avg_income_yoy_pct": avg_income_yoy * 100,
+        "avg_pop_yoy_pct": avg_pop_yoy * 100,
+        "avg_zhvi_yoy_pct": avg_zhvi_yoy,
+        "strongest_demo_branch": strongest_demo_branch,
     }
 
 
@@ -802,6 +916,12 @@ Financial health: ROA {_sf(fin.get('roa')):.2f}% | NIM {_sf(fin.get('nim')):.2f}
 Deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}% | Cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}% | Tier 1 {_sf(fin.get('tier1_capital_pct')):.1f}%
 Net income YoY {_sf(fin.get('net_income_yoy_pct')):+.1f}%
 
+Network-wide demographic & audience signal (Census income/population + ZHVI home-value
+trend -- the same underlying data AudienceFinder segments key off of):
+Avg household income ${summary['avg_household_income']:,.0f} | Avg income YoY {summary['avg_income_yoy_pct']:+.1f}%
+Avg population YoY {summary['avg_pop_yoy_pct']:+.1f}% | Avg home-value (ZHVI) YoY {summary['avg_zhvi_yoy_pct']:+.1f}%
+{"Strongest demographic tailwind: " + summary['strongest_demo_branch']['namebr'] + " (" + summary['strongest_demo_branch']['citybr'] + ", " + summary['strongest_demo_branch']['stalpbr'] + ") — income YoY " + f"{_sf(summary['strongest_demo_branch'].get('yoy_income_growth'))*100:+.1f}%" + ", population YoY " + f"{_sf(summary['strongest_demo_branch'].get('yoy_pop_growth'))*100:+.1f}%" + ", home value YoY " + f"{_sf(summary['strongest_demo_branch'].get('zhvi_yoy_pct')):+.1f}%" + "." if summary.get('strongest_demo_branch') else ""}
+
 Network-level competitive targets: {target_str}
 
 Branch-level adaptive-radius competitive strategy (radius scaled per branch by local
@@ -839,7 +959,7 @@ Tone: precise, CFO-appropriate. No superlatives, no urgency language, no self-re
 State facts, name specific branches/competitors, quantify everything possible.
 Return ONLY valid JSON, no markdown fences:
 {
-  "exec_summary": "3-4 sentences. The single most important finding, stated plainly, with a number. If a FLAGSHIP RISK finding is present above, lead with it explicitly by name and number — it drives the network total and outweighs a smaller branch's score, even if that branch tops the opportunity ranking.",
+  "exec_summary": "5-6 sentences. This is the ONE place in the document that must demonstrate the full breadth of what BMAP analyzed -- do not let it collapse into just an opportunity-score readout. Cover, in this order: (1) If a FLAGSHIP RISK finding is present, lead with it by name and number -- it drives the network total and outweighs a smaller branch's score. If absent, lead with the top-scored branch instead. (2) One sentence on the zone distribution and what it means for capital allocation. (3) One sentence synthesizing the demographic & audience signal -- name the strongest-tailwind branch or the network averages, and connect it to what it means for prospecting (e.g. income/population growth = expansion case; decline = retention case). (4) One sentence on the competitive/rate exposure -- name the top vulnerable target. (5) One closing sentence on financial health capacity to fund action. Every sentence must carry a specific number or name -- no generic transitions.",
   "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position.",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
@@ -918,6 +1038,7 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
                           branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None):
     capped_yoy = capped_yoy or {}
+    geo_by_uid = {g["uninumbr"]: g for g in (branches_geo or []) if g.get("uninumbr") is not None}
     doc = Document()
     section = doc.sections[0]
     section.page_width = Cm(21.59)   # US Letter
@@ -990,7 +1111,13 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
     _body(doc, narr.get("exec_summary") or
           f"{bank_name} operates {summary['branch_count']} branches with ${summary['total_deposits_B']:.1f}B "
-          f"in total deposits. Network average opportunity score: {summary['avg_score']:.0f}/100.")
+          f"in total deposits, network average opportunity score {summary['avg_score']:.0f}/100 across "
+          f"{summary['zones']['Invest']} Invest, {summary['zones']['Analyze']} Analyze, "
+          f"{summary['zones']['Defend']} Defend, and {summary['zones']['Justify']} Justify branches. "
+          f"Demographic signal averages ${summary['avg_household_income']:,.0f} household income "
+          f"({summary['avg_income_yoy_pct']:+.1f}% YoY) and {summary['avg_pop_yoy_pct']:+.1f}% population YoY "
+          f"across the footprint. Financial health: ROA {_sf(fin.get('roa')):.2f}%, "
+          f"efficiency ratio {_sf(fin.get('efficiency_ratio')):.1f}%.")
 
     # Flagship-risk alert — guaranteed regardless of AI narrative compliance.
     # The pull-quote above is the top opportunity-score branch, which can be
@@ -1240,6 +1367,19 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                 _body(doc, "No competitor within the adaptive radius meets the 0.1x-5x size filter — "
                            "this branch has natural geographic protection rather than a capture target.",
                       size=9.5)
+
+            if top3:
+                own = geo_by_uid.get(b.get("uninumbr"))
+                if own and own.get("lat") is not None and own.get("lon") is not None:
+                    radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
+                    ok = chart_branch_radius_map(
+                        own["lat"], own["lon"], top3, radius_mi or 3.0, radius_img
+                    )
+                    if ok:
+                        p_img = doc.add_paragraph()
+                        p_img.paragraph_format.space_before = Pt(4)
+                        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        p_img.add_run().add_picture(radius_img, width=Inches(2.4))
 
             # ── Capture Scenario ──
             capture_pool = e["capture_pool"]
