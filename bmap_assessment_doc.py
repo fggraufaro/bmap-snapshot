@@ -646,19 +646,13 @@ def chart_branch_map_states(branches_geo, path):
     return True
 
 
-def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
-    """Small per-branch map: the branch at center, named competitors plotted
-    at their real positions (not estimated bearings — branches_within_radius_batch
-    now returns lat/lon directly), with a circle showing the adaptive radius
-    actually used for that branch. Works in local miles-based x/y (not raw
-    lon/lat degrees) so the radius circle renders as an actual circle instead
-    of an ellipse — 1 degree of longitude covers fewer real miles than 1
-    degree of latitude except at the equator, so plotting raw degrees under
-    an equal-aspect axis distorts the shape."""
+def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path):
+    """FALLBACK: plain circle-plot version (no basemap). Used only if the
+    Mapbox version fails for any reason — same reasoning as
+    chart_branch_map_states relative to chart_branch_map_osm."""
     if branch_lat is None or branch_lon is None:
         return False
 
-    import math
     lat_rad = math.radians(branch_lat)
     mi_per_deg_lat = 69.0
     mi_per_deg_lon = 69.0 * max(math.cos(lat_rad), 0.15)
@@ -705,6 +699,109 @@ def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path
     fig.savefig(path, transparent=False, facecolor="#FAFAF8")
     plt.close(fig)
     return True
+
+
+def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
+    """PRIMARY per-branch competitor map — same real Mapbox basemap as the
+    main Geographic Distribution map, zoomed to the branch's adaptive radius.
+    Reuses _web_mercator_xy/_fit_zoom (already verified against all 59 real
+    Mid Penn branches on the main map) so the branch star, radius circle,
+    and competitor markers all land pixel-correct on the fetched tile image.
+    Falls back to chart_branch_radius_map_local on any failure."""
+    if branch_lat is None or branch_lon is None or not MAPBOX_TOKEN:
+        return False
+
+    W, H = 700, 700
+    # Bounding box = branch +/- radius, converted to degrees locally (fine
+    # at this scale) purely to pick a zoom level that frames the radius
+    # circle with headroom — actual marker/circle placement below uses the
+    # exact same Mercator projection as the main map, not this approximation.
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = 69.0 * max(math.cos(math.radians(branch_lat)), 0.15)
+    pad_mi = radius_mi * 1.35
+    lons = [branch_lon - pad_mi / mi_per_deg_lon, branch_lon + pad_mi / mi_per_deg_lon]
+    lats = [branch_lat - pad_mi / mi_per_deg_lat, branch_lat + pad_mi / mi_per_deg_lat]
+
+    classic_zoom = _fit_zoom(lons, lats, W, H)
+    mapbox_zoom = max(classic_zoom - 1, 0)
+
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
+           f"{branch_lon},{branch_lat},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
+    resp = requests.get(url, timeout=10)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Mapbox Static Images API {resp.status_code}: {resp.text[:200]}")
+
+    from PIL import Image, ImageDraw
+    from io import BytesIO
+    img = Image.open(BytesIO(resp.content)).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+    iw, ih = img.size
+    draw.rectangle([iw - 165, ih - 14, iw, ih], fill=(255, 255, 255, 210))
+    draw.text((iw - 160, ih - 12), "(c) Mapbox (c) OSM", fill=(60, 60, 60))
+
+    cx_world, cy_world = _web_mercator_xy(branch_lon, branch_lat, classic_zoom)
+
+    def to_px(lon, lat):
+        x, y = _web_mercator_xy(lon, lat, classic_zoom)
+        return (x - cx_world) + W / 2, (y - cy_world) + H / 2
+
+    fig, ax = plt.subplots(figsize=(W / 200, H / 200), dpi=200)
+    ax.imshow(img)
+
+    # Radius circle — generate in real lat/lon (not a flat local approximation)
+    # then project through the same Mercator math as everything else, so it
+    # lines up correctly with the real basemap underneath.
+    theta = [i / 100 * 2 * math.pi for i in range(101)]
+    circ_px, circ_py = [], []
+    for t in theta:
+        clat = branch_lat + (radius_mi / mi_per_deg_lat) * math.sin(t)
+        clon = branch_lon + (radius_mi / mi_per_deg_lon) * math.cos(t)
+        px, py = to_px(clon, clat)
+        circ_px.append(px)
+        circ_py.append(py)
+    ax.plot(circ_px, circ_py, color="#083D5F", linewidth=1.3, linestyle="--", alpha=0.7, zorder=2)
+
+    for c in competitors:
+        clat, clon = c.get("lat"), c.get("lon")
+        if clat is None or clon is None:
+            continue
+        px, py = to_px(clon, clat)
+        r = max(_sf(c.get("deposits")) / 4e6, 40)
+        ax.scatter([px], [py], s=r, c="#A32D2D", alpha=0.85,
+                   edgecolors="white", linewidths=0.6, zorder=3)
+        label = c.get("bank_name", "")[:18]
+        ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (px, py),
+                    xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                    color="#1A1A1A", ha="center", va="top", zorder=4,
+                    bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
+                              edgecolor="none", alpha=0.85))
+
+    bx, by = to_px(branch_lon, branch_lat)
+    ax.scatter([bx], [by], s=150, c="#083D5F", marker="*",
+               edgecolors="white", linewidths=0.9, zorder=5)
+
+    ax.set_xlim(0, W)
+    ax.set_ylim(H, 0)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    fig.tight_layout(pad=0)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return True
+
+
+def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
+    """Dispatcher: real map tiles when available, local-plot fallback
+    otherwise. Same pattern as chart_branch_map/chart_branch_map_osm."""
+    try:
+        if chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
+            return True
+    except Exception as e:
+        print(f"  ⚠ OSM radius map failed ({e}) — falling back to local-plot version")
+    return chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path)
 
 
 def fetch_branch_geo(ik):
