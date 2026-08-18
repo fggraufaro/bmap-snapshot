@@ -954,17 +954,22 @@ Named examples: {named_str}
                         "no fabricated personas -- Verlocity's persona layer is still in development):\n" + \
                         "\n".join(lines)
 
-    system = """You are writing the $10K Verlocity BMAP Assessment for a community bank CFO/CEO audience.
-Tone: precise, CFO-appropriate. No superlatives, no urgency language, no self-referential commentary.
-State facts, name specific branches/competitors, quantify everything possible.
+    system = """You are writing the $10K Verlocity BMAP Assessment for a community bank CEO/Board audience.
+Tone: confident, commercial, decisive — not hedged, not academic. State the position, don't survey options.
+Every branch reference MUST include both branch name AND city — never one without the other.
+Do not explain BMAP methodology, do not reference BMAP versions, do not ask follow-up questions,
+do not introduce data beyond what's given below. No superlatives for their own sake — earn every claim with a number.
 Return ONLY valid JSON, no markdown fences:
 {
-  "exec_summary": "5-6 sentences. This is the ONE place in the document that must demonstrate the full breadth of what BMAP analyzed -- do not let it collapse into just an opportunity-score readout. Cover, in this order: (1) If a FLAGSHIP RISK finding is present, lead with it by name and number -- it drives the network total and outweighs a smaller branch's score. If absent, lead with the top-scored branch instead. (2) One sentence on the zone distribution and what it means for capital allocation. (3) One sentence synthesizing the demographic & audience signal -- name the strongest-tailwind branch or the network averages, and connect it to what it means for prospecting (e.g. income/population growth = expansion case; decline = retention case). (4) One sentence on the competitive/rate exposure -- name the top vulnerable target. (5) One closing sentence on financial health capacity to fund action. Every sentence must carry a specific number or name -- no generic transitions.",
-  "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position.",
+  "exec_headline": "3-4 sentences. State plainly whether this network's current footprint is positioned for GROWTH, DEFENSE, or OPTIMIZATION -- pick one framing and commit to it. Reference the overall opportunity score and the Invest/Analyze/Defend/Justify mix. Frame the core deposit-acquisition tension explicitly (e.g. concentrated upside vs. broad retention burden). If a FLAGSHIP RISK finding is present above, it must anchor this headline by name and city -- it drives the network total and outweighs a smaller branch's score even if that branch tops the ranking.",
+  "strategic_positioning": "One short paragraph (3-4 sentences). Describe what kind of deposit competitor this bank is positioned to be over the next 12-24 months. Ground this in the demographic & audience signal given (name the strongest-tailwind branch/city or the network averages -- growth demographics = expansion case, decline = retention case) AND the competitive/rate exposure (name the top vulnerable target). Address how growth can be driven without relying on additional physical branches -- position digital-first, market-specific execution as the default lever, without naming specific channels, tactics, or products.",
+  "priority_focus": [{"branch": "exact branch name", "city": "city", "state": "ST", "zone": "Invest/Analyze/Defend/Justify", "why_now": "one clause: momentum, competitive pressure, or market structure -- with a number", "role": "one short strategic-role phrase, e.g. 'deposit growth engine', 'selective digital capture', 'defend and retain balances'"}] , // 2-3 entries. If a FLAGSHIP RISK finding is present, it MUST be one of these entries (role should reflect its risk, e.g. 'stabilize and retain' or 'exit review'). Otherwise lead with the top opportunity-score branch.
+  "next_12_months": ["exactly 3 strings — each a leadership-level decision about WHERE to allocate attention, capital, or effort. No tactics, channels, offers, pricing, or products. No methodology."],
+  "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position. (Used later in the doc, not the exec summary above -- can restate the zone framing in different words.)",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
-  "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches.",
+  "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
 
@@ -991,8 +996,11 @@ Return ONLY valid JSON, no markdown fences:
 
 
 def _placeholder_narratives(dives=None):
-    base = {k: "" for k in ["exec_summary", "network_narrative", "competitive_narrative",
-                             "financial_narrative", "capture_strategy_narrative", "next_step"]}
+    base = {k: "" for k in ["exec_headline", "strategic_positioning", "network_narrative",
+                             "competitive_narrative", "financial_narrative",
+                             "capture_strategy_narrative", "next_step"]}
+    base["priority_focus"] = []
+    base["next_12_months"] = []
     base["branch_audiences"] = {}
     if dives:
         for e in dives:
@@ -1109,21 +1117,97 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         cell.paragraphs[0].paragraph_format.space_after = Pt(10)
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
-    _body(doc, narr.get("exec_summary") or
-          f"{bank_name} operates {summary['branch_count']} branches with ${summary['total_deposits_B']:.1f}B "
-          f"in total deposits, network average opportunity score {summary['avg_score']:.0f}/100 across "
-          f"{summary['zones']['Invest']} Invest, {summary['zones']['Analyze']} Analyze, "
-          f"{summary['zones']['Defend']} Defend, and {summary['zones']['Justify']} Justify branches. "
-          f"Demographic signal averages ${summary['avg_household_income']:,.0f} household income "
-          f"({summary['avg_income_yoy_pct']:+.1f}% YoY) and {summary['avg_pop_yoy_pct']:+.1f}% population YoY "
-          f"across the footprint. Financial health: ROA {_sf(fin.get('roa')):.2f}%, "
-          f"efficiency ratio {_sf(fin.get('efficiency_ratio')):.1f}%.")
+    fallback_headline = (
+        f"{bank_name} operates {summary['branch_count']} branches with ${summary['total_deposits_B']:.1f}B "
+        f"in total deposits, network average opportunity score {summary['avg_score']:.0f}/100 across "
+        f"{summary['zones']['Invest']} Invest, {summary['zones']['Analyze']} Analyze, "
+        f"{summary['zones']['Defend']} Defend, and {summary['zones']['Justify']} Justify branches."
+    )
+    _body(doc, narr.get("exec_headline") or fallback_headline)
+
+    if narr.get("strategic_positioning"):
+        p_pos = doc.add_paragraph()
+        p_pos.paragraph_format.space_before = Pt(8)
+        r_pos = p_pos.add_run(narr["strategic_positioning"])
+        r_pos.font.size = Pt(10.5)
+        r_pos.font.name = FONT_HEAD
+        r_pos.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # Priority Focus — 2-3 named branches, structured (not a table, per the
+    # source Executive Headline spec this was adapted from: name+city, zone,
+    # why now, strategic role).
+    priority_focus = narr.get("priority_focus") or []
+    if not priority_focus:
+        fr_local = summary.get("flagship_risk")
+        for cand in ([fr_local] if fr_local else []) + summary["top5"][:3]:
+            if not cand:
+                continue
+            already = any(pf.get("branch") == cand.get("namebr") for pf in priority_focus)
+            if already or len(priority_focus) >= 3:
+                continue
+            is_risk = fr_local and cand.get("namebr") == fr_local.get("namebr")
+            priority_focus.append({
+                "branch": cand.get("namebr"), "city": cand.get("citybr"), "state": cand.get("stalpbr"),
+                "zone": cand.get("opportunity_zone"),
+                "why_now": f"{fmt_yoy(cand, capped_yoy)} YoY, {_sf(cand.get('opportunity_score')):.0f}/100 score.",
+                "role": "stabilize and retain" if is_risk else "deposit growth engine",
+            })
+    if priority_focus:
+        _heading(doc, "Priority Focus", size=12, space_before=12, space_after=4)
+        for item in priority_focus:
+            zone = item.get("zone", "")
+            zone_rgb = rgb(ZONE_COLOR.get(zone, "083D5F"))
+            p_pf = doc.add_paragraph()
+            p_pf.paragraph_format.space_before = Pt(6)
+            r_name = p_pf.add_run(f"{item.get('branch','—')} ({item.get('city','—')}, {item.get('state','—')}) ")
+            r_name.font.bold = True
+            r_name.font.size = Pt(10.5)
+            r_name.font.name = FONT_HEAD
+            r_name.font.color.rgb = NAVY
+            r_zone = p_pf.add_run(f"· {zone}")
+            r_zone.font.bold = True
+            r_zone.font.size = Pt(9.5)
+            r_zone.font.name = FONT_HEAD
+            r_zone.font.color.rgb = zone_rgb
+            p_pf2 = doc.add_paragraph()
+            p_pf2.paragraph_format.space_after = Pt(2)
+            r_role = p_pf2.add_run(f"{item.get('role','—')} — ")
+            r_role.italic = True
+            r_role.font.size = Pt(9.5)
+            r_role.font.name = FONT_HEAD
+            r_role.font.color.rgb = GRAY3
+            r_why = p_pf2.add_run(item.get("why_now", ""))
+            r_why.font.size = Pt(9.5)
+            r_why.font.name = FONT_HEAD
+            r_why.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # What This Means for the Next 12 Months — exactly 3 leadership-level
+    # decisions, no tactics/channels/pricing per spec.
+    next_12 = narr.get("next_12_months") or []
+    if not next_12:
+        next_12 = [
+            f"Allocate capital toward the {summary['zones']['Invest']} Invest-zone branches before "
+            f"broad-based network spend.",
+            f"Apply retention discipline across the {summary['zones']['Defend'] + summary['zones']['Justify']} "
+            f"Defend/Justify branches rather than treating them as growth targets.",
+            "Fund digital-first, market-specific execution as the primary lever for deposit growth "
+            "beyond the existing physical footprint.",
+        ]
+    if next_12:
+        _heading(doc, "What This Means for the Next 12 Months", size=12, space_before=12, space_after=4)
+        for bullet in next_12:
+            p_b = doc.add_paragraph(style="List Bullet")
+            r_b = p_b.add_run(bullet)
+            r_b.font.size = Pt(10)
+            r_b.font.name = FONT_HEAD
+            r_b.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
     # Flagship-risk alert — guaranteed regardless of AI narrative compliance.
     # The pull-quote above is the top opportunity-score branch, which can be
     # a small branch; if the network's largest branch by deposits is
     # materially at risk, that fact belongs on page one too, not just in the
-    # 59-row appendix table.
+    # 59-row appendix table. (Priority Focus above is instructed to include
+    # it by name when present, but this stays as a guaranteed backstop.)
     fr = summary.get("flagship_risk")
     if fr:
         alert = doc.add_table(rows=1, cols=1)
@@ -1131,9 +1215,9 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         _set_cell_shading(cell, "BFC815")  # brand Justify color
         cell.paragraphs[0].text = ""
         r_alert = cell.paragraphs[0].add_run(
-            f"FLAGSHIP RISK — {fr['namebr']} holds {fr['deposit_share_pct']:.0f}% of total network "
-            f"deposits (${_sf(fr['latest_dep'])/1e6:.0f}M) and is at "
-            f"{fmt_yoy(fr, capped_yoy)} YoY, {fr['opportunity_zone']} zone."
+            f"FLAGSHIP RISK — {fr['namebr']} ({fr['citybr']}, {fr['stalpbr']}) holds "
+            f"{fr['deposit_share_pct']:.0f}% of total network deposits (${_sf(fr['latest_dep'])/1e6:.0f}M) "
+            f"and is at {fmt_yoy(fr, capped_yoy)} YoY, {fr['opportunity_zone']} zone."
         )
         r_alert.font.size = Pt(12)
         r_alert.font.bold = True
