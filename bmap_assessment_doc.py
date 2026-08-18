@@ -20,6 +20,7 @@ alone is not the $10K product; the session is. See closing section.
 
 import os
 import sys
+import math
 import argparse
 import requests
 from datetime import datetime
@@ -379,72 +380,148 @@ def _draw_polygon(ax, geom, **kwargs):
                                      facecolor="#FAFAF8", edgecolor="none", zorder=kwargs.get("zorder", 1) + 0.1))
 
 
+MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
+
+
+def _web_mercator_xy(lon, lat, zoom, tile_size=256):
+    """Standard Web Mercator projection to pixel space at a given zoom
+    (classic 256px-tile convention -- the same one staticmap/most slippy-map
+    libraries use). Used to place every branch marker and label at the exact
+    pixel position matching a Mapbox static image requested at the same
+    center/zoom, without embedding any per-branch data in the request URL."""
+    x = (lon + 180.0) / 360.0 * tile_size * (2 ** zoom)
+    lat_rad = math.radians(lat)
+    y = (1 - math.log(math.tan(lat_rad) + 1 / math.cos(lat_rad)) / math.pi) / 2 \
+        * tile_size * (2 ** zoom)
+    return x, y
+
+
+def _fit_zoom(lons, lats, target_w, target_h, tile_size=256, max_zoom=18):
+    """Largest zoom (classic 256px convention) at which the branch bounding
+    box fits inside target_w x target_h pixels. Mirrors what staticmap's
+    _calculate_zoom does internally, done manually here since this function
+    only needs the base tile image, not staticmap's tile-fetching."""
+    for z in range(max_zoom, -1, -1):
+        x0, y0 = _web_mercator_xy(min(lons), max(lats), z, tile_size)
+        x1, y1 = _web_mercator_xy(max(lons), min(lats), z, tile_size)
+        if (x1 - x0) <= target_w and (y1 - y0) <= target_h:
+            return z
+    return 0
+
+
 def chart_branch_map_osm(branches_geo, path):
-    """PRIMARY map — real street-map tiles (OpenStreetMap), the recognizable
+    """PRIMARY map — real Mapbox street-map tiles, the recognizable
     'Google Maps view' people actually orient by, instead of a bare state
-    outline. Built with the staticmap package (pure Python, no GDAL, unlike
-    contextily) which fetches and stitches raster tiles.
+    outline. Requests ONLY the base map image (a fixed-size URL: center,
+    zoom, width, height — no per-branch data embedded), then draws every
+    marker and city label myself via matplotlib using the same Web Mercator
+    math used to pick that center/zoom.
 
-    Uses staticmap's own Web Mercator projection math (_lon_to_x/_lat_to_y +
-    the instance's _x_to_px/_y_to_px after render) to place matplotlib labels
-    at pixel-correct positions on top of the fetched tile image -- overlaying
-    plain lon/lat coordinates on a Mercator-projected image without this
-    conversion silently misplaces markers, worse the further from the map's
-    vertical center.
+    This replaced an earlier GeoJSON-overlay design that embedded marker
+    data directly in the request URL. That hit Mapbox's ~8192-char URL
+    limit on real data -- even after rounding coordinates and dropping
+    optional properties, only ~40 of Mid Penn Bank's 59 real branches fit,
+    and a larger network (e.g. Hancock Whitney's 181 branches) would have
+    lost the majority of its markers, silently, on the flagship map of a
+    paid deliverable. This design has no such ceiling: URL size is constant
+    regardless of branch count, so nothing is ever dropped from the map.
 
-    This function cannot be tested from within the dev sandbox (tile.
-    openstreetmap.org is outside the sandbox's network allowlist) -- Railway
-    has open egress, but this must be visually verified there. That's exactly
-    why this has a defensive fallback in chart_branch_map(): any failure here
-    (timeout, tile server error, missing package) falls back to the
-    already-verified state-outline map rather than failing generation."""
-    from staticmap import StaticMap, CircleMarker
-    from staticmap.staticmap import _lon_to_x, _lat_to_y
-    import math
+    Mapbox's Static Images API zoom parameter follows the GL/512px-tile
+    convention, one level "wider" than the classic 256px convention used
+    here for the fit/pixel math -- hence the -1 when building the request
+    URL. If the fetched base map looks zoomed one level off from where the
+    markers land when this is checked on Railway, that offset is the first
+    thing to check.
 
-    if not branches_geo:
+    OSM raw tile hotlinking (the first attempt, via the staticmap package)
+    was ruled out already -- confirmed directly, not theoretical: it returns
+    403 even with a proper User-Agent, which is OSM's policy blocking
+    automated/cloud-IP tile requests, not a fixable header problem.
+
+    This function cannot be tested from within the dev sandbox (api.mapbox.com
+    is outside both the sandbox's bash network allowlist and the web_fetch
+    tool's allowed-domains list) -- must be visually verified on Railway.
+    That's exactly why the dispatcher below falls back to the state-outline
+    map on any failure here."""
+    if not branches_geo or not MAPBOX_TOKEN:
         return False
 
-    W, H = 1600, 1200
-    m = StaticMap(W, H, padding_x=60, padding_y=60,
-                  tile_request_timeout=8, delay_between_retries=0)
-    for b in branches_geo:
-        zone = b.get("opportunity_zone")
-        color = ZONE_HEX_MPL.get(zone, "#778899")
-        r_px = max(4, min(22, 4 + _sf(b.get("latest_dep")) / 5e7))
-        m.add_marker(CircleMarker((b["lon"], b["lat"]), color, r_px))
+    W, H = 1280, 960
+    pad_frac = 0.15
 
-    img = m.render()  # network call — the thing that can fail/time out
+    lons = [b["lon"] for b in branches_geo]
+    lats = [b["lat"] for b in branches_geo]
+    lon_c = (min(lons) + max(lons)) / 2
+    lat_c = (min(lats) + max(lats)) / 2
 
-    # Attribution baked into the image itself (OSM tile usage policy),
-    # not left to doc-building code that could later drop a caption.
-    from PIL import ImageDraw
+    classic_zoom = _fit_zoom(lons, lats, W * (1 - pad_frac), H * (1 - pad_frac))
+    mapbox_zoom = max(classic_zoom - 1, 0)  # GL/512px convention offset — see docstring
+
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
+           f"{lon_c},{lat_c},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
+
+    resp = requests.get(url, timeout=10)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Mapbox Static Images API {resp.status_code}: {resp.text[:200]}")
+
+    from PIL import Image, ImageDraw
+    from io import BytesIO
+    img = Image.open(BytesIO(resp.content)).convert("RGB")
+
+    # Mapbox's free-tier ToS requires visible attribution -- text fallback
+    # here; verify Railway's rendered output also satisfies Mapbox's logo
+    # requirement (https://www.mapbox.com/legal/tos) before relying on this
+    # for client-facing delivery at scale.
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, H - 22, 260, H], fill=(255, 255, 255, 200))
-    draw.text((6, H - 18), "Map data (c) OpenStreetMap contributors", fill=(60, 60, 60))
+    iw, ih = img.size
+    attr_text = "(c) Mapbox (c) OpenStreetMap contributors"
+    draw.rectangle([iw - 300, ih - 22, iw, ih], fill=(255, 255, 255, 210))
+    draw.text((iw - 294, ih - 18), attr_text, fill=(60, 60, 60))
 
-    # City labels for the largest branch per city — same top-8-by-count
-    # logic as the fallback map, positioned via staticmap's own projection
-    # so they land correctly on the Mercator tile image.
+    # Pixel position for any lon/lat, in THIS image's coordinate space —
+    # image center = (lon_c, lat_c) at classic_zoom by construction.
+    cx_world, cy_world = _web_mercator_xy(lon_c, lat_c, classic_zoom)
+
+    def to_px(lon, lat):
+        x, y = _web_mercator_xy(lon, lat, classic_zoom)
+        return (x - cx_world) + iw / 2, (y - cy_world) + ih / 2
+
+    fig, ax = plt.subplots(figsize=(iw / 200, ih / 200), dpi=200)
+    ax.imshow(img)
+
+    # Every branch, every zone — no truncation, unlike the URL-embedded
+    # overlay approach this replaced.
+    for zone in ["Justify", "Defend", "Analyze", "Invest"]:
+        pts = [b for b in branches_geo if b.get("opportunity_zone") == zone]
+        if not pts:
+            continue
+        pxs, pys, sizes = [], [], []
+        for b in pts:
+            px, py = to_px(b["lon"], b["lat"])
+            pxs.append(px)
+            pys.append(py)
+            sizes.append(max(_sf(b.get("latest_dep")) / 3e6, 18))
+        ax.scatter(pxs, pys, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.9,
+                   edgecolors="white", linewidths=0.6, label=zone, zorder=3)
+
+    # City labels — largest branch per city, top 8 by branch count, same
+    # logic as the fallback map, now positioned via exact projection math
+    # instead of relying on the basemap's own label rendering (which can't
+    # be controlled or guaranteed to show every relevant city at a given zoom).
     by_city = {}
     for b in branches_geo:
         city = b.get("citybr") or b.get("city")
         if city:
             by_city.setdefault(city, []).append(b)
     top_cities = sorted(by_city.items(), key=lambda kv: -len(kv[1]))[:8]
-
-    fig, ax = plt.subplots(figsize=(W / 200, H / 200), dpi=200)
-    ax.imshow(img)
     for city, pts in top_cities:
         anchor = max(pts, key=lambda p: _sf(p.get("latest_dep")))
-        px = m._x_to_px(_lon_to_x(anchor["lon"], m.zoom))
-        py = m._y_to_px(_lat_to_y(anchor["lat"], m.zoom))
-        ax.annotate(city, (px, py), xytext=(0, 12), textcoords="offset points",
+        px, py = to_px(anchor["lon"], anchor["lat"])
+        ax.annotate(city, (px, py), xytext=(0, 10), textcoords="offset points",
                     fontsize=7.5, color="#1A1A1A", ha="center", va="top", zorder=4,
                     bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                              edgecolor="none", alpha=0.8))
+                              edgecolor="none", alpha=0.85))
 
-    # Legend (matplotlib proxy handles, matching the fallback map's style)
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], marker="o", linestyle="", markersize=7,
                        markerfacecolor=ZONE_HEX_MPL[z], markeredgecolor="white", label=z)
@@ -452,6 +529,8 @@ def chart_branch_map_osm(branches_geo, path):
     ax.legend(handles=handles, frameon=True, framealpha=0.9, fontsize=9,
               loc="lower left", edgecolor="none")
 
+    ax.set_xlim(0, iw)
+    ax.set_ylim(ih, 0)  # image y-axis is top-down
     ax.set_xticks([])
     ax.set_yticks([])
     for spine in ax.spines.values():
