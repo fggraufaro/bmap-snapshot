@@ -112,12 +112,15 @@ def generate_assessment():
         dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                                    d.get("capped_yoy"))
+        persona_brief = bad.get_persona_signal_brief(bank_name, dives)
+        market_offer_brief = bad.get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
-                                            capped_yoy=d.get("capped_yoy"))
+                                            capped_yoy=d.get("capped_yoy"),
+                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief)
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
@@ -199,13 +202,20 @@ def _run_assessment_job(job_id, ik, name_hint):
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"],
                                    d.get("branch_strategy"), dives, d.get("capped_yoy"))
 
+        _job_write(job_id, stage="Researching persona & demographic signal (live web search)...")
+        persona_brief = bad.get_persona_signal_brief(bank_name, dives)
+
+        _job_write(job_id, stage="Researching market offer & competitive signal (live web search)...")
+        market_offer_brief = bad.get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
+
         _job_write(job_id, stage="Building document (charts, branch deep dives)...")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
-                                            capped_yoy=d.get("capped_yoy"))
+                                            capped_yoy=d.get("capped_yoy"),
+                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief)
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
