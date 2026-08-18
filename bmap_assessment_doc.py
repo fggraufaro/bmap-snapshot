@@ -667,6 +667,7 @@ def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi
     circ_y = [radius_mi * math.sin(t) for t in theta]
     ax.plot(circ_x, circ_y, color="#083D5F", linewidth=1.0, linestyle="--", alpha=0.5, zorder=2)
 
+    labeled_ids = {id(c) for c in sorted(competitors, key=lambda c: -_sf(c.get("deposits")))[:5]}
     for c in competitors:
         clat, clon = c.get("lat"), c.get("lon")
         if clat is None or clon is None:
@@ -675,12 +676,13 @@ def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi
         r = max(_sf(c.get("deposits")) / 4e6, 40)
         ax.scatter([cx], [cy], s=r, c="#A32D2D", alpha=0.75,
                    edgecolors="white", linewidths=0.6, zorder=3)
-        label = c.get("bank_name", "")[:18]
-        ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (cx, cy),
-                    xytext=(0, -9), textcoords="offset points", fontsize=5.5,
-                    color="#334155", ha="center", va="top", zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.12", facecolor="#FAFAF8",
-                              edgecolor="none", alpha=0.8))
+        if id(c) in labeled_ids:
+            label = c.get("bank_name", "")[:18]
+            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (cx, cy),
+                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                        color="#334155", ha="center", va="top", zorder=4,
+                        bbox=dict(boxstyle="round,pad=0.12", facecolor="#FAFAF8",
+                                  edgecolor="none", alpha=0.8))
 
     # The client's own branch, at the local origin, drawn last so it's on top
     ax.scatter([0], [0], s=140, c="#083D5F", marker="*",
@@ -762,6 +764,11 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
         circ_py.append(py)
     ax.plot(circ_px, circ_py, color="#083D5F", linewidth=1.3, linestyle="--", alpha=0.7, zorder=2)
 
+    # Every competitor within the radius gets a dot (some markets have 20+,
+    # e.g. Camden at 1mi in validation testing) — but labeling all of them
+    # would be unreadable on a small inset, so only the top 5 by deposits
+    # get a text label. The table above still lists the top 3 in full.
+    labeled_ids = {id(c) for c in sorted(competitors, key=lambda c: -_sf(c.get("deposits")))[:5]}
     for c in competitors:
         clat, clon = c.get("lat"), c.get("lon")
         if clat is None or clon is None:
@@ -770,12 +777,13 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
         r = max(_sf(c.get("deposits")) / 4e6, 40)
         ax.scatter([px], [py], s=r, c="#A32D2D", alpha=0.85,
                    edgecolors="white", linewidths=0.6, zorder=3)
-        label = c.get("bank_name", "")[:18]
-        ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (px, py),
-                    xytext=(0, -9), textcoords="offset points", fontsize=5.5,
-                    color="#1A1A1A", ha="center", va="top", zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
-                              edgecolor="none", alpha=0.85))
+        if id(c) in labeled_ids:
+            label = c.get("bank_name", "")[:18]
+            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (px, py),
+                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                        color="#1A1A1A", ha="center", va="top", zorder=4,
+                        bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
+                                  edgecolor="none", alpha=0.85))
 
     bx, by = to_px(branch_lon, branch_lat)
     ax.scatter([bx], [by], s=150, c="#083D5F", marker="*",
@@ -994,6 +1002,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
             "competitor_count": len(filtered),
             "top_competitor": top_competitor,
             "top3_competitors": top3_competitors,
+            "all_competitors": filtered,  # full radius+size-filtered set, for the map
         })
     print(f"  ✓ {len(results)} branches assessed")
     return results
@@ -1709,6 +1718,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             # ── Competitors (top 3, size-filtered) ──
             _heading(doc, "Named Competitors", size=11, space_before=10, space_after=4)
             top3 = (strat.get("top3_competitors") if strat else []) or []
+            all_comp = (strat.get("all_competitors") if strat else []) or []
             if top3:
                 cot = doc.add_table(rows=1, cols=4)
                 cot.style = "Light Grid Accent 1"
@@ -1726,18 +1736,28 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                            "this branch has natural geographic protection rather than a capture target.",
                       size=9.5)
 
-            if top3:
+            if all_comp:
                 own = geo_by_uid.get(b.get("uninumbr"))
                 if own and own.get("lat") is not None and own.get("lon") is not None:
                     radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
                     ok = chart_branch_radius_map(
-                        own["lat"], own["lon"], top3, radius_mi or 3.0, radius_img
+                        own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
                     )
                     if ok:
                         p_img = doc.add_paragraph()
                         p_img.paragraph_format.space_before = Pt(4)
                         p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
                         p_img.add_run().add_picture(radius_img, width=Inches(2.4))
+                        p_cap = doc.add_paragraph()
+                        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                        r_cap = p_cap.add_run(
+                            f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
+                            f"{radius_mi or 3.0:.1f}mi shown; table above highlights the top 3 by deposits."
+                        )
+                        r_cap.italic = True
+                        r_cap.font.size = Pt(7.5)
+                        r_cap.font.color.rgb = GRAY3
+                        r_cap.font.name = FONT_HEAD
 
             # ── Capture Scenario ──
             capture_pool = e["capture_pool"]
