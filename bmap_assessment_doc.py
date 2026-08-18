@@ -311,7 +311,7 @@ def chart_top_bottom_branches(top5, bottom3, path):
     plt.close(fig)
 
 
-def chart_financial_benchmark(fin, path):
+def chart_financial_benchmark(fin, bank_name, path):
     """Grouped bar — actual metric vs benchmark, normalized to comparable scale per metric."""
     metrics = [
         ("ROA", _sf(fin.get("roa")), 1.0),
@@ -324,10 +324,15 @@ def chart_financial_benchmark(fin, path):
     actual = [m[1] for m in metrics]
     bench = [m[2] for m in metrics]
 
+    # Legend label truncated to a short recognizable form (e.g. "Hancock
+    # Whitney" from "Hancock Whitney Bank") so it doesn't overflow the chart
+    # for long institution names.
+    short_name = bank_name.replace(" Bank", "").replace(" Bancorp", "").strip() or bank_name
+
     x = range(len(labels))
     w = 0.32
     fig, ax = plt.subplots(figsize=(7.2, 2.8), dpi=200)
-    ax.bar([i - w/2 for i in x], actual, width=w, color=NAVY_HEX, label="Mid Penn")
+    ax.bar([i - w/2 for i in x], actual, width=w, color=NAVY_HEX, label=short_name)
     ax.bar([i + w/2 for i in x], bench, width=w, color="#C9CED6", label="Benchmark")
     ax.set_xticks(list(x))
     ax.set_xticklabels(labels, fontsize=9.5)
@@ -504,23 +509,12 @@ def chart_branch_map_osm(branches_geo, path):
         ax.scatter(pxs, pys, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.9,
                    edgecolors="white", linewidths=0.6, label=zone, zorder=3)
 
-    # City labels — largest branch per city, top 8 by branch count, same
-    # logic as the fallback map, now positioned via exact projection math
-    # instead of relying on the basemap's own label rendering (which can't
-    # be controlled or guaranteed to show every relevant city at a given zoom).
-    by_city = {}
-    for b in branches_geo:
-        city = b.get("citybr") or b.get("city")
-        if city:
-            by_city.setdefault(city, []).append(b)
-    top_cities = sorted(by_city.items(), key=lambda kv: -len(kv[1]))[:8]
-    for city, pts in top_cities:
-        anchor = max(pts, key=lambda p: _sf(p.get("latest_dep")))
-        px, py = to_px(anchor["lon"], anchor["lat"])
-        ax.annotate(city, (px, py), xytext=(0, 10), textcoords="offset points",
-                    fontsize=7.5, color="#1A1A1A", ha="center", va="top", zorder=4,
-                    bbox=dict(boxstyle="round,pad=0.2", facecolor="white",
-                              edgecolor="none", alpha=0.85))
+    # No custom city-label overlay here — unlike the fallback state-outline
+    # map, this basemap (streets-v12) already renders place names natively
+    # with its own collision-avoidance. A confirmed real render showed our
+    # own labels duplicating and colliding with Mapbox's built-in ones (e.g.
+    # "Bethlehem" drawn twice, a custom "Perkasie" label overlapping the
+    # native "Dublin" label) — strictly worse than leaving it to the basemap.
 
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], marker="o", linestyle="", markersize=7,
@@ -1224,17 +1218,25 @@ Named examples: {named_str}
         lines = []
         for e in dives:
             b = e["branch"]
+            strat = e.get("strategy")
+            top_comp = strat.get("top_competitor") if strat else None
+            comp_str = (f"nearest named competitor {top_comp.get('bank_name')} "
+                        f"{_sf(top_comp.get('distance_miles')):.2f}mi away with "
+                        f"${_sf(top_comp.get('deposits'))/1e6:.0f}M deposits"
+                        if top_comp else "no named competitor within the adaptive radius")
             lines.append(
                 f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
-                f"household income ${_sf(b.get('household_income')):.0f}, "
-                f"income YoY {_sf(b.get('yoy_income_growth'))*100:+.1f}%, "
-                f"population {_sf(b.get('total_population')):.0f}, "
-                f"pop YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
+                f"score {_sf(b.get('opportunity_score')):.0f}/100, zone {b.get('opportunity_zone')}, "
+                f"${_sf(b.get('latest_dep'))/1e6:.0f}M deposits, {fmt_yoy(b, capped_yoy or {})} YoY, "
+                f"{comp_str}, "
+                f"household income ${_sf(b.get('household_income')):.0f} "
+                f"({_sf(b.get('yoy_income_growth'))*100:+.1f}% YoY), "
+                f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
                 f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%, "
-                f"zone {b.get('opportunity_zone')}, play {e['play'] or 'n/a'}"
+                f"assigned play {e['play'] or 'n/a'}"
             )
-        deep_dive_ctx = "\n\nBranches needing a 2-3 sentence audience signal (real Census/ZHVI data, " \
-                        "no fabricated personas -- Verlocity's persona layer is still in development):\n" + \
+        deep_dive_ctx = "\n\nBranches needing a full deep-dive writeup (real data, no fabricated " \
+                        "personas -- Verlocity's persona layer is still in development):\n" + \
                         "\n".join(lines)
 
     system = """You are writing the $10K Verlocity BMAP Assessment for a community bank CEO/Board audience.
@@ -1253,6 +1255,7 @@ Return ONLY valid JSON, no markdown fences:
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
+  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
 
@@ -1285,11 +1288,13 @@ def _placeholder_narratives(dives=None):
     base["priority_focus"] = []
     base["next_12_months"] = []
     base["branch_audiences"] = {}
+    base["branch_verdicts"] = {}
     if dives:
         for e in dives:
             b = e["branch"]
             key = f"{b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')})"
             base["branch_audiences"][key] = ""
+            base["branch_verdicts"][key] = ""
     return base
 
 
@@ -1509,6 +1514,71 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         cell.paragraphs[0].paragraph_format.space_after = Pt(8)
         doc.add_paragraph().paragraph_format.space_after = Pt(6)
 
+    # ── How This Assessment Works ──
+    # Front-loaded, not buried in footnotes — a skeptical reader's first
+    # question is "prove this isn't a black box," and that has to be
+    # answered before the maps/charts, not after.
+    _heading(doc, "How This Assessment Works")
+    _body(doc,
+          "Every classification, radius, and dollar figure in this document follows the same fixed "
+          "rule set, applied identically across all "
+          f"{summary['branch_count']} branches. The rules are stated here in full so any number in "
+          "this Assessment can be traced back and defended on its own.")
+
+    method_items = [
+        ("Data sources", "FDIC Summary of Deposits, FFIEC Call Report, Census ACS demographic and "
+                          "population data, and Zillow Home Value Index — all public, all matched to "
+                          "the same branch-level geography."),
+        ("Opportunity score", "0-100, blending market growth, relative growth vs. peers, inverted "
+                               "competitive density, and deposit size. Shown next to the network "
+                               "average throughout — a score is only meaningful relative to its own "
+                               "network, which is why every citation in this document includes both."),
+        ("Adaptive competitor radius", "Set by branch density and deposit size, not chosen per-branch: "
+                                        "rural or low-deposit branches widen to 10 miles so a thin market "
+                                        "doesn't miss the few real competitors that exist; dense, "
+                                        "high-deposit branches tighten to as little as 0.5 miles, since a "
+                                        "wide radius there would return dozens of irrelevant competitors. "
+                                        "The exact radius and tier used is disclosed under every branch."),
+        ("Named competitor filter", "A named competitor must be sized between 0.1x and 5x the branch's "
+                                     "own deposits to be listed — this excludes giant national-bank hub "
+                                     "branches (which would otherwise dominate every list) as unrealistic "
+                                     "local capture targets."),
+        ("Capture scenarios", "1% / 3% / 7% of the named competitor pool, applied uniformly — an "
+                               "industry-informed planning range, not this bank's own historical "
+                               "conversion data. Replace with actual account-opening history once "
+                               "available for a sharper estimate."),
+        ("Winsorized growth values", "Any branch whose year-over-year growth would otherwise show an "
+                                      "uninformative flat +100% is resolved directly against source "
+                                      "deposit history and shown as its real computed growth rate, or "
+                                      "as \u201CNew branch\u201D where no prior-year figure exists."),
+    ]
+    for title, desc in method_items:
+        p_m = doc.add_paragraph()
+        p_m.paragraph_format.space_after = Pt(6)
+        r_t = p_m.add_run(f"{title} — ")
+        r_t.font.bold = True
+        r_t.font.size = Pt(9.5)
+        r_t.font.name = FONT_HEAD
+        r_t.font.color.rgb = NAVY
+        r_d = p_m.add_run(desc)
+        r_d.font.size = Pt(9.5)
+        r_d.font.name = FONT_HEAD
+        r_d.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    p_disclaimer = doc.add_paragraph()
+    p_disclaimer.paragraph_format.space_before = Pt(10)
+    r_disc = p_disclaimer.add_run(
+        "This Assessment scores branches for growth and competitive-capture potential only. "
+        "Opportunity-zone classifications (Invest / Analyze / Defend / Justify) are not a "
+        "substitute for CRA assessment-area analysis, and a branch's zone should never be the "
+        "sole basis for a decision affecting investment in a federally-designated assessment area. "
+        "Consult compliance counsel before using this Assessment to inform CRA-related decisions."
+    )
+    r_disc.italic = True
+    r_disc.font.size = Pt(8.5)
+    r_disc.font.color.rgb = GRAY3
+    r_disc.font.name = FONT_HEAD
+
     # ── Geographic Distribution (map) ──
     if branches_geo:
         map_path = f"{tmpdir}/_chart_map.png"
@@ -1574,7 +1644,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
         # Scenario-based $ opportunity — low/medium/aggressive annual capture rate
         # against the contestable deposit pool per tier. Industry-informed planning
-        # assumption, not Mid Penn-specific history -- flagged as such in-doc.
+        # assumption, not the specific bank's own history -- flagged as such in-doc.
         p_lbl2 = doc.add_paragraph()
         p_lbl2.paragraph_format.space_before = Pt(6)
         r2 = p_lbl2.add_run("Projected Annual Capture by Scenario")
@@ -1601,7 +1671,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         p_note = doc.add_paragraph()
         p_note.paragraph_format.space_before = Pt(4)
         note_run = p_note.add_run(
-            "Industry-informed planning assumption, not Mid Penn-specific history. Retail deposit "
+            f"Industry-informed planning assumption, not {bank_name}-specific history. Retail deposit "
             "switching is behaviorally sticky; 7-8% annual capture of a local contestable pool is close "
             "to a realistic ceiling absent a genuine market disruption. Replace with the bank's own "
             "historical account-opening and deposit-capture data once available, per the same "
@@ -1644,6 +1714,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [])
 
     branch_audiences = narr.get("branch_audiences") or {}
+    branch_verdicts = narr.get("branch_verdicts") or {}
 
     if dives:
         section_title = ("Branch-by-Branch Assessment" if deep_mode
@@ -1687,6 +1758,30 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             ov_val[2].text = str(b.get("priority_tier") or "—")
             ov_val[3].text = f"{_sf(b.get('opportunity_score')):.0f}/100"
             doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+            # ── Branch Verdict — the synthesized "why," stated before the
+            # supporting detail tables rather than left for the reader to
+            # assemble from five separate sections. ──
+            verdict = branch_verdicts.get(branch_label)
+            if not verdict:
+                top_comp = strat.get("top_competitor") if strat else None
+                if top_comp:
+                    comp_clause = (f"{top_comp.get('bank_name')} sits "
+                                    f"{_sf(top_comp.get('distance_miles')):.2f}mi away with "
+                                    f"${_sf(top_comp.get('deposits'))/1e6:.0f}M in deposits")
+                else:
+                    comp_clause = "no named competitor sits within the adaptive radius"
+                verdict = (f"{b.get('namebr')} scores {_sf(b.get('opportunity_score')):.0f}/100 in the "
+                           f"{zone} zone, with ${_sf(b.get('latest_dep'))/1e6:.0f}M in deposits at "
+                           f"{fmt_yoy(b, capped_yoy)} YoY. "
+                           f"{comp_clause[0].upper() + comp_clause[1:]}. "
+                           f"Assigned play: {play or 'under review'}.")
+            p_verdict = doc.add_paragraph()
+            p_verdict.paragraph_format.space_after = Pt(8)
+            r_verdict = p_verdict.add_run(verdict)
+            r_verdict.font.size = Pt(10)
+            r_verdict.font.name = FONT_HEAD
+            r_verdict.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
             # ── Deposits & Radius ──
             _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
@@ -1835,13 +1930,13 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     _body(doc, narr.get("financial_narrative") or "")
 
     fin_chart_path = f"{tmpdir}/_chart_financial.png"
-    chart_financial_benchmark(fin, fin_chart_path)
+    chart_financial_benchmark(fin, bank_name, fin_chart_path)
     doc.add_picture(fin_chart_path, width=Inches(6.3))
 
     ft = doc.add_table(rows=1, cols=3)
     ft.style = "Light Grid Accent 1"
     hdr = ft.rows[0].cells
-    for i, h in enumerate(["Metric", "Value", "Benchmark"]):
+    for i, h in enumerate(["Metric", "Value", "Industry Benchmark"]):
         hdr[i].text = h
     metrics = [
         ("ROA", f"{_sf(fin.get('roa')):.2f}%", ">1.0%"),
@@ -1857,6 +1952,18 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         row[0].text = label
         row[1].text = val
         row[2].text = bench
+
+    p_finnote = doc.add_paragraph()
+    p_finnote.paragraph_format.space_before = Pt(4)
+    r_finnote = p_finnote.add_run(
+        "Benchmarks are standard community-bank industry thresholds, not this institution's "
+        "specific peer group — provided as a general reference point for reading the metrics above, "
+        "not a formal peer comparison."
+    )
+    r_finnote.italic = True
+    r_finnote.font.size = Pt(8.5)
+    r_finnote.font.color.rgb = GRAY3
+    r_finnote.font.name = FONT_HEAD
 
     # ── Next Step Recommendation ──
     _heading(doc, "Recommendation")
