@@ -21,6 +21,7 @@ alone is not the $10K product; the session is. See closing section.
 import os
 import sys
 import math
+import concurrent.futures
 import argparse
 import requests
 from datetime import datetime
@@ -2408,8 +2409,18 @@ def run(ik, name_hint=None):
     dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                            d.get("capped_yoy"))
-    persona_brief = get_persona_signal_brief(bank_name, dives)
-    market_offer_brief = get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
+    persona_brief, market_offer_brief = None, None
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        fut_persona = pool.submit(get_persona_signal_brief, bank_name, dives)
+        fut_market = pool.submit(get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
+        try:
+            persona_brief = fut_persona.result(timeout=90)
+        except Exception as ex:
+            print(f"  ⚠ persona brief failed/timed out: {ex}")
+        try:
+            market_offer_brief = fut_market.result(timeout=90)
+        except Exception as ex:
+            print(f"  ⚠ market offer brief failed/timed out: {ex}")
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
