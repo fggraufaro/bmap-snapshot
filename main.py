@@ -26,6 +26,7 @@ import io
 import json
 import os
 import threading
+import concurrent.futures
 import zipfile
 from datetime import datetime
 
@@ -112,8 +113,18 @@ def generate_assessment():
         dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                                    d.get("capped_yoy"))
-        persona_brief = bad.get_persona_signal_brief(bank_name, dives)
-        market_offer_brief = bad.get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
+        persona_brief, market_offer_brief = None, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            fut_persona = pool.submit(bad.get_persona_signal_brief, bank_name, dives)
+            fut_market = pool.submit(bad.get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
+            try:
+                persona_brief = fut_persona.result(timeout=90)
+            except Exception as ex:
+                print(f"[generate-assessment] persona brief failed/timed out: {ex}")
+            try:
+                market_offer_brief = fut_market.result(timeout=90)
+            except Exception as ex:
+                print(f"[generate-assessment] market offer brief failed/timed out: {ex}")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
@@ -202,11 +213,24 @@ def _run_assessment_job(job_id, ik, name_hint):
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"],
                                    d.get("branch_strategy"), dives, d.get("capped_yoy"))
 
-        _job_write(job_id, stage="Researching persona & demographic signal (live web search)...")
-        persona_brief = bad.get_persona_signal_brief(bank_name, dives)
-
-        _job_write(job_id, stage="Researching market offer & competitive signal (live web search)...")
-        market_offer_brief = bad.get_market_offer_brief(bank_name, dives, d.get("branch_strategy"))
+        _job_write(job_id, stage="Researching persona, demographic & market signal (live web search)...")
+        # Run concurrently, not sequentially -- these are independent calls
+        # (different prompts, no shared state) and each can take 20-60+
+        # seconds with multiple search rounds. Sequential execution was the
+        # likely cause of jobs still running when a polling client expected
+        # them done -- this alone can save 20-60+ seconds of real wall time.
+        persona_brief, market_offer_brief = None, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            fut_persona = pool.submit(bad.get_persona_signal_brief, bank_name, dives)
+            fut_market = pool.submit(bad.get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
+            try:
+                persona_brief = fut_persona.result(timeout=90)
+            except Exception as ex:
+                print(f"[assessment-job] persona brief failed/timed out: {ex}")
+            try:
+                market_offer_brief = fut_market.result(timeout=90)
+            except Exception as ex:
+                print(f"[assessment-job] market offer brief failed/timed out: {ex}")
 
         _job_write(job_id, stage="Building document (charts, branch deep dives)...")
         import tempfile
