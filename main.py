@@ -120,11 +120,11 @@ def generate_assessment():
             try:
                 persona_brief = fut_persona.result(timeout=90)
             except Exception as ex:
-                print(f"[generate-assessment] persona brief failed/timed out: {ex}")
+                print(f"[generate-assessment] persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
             try:
                 market_offer_brief = fut_market.result(timeout=90)
             except Exception as ex:
-                print(f"[generate-assessment] market offer brief failed/timed out: {ex}")
+                print(f"[generate-assessment] market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
@@ -226,11 +226,11 @@ def _run_assessment_job(job_id, ik, name_hint):
             try:
                 persona_brief = fut_persona.result(timeout=90)
             except Exception as ex:
-                print(f"[assessment-job] persona brief failed/timed out: {ex}")
+                print(f"[assessment-job] persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
             try:
                 market_offer_brief = fut_market.result(timeout=90)
             except Exception as ex:
-                print(f"[assessment-job] market offer brief failed/timed out: {ex}")
+                print(f"[assessment-job] market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
 
         _job_write(job_id, stage="Building document (charts, branch deep dives)...")
         import tempfile
