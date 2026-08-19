@@ -1524,6 +1524,200 @@ def _render_signal_brief(doc, title, raw_text):
             _body(doc, text, size=9.5)
 
 
+def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts, branch_plays,
+                             branch_audiences, geo_by_uid, tmpdir, heading_space_before=4):
+    """Renders one branch's full deep-dive section: verdict, deposits/radius
+    methodology, named competitors + competitor map, capture scenario,
+    audience signal, assigned play. Extracted from the main per-branch loop
+    so the full $10K Assessment (looping over every priority branch) and the
+    standalone single-branch Preview doc (shown live in pitch meetings) use
+    the exact same rendering code — the preview is never a lower-fidelity
+    mockup of what the real Assessment actually produces."""
+    branch_label = f"{b.get('namebr','—')} ({b.get('citybr','—')}, {b.get('stalpbr','—')})"
+    q_full = b.get("matrix_quadrant") or "—"
+
+    zone = b.get("opportunity_zone", "Analyze")
+    zone_rgb = rgb(ZONE_COLOR.get(zone, "185FA5"))
+    _heading(doc, branch_label, size=15, color=zone_rgb, space_before=heading_space_before)
+
+    # ── Overview stat block ──
+    ov = doc.add_table(rows=2, cols=4)
+    ov.style = "Light Grid Accent 1"
+    ov_hdr = ov.rows[0].cells
+    for j, h in enumerate(["Zone", "Quadrant", "Priority Tier", "Opportunity Score"]):
+        ov_hdr[j].text = h
+    ov_val = ov.rows[1].cells
+    ov_val[0].text = zone
+    ov_val[1].text = q_full
+    ov_val[2].text = str(b.get("priority_tier") or "—")
+    ov_val[3].text = f"{_sf(b.get('opportunity_score')):.0f}/100"
+    doc.add_paragraph().paragraph_format.space_after = Pt(4)
+
+    # ── Branch Verdict — the synthesized "why," stated before the
+    # supporting detail tables rather than left for the reader to
+    # assemble from five separate sections. ──
+    verdict = branch_verdicts.get(branch_label)
+    if not verdict:
+        top_comp = strat.get("top_competitor") if strat else None
+        if top_comp:
+            comp_clause = (f"{top_comp.get('bank_name')} sits "
+                            f"{_sf(top_comp.get('distance_miles')):.2f}mi away with "
+                            f"${_sf(top_comp.get('deposits'))/1e6:.0f}M in deposits")
+        else:
+            comp_clause = "no named competitor sits within the adaptive radius"
+        verdict = (f"{b.get('namebr')} scores {_sf(b.get('opportunity_score')):.0f}/100 in the "
+                   f"{zone} zone, with ${_sf(b.get('latest_dep'))/1e6:.0f}M in deposits at "
+                   f"{fmt_yoy(b, capped_yoy)} YoY. "
+                   f"{comp_clause[0].upper() + comp_clause[1:]}. "
+                   f"Assigned play: {play or 'under review'}.")
+    p_verdict = doc.add_paragraph()
+    p_verdict.paragraph_format.space_after = Pt(8)
+    r_verdict = p_verdict.add_run(verdict)
+    r_verdict.font.size = Pt(10)
+    r_verdict.font.name = FONT_HEAD
+    r_verdict.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # ── Deposits & Radius ──
+    _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
+    dep = _sf(b.get("latest_dep"))
+    radius_mi = strat.get("radius_mi") if strat else None
+    tier_label = strat.get("tier") if strat else None
+    dr = doc.add_table(rows=2, cols=4)
+    dr.style = "Light Grid Accent 1"
+    dr_hdr = dr.rows[0].cells
+    for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used"]):
+        dr_hdr[j].text = h
+    dr_val = dr.rows[1].cells
+    dr_val[0].text = f"${dep/1e6:.1f}M"
+    dr_val[1].text = fmt_yoy(b, capped_yoy)
+    dr_val[2].text = tier_label or "—"
+    dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
+    p_method = doc.add_paragraph()
+    p_method.paragraph_format.space_before = Pt(4)
+    method_run = p_method.add_run(
+        "Radius scales to local density and deposit size — as tight as 0.5mi for "
+        "dense, high-value markets, up to 10mi for rural or low-deposit branches — "
+        "rather than one fixed distance for the whole network."
+    )
+    method_run.italic = True
+    method_run.font.size = Pt(8.5)
+    method_run.font.color.rgb = GRAY3
+    method_run.font.name = FONT_HEAD
+
+    # ── Competitors (top 3, size-filtered) ──
+    _heading(doc, "Named Competitors", size=11, space_before=10, space_after=4)
+    top3 = (strat.get("top3_competitors") if strat else []) or []
+    all_comp = (strat.get("all_competitors") if strat else []) or []
+    if top3:
+        cot = doc.add_table(rows=1, cols=4)
+        cot.style = "Light Grid Accent 1"
+        cot_hdr = cot.rows[0].cells
+        for j, h in enumerate(["Competitor", "City / State", "Distance", "Deposits"]):
+            cot_hdr[j].text = h
+        for c in top3:
+            row = cot.add_row().cells
+            row[0].text = str(c.get("bank_name", "—"))
+            row[1].text = f"{c.get('city','—')}, {c.get('state','—')}"
+            row[2].text = f"{_sf(c.get('distance_miles')):.2f}mi"
+            row[3].text = f"${_sf(c.get('deposits'))/1e6:.1f}M"
+    else:
+        _body(doc, "No competitor within the adaptive radius meets the 0.1x-5x size filter — "
+                   "this branch has natural geographic protection rather than a capture target.",
+              size=9.5)
+
+    if all_comp:
+        own = geo_by_uid.get(b.get("uninumbr"))
+        if own and own.get("lat") is not None and own.get("lon") is not None:
+            radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
+            ok = chart_branch_radius_map(
+                own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
+            )
+            if ok:
+                p_img = doc.add_paragraph()
+                p_img.paragraph_format.space_before = Pt(4)
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img.add_run().add_picture(radius_img, width=Inches(2.4))
+                p_cap = doc.add_paragraph()
+                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                r_cap = p_cap.add_run(
+                    f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
+                    f"{radius_mi or 3.0:.1f}mi shown; table above highlights the top 3 by deposits."
+                )
+                r_cap.italic = True
+                r_cap.font.size = Pt(7.5)
+                r_cap.font.color.rgb = GRAY3
+                r_cap.font.name = FONT_HEAD
+
+    # ── Capture Scenario ──
+    capture_pool = e["capture_pool"]
+    if capture_pool:
+        _heading(doc, "Projected Annual Capture", size=11, space_before=10, space_after=4)
+        cst = doc.add_table(rows=2, cols=3)
+        cst.style = "Light Grid Accent 1"
+        cst_hdr = cst.rows[0].cells
+        for j, h in enumerate(["Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
+            cst_hdr[j].text = h
+        cst_val = cst.rows[1].cells
+        cst_val[0].text = f"${capture_pool*0.01/1e6:.2f}M"
+        cst_val[1].text = f"${capture_pool*0.03/1e6:.2f}M"
+        cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
+
+    # ── Audience Signal (real Census/ZHVI, no fabricated personas) ──
+    audience_text = branch_audiences.get(branch_label, "")
+    if audience_text or b.get("household_income"):
+        _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
+        if audience_text:
+            _body(doc, audience_text, size=9.5)
+        else:
+            inc = _sf(b.get("household_income"))
+            inc_yoy = _sf(b.get("yoy_income_growth")) * 100
+            pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
+            zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
+            _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY). Population growth "
+                       f"{pop_yoy:+.1f}% YoY. Home values {zhvi_yoy:+.1f}% YoY.", size=9.5)
+
+    # ── Play ──
+    if play:
+        _heading(doc, "Assigned Play", size=11, color=NAVY, space_before=10, space_after=4)
+        play_box = doc.add_table(rows=1, cols=1)
+        cell = play_box.rows[0].cells[0]
+        _set_cell_shading(cell, "083D5F")
+        cell.paragraphs[0].text = ""
+        pr = cell.paragraphs[0].add_run(play.upper())
+        pr.font.size = Pt(13)
+        pr.font.bold = True
+        pr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        pr.font.name = FONT_HEAD
+        cell.paragraphs[0].paragraph_format.space_before = Pt(8)
+        cell.paragraphs[0].paragraph_format.space_after = Pt(8)
+
+        branch_play_data = branch_plays.get(branch_label) or {}
+        posture = branch_play_data.get("resource_posture") or PLAY_ACQUISITION_POSTURE.get(play, "")
+        brief = branch_play_data.get("media_brief") or PLAY_MEDIA_BRIEF.get(play, "")
+        if posture:
+            p1 = doc.add_paragraph()
+            p1.paragraph_format.space_before = Pt(6)
+            lbl1 = p1.add_run("Resource posture: ")
+            lbl1.bold = True
+            lbl1.font.size = Pt(9.5)
+            lbl1.font.color.rgb = NAVY
+            lbl1.font.name = FONT_HEAD
+            r1 = p1.add_run(posture)
+            r1.font.size = Pt(9.5)
+            r1.font.name = FONT_HEAD
+        if brief:
+            p2 = doc.add_paragraph()
+            p2.paragraph_format.space_after = Pt(4)
+            lbl2 = p2.add_run("Media brief: ")
+            lbl2.bold = True
+            lbl2.font.size = Pt(9.5)
+            lbl2.font.color.rgb = NAVY
+            lbl2.font.name = FONT_HEAD
+            r2 = p2.add_run(brief)
+            r2.font.size = Pt(9.5)
+            r2.font.name = FONT_HEAD
+
+
 def _heading(doc, text, size=16, color=NAVY, space_before=18, space_after=6):
     p = doc.add_paragraph()
     p.paragraph_format.space_before = Pt(space_before)
@@ -1966,192 +2160,9 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             b = e["branch"]
             strat = e["strategy"]
             play = e["play"]
-            branch_label = f"{b.get('namebr','—')} ({b.get('citybr','—')}, {b.get('stalpbr','—')})"
-            q_full = b.get("matrix_quadrant") or "—"
-            q_short = q_full.split(" - ")[0]
-
-            # Branch name as its own heading, colored by zone for quick scanning
-            zone = b.get("opportunity_zone", "Analyze")
-            zone_rgb = rgb(ZONE_COLOR.get(zone, "185FA5"))
-            _heading(doc, branch_label, size=15, color=zone_rgb, space_before=(0 if i == 0 else 4))
-
-            # ── Overview stat block ──
-            ov = doc.add_table(rows=2, cols=4)
-            ov.style = "Light Grid Accent 1"
-            ov_hdr = ov.rows[0].cells
-            for j, h in enumerate(["Zone", "Quadrant", "Priority Tier", "Opportunity Score"]):
-                ov_hdr[j].text = h
-            ov_val = ov.rows[1].cells
-            ov_val[0].text = zone
-            ov_val[1].text = q_full
-            ov_val[2].text = str(b.get("priority_tier") or "—")
-            ov_val[3].text = f"{_sf(b.get('opportunity_score')):.0f}/100"
-            doc.add_paragraph().paragraph_format.space_after = Pt(4)
-
-            # ── Branch Verdict — the synthesized "why," stated before the
-            # supporting detail tables rather than left for the reader to
-            # assemble from five separate sections. ──
-            verdict = branch_verdicts.get(branch_label)
-            if not verdict:
-                top_comp = strat.get("top_competitor") if strat else None
-                if top_comp:
-                    comp_clause = (f"{top_comp.get('bank_name')} sits "
-                                    f"{_sf(top_comp.get('distance_miles')):.2f}mi away with "
-                                    f"${_sf(top_comp.get('deposits'))/1e6:.0f}M in deposits")
-                else:
-                    comp_clause = "no named competitor sits within the adaptive radius"
-                verdict = (f"{b.get('namebr')} scores {_sf(b.get('opportunity_score')):.0f}/100 in the "
-                           f"{zone} zone, with ${_sf(b.get('latest_dep'))/1e6:.0f}M in deposits at "
-                           f"{fmt_yoy(b, capped_yoy)} YoY. "
-                           f"{comp_clause[0].upper() + comp_clause[1:]}. "
-                           f"Assigned play: {play or 'under review'}.")
-            p_verdict = doc.add_paragraph()
-            p_verdict.paragraph_format.space_after = Pt(8)
-            r_verdict = p_verdict.add_run(verdict)
-            r_verdict.font.size = Pt(10)
-            r_verdict.font.name = FONT_HEAD
-            r_verdict.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
-            # ── Deposits & Radius ──
-            _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
-            dep = _sf(b.get("latest_dep"))
-            radius_mi = strat.get("radius_mi") if strat else None
-            tier_label = strat.get("tier") if strat else None
-            dr = doc.add_table(rows=2, cols=4)
-            dr.style = "Light Grid Accent 1"
-            dr_hdr = dr.rows[0].cells
-            for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used"]):
-                dr_hdr[j].text = h
-            dr_val = dr.rows[1].cells
-            dr_val[0].text = f"${dep/1e6:.1f}M"
-            dr_val[1].text = fmt_yoy(b, capped_yoy)
-            dr_val[2].text = tier_label or "—"
-            dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
-            p_method = doc.add_paragraph()
-            p_method.paragraph_format.space_before = Pt(4)
-            method_run = p_method.add_run(
-                "Radius scales to local density and deposit size — as tight as 0.5mi for "
-                "dense, high-value markets, up to 10mi for rural or low-deposit branches — "
-                "rather than one fixed distance for the whole network."
-            )
-            method_run.italic = True
-            method_run.font.size = Pt(8.5)
-            method_run.font.color.rgb = GRAY3
-            method_run.font.name = FONT_HEAD
-
-            # ── Competitors (top 3, size-filtered) ──
-            _heading(doc, "Named Competitors", size=11, space_before=10, space_after=4)
-            top3 = (strat.get("top3_competitors") if strat else []) or []
-            all_comp = (strat.get("all_competitors") if strat else []) or []
-            if top3:
-                cot = doc.add_table(rows=1, cols=4)
-                cot.style = "Light Grid Accent 1"
-                cot_hdr = cot.rows[0].cells
-                for j, h in enumerate(["Competitor", "City / State", "Distance", "Deposits"]):
-                    cot_hdr[j].text = h
-                for c in top3:
-                    row = cot.add_row().cells
-                    row[0].text = str(c.get("bank_name", "—"))
-                    row[1].text = f"{c.get('city','—')}, {c.get('state','—')}"
-                    row[2].text = f"{_sf(c.get('distance_miles')):.2f}mi"
-                    row[3].text = f"${_sf(c.get('deposits'))/1e6:.1f}M"
-            else:
-                _body(doc, "No competitor within the adaptive radius meets the 0.1x-5x size filter — "
-                           "this branch has natural geographic protection rather than a capture target.",
-                      size=9.5)
-
-            if all_comp:
-                own = geo_by_uid.get(b.get("uninumbr"))
-                if own and own.get("lat") is not None and own.get("lon") is not None:
-                    radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
-                    ok = chart_branch_radius_map(
-                        own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
-                    )
-                    if ok:
-                        p_img = doc.add_paragraph()
-                        p_img.paragraph_format.space_before = Pt(4)
-                        p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        p_img.add_run().add_picture(radius_img, width=Inches(2.4))
-                        p_cap = doc.add_paragraph()
-                        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                        r_cap = p_cap.add_run(
-                            f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
-                            f"{radius_mi or 3.0:.1f}mi shown; table above highlights the top 3 by deposits."
-                        )
-                        r_cap.italic = True
-                        r_cap.font.size = Pt(7.5)
-                        r_cap.font.color.rgb = GRAY3
-                        r_cap.font.name = FONT_HEAD
-
-            # ── Capture Scenario ──
-            capture_pool = e["capture_pool"]
-            if capture_pool:
-                _heading(doc, "Projected Annual Capture", size=11, space_before=10, space_after=4)
-                cst = doc.add_table(rows=2, cols=3)
-                cst.style = "Light Grid Accent 1"
-                cst_hdr = cst.rows[0].cells
-                for j, h in enumerate(["Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
-                    cst_hdr[j].text = h
-                cst_val = cst.rows[1].cells
-                cst_val[0].text = f"${capture_pool*0.01/1e6:.2f}M"
-                cst_val[1].text = f"${capture_pool*0.03/1e6:.2f}M"
-                cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
-
-            # ── Audience Signal (real Census/ZHVI, no fabricated personas) ──
-            audience_text = branch_audiences.get(branch_label, "")
-            if audience_text or b.get("household_income"):
-                _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
-                if audience_text:
-                    _body(doc, audience_text, size=9.5)
-                else:
-                    inc = _sf(b.get("household_income"))
-                    inc_yoy = _sf(b.get("yoy_income_growth")) * 100
-                    pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
-                    zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
-                    _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY). Population growth "
-                               f"{pop_yoy:+.1f}% YoY. Home values {zhvi_yoy:+.1f}% YoY.", size=9.5)
-
-            # ── Play ──
-            if play:
-                _heading(doc, "Assigned Play", size=11, color=NAVY, space_before=10, space_after=4)
-                play_box = doc.add_table(rows=1, cols=1)
-                cell = play_box.rows[0].cells[0]
-                _set_cell_shading(cell, "083D5F")
-                cell.paragraphs[0].text = ""
-                pr = cell.paragraphs[0].add_run(play.upper())
-                pr.font.size = Pt(13)
-                pr.font.bold = True
-                pr.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-                pr.font.name = FONT_HEAD
-                cell.paragraphs[0].paragraph_format.space_before = Pt(8)
-                cell.paragraphs[0].paragraph_format.space_after = Pt(8)
-
-                branch_play_data = branch_plays.get(branch_label) or {}
-                posture = branch_play_data.get("resource_posture") or PLAY_ACQUISITION_POSTURE.get(play, "")
-                brief = branch_play_data.get("media_brief") or PLAY_MEDIA_BRIEF.get(play, "")
-                if posture:
-                    p1 = doc.add_paragraph()
-                    p1.paragraph_format.space_before = Pt(6)
-                    lbl1 = p1.add_run("Resource posture: ")
-                    lbl1.bold = True
-                    lbl1.font.size = Pt(9.5)
-                    lbl1.font.color.rgb = NAVY
-                    lbl1.font.name = FONT_HEAD
-                    r1 = p1.add_run(posture)
-                    r1.font.size = Pt(9.5)
-                    r1.font.name = FONT_HEAD
-                if brief:
-                    p2 = doc.add_paragraph()
-                    p2.paragraph_format.space_after = Pt(4)
-                    lbl2 = p2.add_run("Media brief: ")
-                    lbl2.bold = True
-                    lbl2.font.size = Pt(9.5)
-                    lbl2.font.color.rgb = NAVY
-                    lbl2.font.name = FONT_HEAD
-                    r2 = p2.add_run(brief)
-                    r2.font.size = Pt(9.5)
-                    r2.font.name = FONT_HEAD
-
+            render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
+                                     branch_plays, branch_audiences, geo_by_uid, tmpdir,
+                                     heading_space_before=(0 if i == 0 else 4))
             if i < len(dives) - 1:
                 doc.add_page_break()
 
