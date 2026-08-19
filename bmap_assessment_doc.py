@@ -898,6 +898,45 @@ PLAY_MEDIA_BRIEF = {
     "Rationalize": "No brief generated. Board-level attention for branches with $100M+ in deposits.",
 }
 
+# Plays whose static text above explicitly references a named competitor or
+# "switchers" -- factually contradictory when the branch's own competitor
+# data (shown one section earlier in the same document) says no competitor
+# meets the adaptive-radius/size filter. Personalized AI text already gets
+# told whether a competitor exists (see deep_dive_ctx in get_narratives) and
+# should self-correct on its own; these overrides are the deterministic
+# fallback's equivalent fix, for when AI personalization isn't available.
+PLAY_NO_COMPETITOR_OVERRIDE = {
+    "Market Domination": {
+        "resource_posture": "High acquisition budget — no named competitor within the adaptive "
+                             "radius, so this is uncontested organic-growth capture, not a "
+                             "defensive posture against a specific rival.",
+        "media_brief": "Target: in-market consumers and new-to-market movers. Goal: capture "
+                        "organic demand growth ahead of any competitor establishing a local presence.",
+    },
+    "Urgent Competitive Push": {
+        "resource_posture": "Defensive acquisition budget warranted by this branch's own "
+                             "trajectory — though no single named competitor drives it; the "
+                             "pressure reads as diffuse market erosion, not one identifiable rival.",
+        "media_brief": "Target: broad in-market consumers rather than a specific competitor's "
+                        "customers (none met the radius/size filter). Message: retention and "
+                        "value proposition against passive attrition, not head-to-head switching.",
+    },
+    "Competitive Defense": {
+        "resource_posture": "Retention-first budget — no named competitor within the adaptive "
+                             "radius, so outflow risk is more likely digital/rate-driven than a "
+                             "local branch threat.",
+        "media_brief": "Priority: retention against digital/rate competition rather than a "
+                        "local branch rival. Secondary: selective acquisition for high-value segments.",
+    },
+    "Targeted Defense": {
+        "resource_posture": "Retention-focused budget — no named local competitor within the "
+                             "adaptive radius; balance risk reads as macro/rate-driven rather "
+                             "than branch-specific.",
+        "media_brief": "Retention posture against broad market/rate pressure rather than a "
+                        "specific nearby rival. Existing customer focus. Minimize churn.",
+    },
+}
+
 
 def get_play(zone, matrix_quadrant):
     """Parse 'Q1 - Grow and Perform' -> 'Q1', look up (zone, quadrant) in
@@ -1002,7 +1041,17 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
     return results
 
 
-DEEP_DIVE_THRESHOLD = 20  # <20 branches -> assess every branch. >=20 -> curate top opportunities.
+DEEP_DIVE_THRESHOLD = 25  # <25 branches -> assess every branch. >=25 -> curate top opportunities.
+# Was 20 -- raised after a real case: a 22-branch network (Penn Community
+# Bank) missed full-network coverage by an arbitrary 2-branch margin and got
+# only its top 15 of 22 branches deep-dived, with the other 7 reduced to a
+# bare appendix row in a document sold as a full-network assessment. 25
+# gives realistic mid-size community bank networks (an interviewed edge
+# case, not a hypothetical) headroom without pushing large networks
+# (100+ branches, e.g. Hancock Whitney's 181) into "every branch full"
+# mode, which would mean that many real-time Mapbox competitor-map calls
+# per generation -- a real latency/cost/timeout risk already documented
+# elsewhere in this file (see fetch_branch_competitive_strategy).
 
 
 def build_branch_deep_dives(branches, branch_strategy):
@@ -1255,7 +1304,7 @@ Return ONLY valid JSON, no markdown fences:
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
-  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get.", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template."}},
+  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead.", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above."}},
   "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
@@ -1524,6 +1573,45 @@ def _render_signal_brief(doc, title, raw_text):
             _body(doc, text, size=9.5)
 
 
+def _lookup_branch_narrative(narr_dict, b, default=None):
+    """Looks up a branch's AI-generated narrative content by name+city+state,
+    tolerant of minor formatting differences in how the AI reproduced the
+    key -- an exact-string match silently fails (falling back to generic
+    static text with no error anywhere) if the AI adds a stray space,
+    changes punctuation, or reorders anything. This tries progressively
+    looser matches before giving up."""
+    if not narr_dict:
+        return default
+    namebr = (b.get("namebr") or "").strip()
+    citybr = (b.get("citybr") or "").strip()
+    stalpbr = (b.get("stalpbr") or "").strip()
+    exact_key = f"{namebr} ({citybr}, {stalpbr})"
+
+    # 1. Exact match — the common case when the AI reproduces the key faithfully.
+    if exact_key in narr_dict:
+        return narr_dict[exact_key]
+
+    # 2. Case-insensitive, whitespace-normalized exact match.
+    norm = lambda s: " ".join(s.lower().split())
+    exact_norm = norm(exact_key)
+    for k, v in narr_dict.items():
+        if norm(k) == exact_norm:
+            return v
+
+    # 3. Branch name appears in the key (handles city/state formatting
+    # drift -- e.g. the AI dropping the state abbreviation or using a
+    # different separator) as long as the match is unambiguous.
+    if namebr:
+        candidates = [v for k, v in narr_dict.items() if norm(namebr) in norm(k)]
+        if len(candidates) == 1:
+            return candidates[0]
+
+    print(f"  ⚠ No narrative match for '{exact_key}' among {len(narr_dict)} AI-generated "
+          f"key(s) — falling back to static/default. Sample AI key: "
+          f"{next(iter(narr_dict), 'n/a')!r}")
+    return default
+
+
 def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts, branch_plays,
                              branch_audiences, geo_by_uid, tmpdir, heading_space_before=4):
     """Renders one branch's full deep-dive section: verdict, deposits/radius
@@ -1556,7 +1644,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     # ── Branch Verdict — the synthesized "why," stated before the
     # supporting detail tables rather than left for the reader to
     # assemble from five separate sections. ──
-    verdict = branch_verdicts.get(branch_label)
+    verdict = _lookup_branch_narrative(branch_verdicts, b)
     if not verdict:
         top_comp = strat.get("top_competitor") if strat else None
         if top_comp:
@@ -1663,7 +1751,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
 
     # ── Audience Signal (real Census/ZHVI, no fabricated personas) ──
-    audience_text = branch_audiences.get(branch_label, "")
+    audience_text = _lookup_branch_narrative(branch_audiences, b, default="")
     if audience_text or b.get("household_income"):
         _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
         if audience_text:
@@ -1673,8 +1761,29 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             inc_yoy = _sf(b.get("yoy_income_growth")) * 100
             pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
             zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
-            _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY). Population growth "
-                       f"{pop_yoy:+.1f}% YoY. Home values {zhvi_yoy:+.1f}% YoY.", size=9.5)
+
+            # Deterministic interpretation, not just a stat dump — mirrors
+            # the framing the AI path is instructed to use, so the fallback
+            # (used when AI narrative generation is unavailable) still reads
+            # as analysis rather than raw numbers with no "so what."
+            if inc_yoy > 3 and pop_yoy > 1:
+                segment_read = ("supports an expansion-oriented read — High-Quality Local "
+                                 "Prospect targeting fits a market growing in both income and population")
+            elif inc_yoy < 0 or pop_yoy < -1:
+                segment_read = ("favors a retention-oriented read over new-household acquisition — "
+                                 "Warm Retargeting of the existing base outperforms broad prospecting here")
+            else:
+                segment_read = "reads as stable — steady-state prospecting, no urgency in either direction"
+
+            wealth_note = ""
+            if zhvi_yoy > 5:
+                wealth_note = " Rising home values add a supporting tailwind for CD/HYSA acquisition."
+            elif zhvi_yoy < -2:
+                wealth_note = " Softening home values warrant caution on aggressive acquisition spend."
+
+            _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY), population "
+                       f"{pop_yoy:+.1f}% YoY, home values {zhvi_yoy:+.1f}% YoY — this profile "
+                       f"{segment_read}.{wealth_note}", size=9.5)
 
     # ── Play ──
     if play:
@@ -1691,9 +1800,15 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         cell.paragraphs[0].paragraph_format.space_before = Pt(8)
         cell.paragraphs[0].paragraph_format.space_after = Pt(8)
 
-        branch_play_data = branch_plays.get(branch_label) or {}
-        posture = branch_play_data.get("resource_posture") or PLAY_ACQUISITION_POSTURE.get(play, "")
-        brief = branch_play_data.get("media_brief") or PLAY_MEDIA_BRIEF.get(play, "")
+        branch_play_data = _lookup_branch_narrative(branch_plays, b, default={}) or {}
+        has_competitor = bool(top3)
+        no_comp_override = PLAY_NO_COMPETITOR_OVERRIDE.get(play) if not has_competitor else None
+        posture = (branch_play_data.get("resource_posture")
+                   or (no_comp_override or {}).get("resource_posture")
+                   or PLAY_ACQUISITION_POSTURE.get(play, ""))
+        brief = (branch_play_data.get("media_brief")
+                 or (no_comp_override or {}).get("media_brief")
+                 or PLAY_MEDIA_BRIEF.get(play, ""))
         if posture:
             p1 = doc.add_paragraph()
             p1.paragraph_format.space_before = Pt(6)
