@@ -1318,7 +1318,7 @@ Return ONLY valid JSON, no markdown fences:
     try:
         msg = client.messages.create(
             model="claude-sonnet-4-6",
-            max_tokens=8000,
+            max_tokens=16000,
             thinking={"type": "disabled"},
             system=system,
             messages=[{"role": "user", "content": ctx}],
@@ -1327,8 +1327,18 @@ Return ONLY valid JSON, no markdown fences:
         narr = json.loads(raw)
         print("  ✓ Narratives generated")
         return narr
+    except json.JSONDecodeError as e:
+        # Diagnostic on purpose: this exact error class is the truncated-JSON
+        # failure mode that's bitten this function twice now (once at
+        # max_tokens=4000, again at 8000 after DEEP_DIVE_THRESHOLD widened
+        # full-network narrative coverage to 25 branches). Logging raw
+        # response length + stop_reason means the NEXT time this happens,
+        # it's a one-line diagnosis instead of a guessing exercise.
+        print(f"  ⚠ Narrative JSON parse failed ({e}) — response {len(msg.content[0].text)} chars, "
+              f"stop_reason={msg.stop_reason} — using placeholders")
+        return _placeholder_narratives(dives)
     except Exception as e:
-        print(f"  ⚠ Narrative generation failed ({e}) — using placeholders")
+        print(f"  ⚠ Narrative generation failed ({type(e).__name__}: {e}) — using placeholders")
         return _placeholder_narratives(dives)
 
 
@@ -2416,11 +2426,11 @@ def run(ik, name_hint=None):
         try:
             persona_brief = fut_persona.result(timeout=90)
         except Exception as ex:
-            print(f"  ⚠ persona brief failed/timed out: {ex}")
+            print(f"  ⚠ persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
         try:
             market_offer_brief = fut_market.result(timeout=90)
         except Exception as ex:
-            print(f"  ⚠ market offer brief failed/timed out: {ex}")
+            print(f"  ⚠ market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
