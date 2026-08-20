@@ -228,12 +228,17 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
     return doc
 
 
-def run(ik, name_hint=None, branch_name=None):
+def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
+    """Core logic, returns (doc, bank_name, branch_label, total_branch_count)
+    or raises ValueError with a clear message. Separated from run() so both
+    the CLI entry point (saves to disk) and the Hub's Quick Export endpoint
+    (streams from memory, same pattern as /generate-assessment) can share
+    it without duplicating the fetch/pick/narrate/build sequence."""
     print(f"[branch-preview] fetching network data for {ik}...")
     d = bad.fetch_full_network_data(ik)
     if not d["branches"]:
-        print(f"[branch-preview] ✗ no branch data found for inst_key='{ik}'")
-        return None
+        raise ValueError(f"No branch data found for inst_key='{ik}'. This bank may not be "
+                          f"ingested into BMAP yet, or the inst_key is incorrect.")
 
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     branches = d["branches"]
@@ -246,8 +251,7 @@ def run(ik, name_hint=None, branch_name=None):
 
     target = pick_preview_branch(summary, branches, branch_name)
     if not target:
-        print("[branch-preview] ✗ could not select a branch to preview")
-        return None
+        raise ValueError("Could not select a branch to preview — network has no branches.")
 
     entry = next((e for e in dives if e["branch"].get("uninumbr") == target.get("uninumbr")), None)
     if not entry:
@@ -267,14 +271,24 @@ def run(ik, name_hint=None, branch_name=None):
     print(f"[branch-preview] previewing {branch_label}")
 
     narr = get_single_branch_narrative(bank_name, branch, strat, play)
+    doc = build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, narr,
+                                    len(branches), geo_by_uid, tmpdir=tmpdir)
+    return doc, bank_name, branch_label, len(branches)
 
+
+def run(ik, name_hint=None, branch_name=None):
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
-        doc = build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, narr,
-                                        len(branches), geo_by_uid, tmpdir=tmpdir)
+        try:
+            doc, bank_name, branch_label, total = generate_preview(ik, name_hint, branch_name, tmpdir)
+        except ValueError as e:
+            print(f"[branch-preview] ✗ {e}")
+            return None
+
         safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in bank_name).strip()
         date = datetime.now().strftime("%Y%m%d")
-        branch_safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in branch.get("namebr", "Branch")).strip()
+        branch_safe = "".join(c if c.isalnum() or c in " _-" else "_"
+                               for c in branch_label.split(" (")[0]).strip()
         filename = f"BMAP_Preview_{safe}_{branch_safe}_{date}.docx"
         out_path = os.path.join(bad.OUT_DIR if hasattr(bad, "OUT_DIR") else ".", filename)
         doc.save(out_path)
