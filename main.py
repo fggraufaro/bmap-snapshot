@@ -38,6 +38,7 @@ from flask_cors import CORS
 import bmap_snapshot as bm
 import bmap_board_brief as bb
 import bmap_assessment_doc as bad
+import bmap_branch_preview as bpv
 from secure_proxy import secure_proxy_bp
 
 app = Flask(__name__)
@@ -153,6 +154,61 @@ def generate_assessment():
 
     except Exception as e:
         print(f"[assessment] ✗ {e}")
+        return jsonify({"error": str(e)}), 500
+
+
+# ── Branch Preview — Hub "Quick Export" live pitch-meeting teaser ──
+# One branch, same rendering code as the paid Assessment (render_branch_deep_dive),
+# scoped down enough to stay fast for live use in a sales meeting -- no async
+# job/polling pattern needed here, unlike /generate-assessment, since this is
+# deliberately fast (one branch's worth of AI + Mapbox calls, not the whole network).
+@app.route("/generate-branch-preview", methods=["POST"])
+def generate_branch_preview():
+    body      = request.get_json(force=True)
+    ik        = (body.get("inst_key") or "").strip()
+    name_hint = (body.get("bank_name") or "").strip()
+    branch    = (body.get("branch_name") or "").strip() or None
+
+    if not ik:
+        return jsonify({"error": "inst_key required"}), 400
+
+    try:
+        print(f"[branch-preview] {ik} — {name_hint or 'no name hint'} — "
+              f"branch={branch or '(auto-select)'}")
+
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmpdir:
+            doc, bank_name, branch_label, total_branches = bpv.generate_preview(
+                ik, name_hint, branch, tmpdir
+            )
+            buf = io.BytesIO()
+            doc.save(buf)
+            buf.seek(0)
+
+        safe = "".join(c if c.isalnum() or c in " _-" else "_" for c in bank_name).strip()
+        branch_safe = "".join(c if c.isalnum() or c in " _-" else "_"
+                               for c in branch_label.split(" (")[0]).strip()
+        date = datetime.now().strftime("%Y%m%d")
+        filename = f"BMAP_Preview_{safe}_{branch_safe}_{date}.docx"
+
+        print(f"[branch-preview] ✓ {filename} ({buf.getbuffer().nbytes // 1024}KB, "
+              f"{branch_label} of {total_branches} branches)")
+
+        return send_file(
+            buf,
+            mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            as_attachment=True,
+            download_name=filename
+        )
+
+    except ValueError as e:
+        # Bad/unmatched inst_key or branch name -- a client error, not a
+        # server failure, per the same distinction /generate-assessment
+        # makes with its 422 for "no branch data found".
+        print(f"[branch-preview] ✗ {e}")
+        return jsonify({"error": str(e)}), 422
+    except Exception as e:
+        print(f"[branch-preview] ✗ {e}")
         return jsonify({"error": str(e)}), 500
 
 
