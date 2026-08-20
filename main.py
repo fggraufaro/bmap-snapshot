@@ -132,7 +132,8 @@ def generate_assessment():
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
-                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief)
+                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief,
+                                            vulnerability_targets=d.get("vulnerability_targets"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
@@ -295,7 +296,8 @@ def _run_assessment_job(job_id, ik, name_hint):
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
-                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief)
+                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief,
+                                            vulnerability_targets=d.get("vulnerability_targets"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
