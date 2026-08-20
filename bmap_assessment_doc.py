@@ -85,6 +85,7 @@ FONT_HEAD = "Inter"   # falls back to a system serif/sans if not installed local
 SCHEMA_MAP = {
     "branch_opportunity_base":        "analytics",
     "bank_financial_snapshot_latest": "analytics",
+    "branch_target_competitors":      "analytics",
     "branches_master_v2":             "geo",
     "raw_sod":                        "raw",
 }
@@ -153,6 +154,11 @@ def fetch_full_network_data(ik):
 
     branch_strategy = fetch_branch_competitive_strategy(ik, branches, branches_geo)
 
+    print(f"  Fetching competitor vulnerability scoring...")
+    vulnerability_targets = fetch_vulnerability_targets(ik, branches)
+    if vulnerability_targets:
+        print(f"  ✓ vulnerability data for {len(vulnerability_targets)} branch(es)")
+
     print(f"  Resolving winsorized YoY values...")
     capped_yoy = resolve_capped_yoy(branches)
     if capped_yoy:
@@ -165,6 +171,7 @@ def fetch_full_network_data(ik):
         "targets": tgt_arr,
         "branches_geo": branches_geo,
         "branch_strategy": branch_strategy,
+        "vulnerability_targets": vulnerability_targets,
         "capped_yoy": capped_yoy,
     }
 
@@ -939,6 +946,74 @@ def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path
     except Exception as e:
         print(f"  ⚠ OSM radius map failed ({e}) — falling back to local-plot version")
     return chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path)
+
+
+def fetch_vulnerability_targets(ik, branches):
+    """Pre-scored competitor vulnerability data from analytics.branch_target_competitors
+    -- YoY trend, ROA, noncurrent-asset %, and a composite vuln_score, already
+    ranked top-3 per branch by Verlocity's own scoring. This is a genuinely
+    different, richer signal than the adaptive-radius competitor list used
+    elsewhere: that list answers 'who is nearby and how big are they,' this
+    answers 'who is actually losing ground and winnable.' Two separate
+    supabase() calls + a client-side join (same pattern as fetch_branch_geo)
+    since branch_target_competitors and geo.branches_master_v2 are different
+    schemas without a PostgREST-embeddable relationship configured between them.
+    Returns {my_branch_id: [enriched competitor dicts, already rank-ordered]}."""
+    rows = supabase(
+        "branch_target_competitors",
+        f"my_inst_key=eq.{ik}&select=my_branch_id,target_uninumbr,target_namefull,"
+        "target_dep_m,target_yoy_pct,target_roa,target_noncurrent_pct,vuln_score,"
+        "target_rank&order=my_branch_id.asc,target_rank.asc",
+    )
+    rows = rows if isinstance(rows, list) else []
+    if not rows:
+        return {}
+
+    target_ids = ",".join(str(r["target_uninumbr"]) for r in rows if r.get("target_uninumbr"))
+    geo_rows = supabase("branches_master_v2", f"branch_id=in.({target_ids})&select=branch_id,lat,lon") if target_ids else []
+    geo_rows = geo_rows if isinstance(geo_rows, list) else []
+    geo_by_id = {g["branch_id"]: g for g in geo_rows}
+
+    out = {}
+    for r in rows:
+        g = geo_by_id.get(r.get("target_uninumbr"), {})
+        out.setdefault(r["my_branch_id"], []).append({
+            "bank_name": r.get("target_namefull"),
+            "deposits": _sf(r.get("target_dep_m")) * 1e6,  # target_dep_m is in millions
+            "yoy_pct": _sf(r.get("target_yoy_pct")),
+            "roa": _sf(r.get("target_roa")),
+            "noncurrent_pct": _sf(r.get("target_noncurrent_pct")),
+            "vuln_score": _sf(r.get("vuln_score")),
+            "rank": r.get("target_rank"),
+            "lat": g.get("lat"),
+            "lon": g.get("lon"),
+        })
+    return out
+
+
+def _vulnerability_reasoning(c):
+    """Deterministic, real-data-grounded explanation of WHY a competitor is
+    a winnable target -- not a generic 'they're big and nearby' framing, but
+    the actual weakness signal (declining deposits, stressed profitability,
+    asset quality concerns) that makes their depositors realistically
+    winnable. Ties directly to 'who to go after, predictably' rather than
+    leaving vuln_score as an opaque number."""
+    reasons = []
+    yoy = c.get("yoy_pct", 0)
+    roa = c.get("roa", 0)
+    noncurrent = c.get("noncurrent_pct", 0)
+    if yoy < -10:
+        reasons.append(f"already losing deposits at scale ({yoy:+.1f}% YoY)")
+    elif yoy < 0:
+        reasons.append(f"declining deposits ({yoy:+.1f}% YoY)")
+    if roa < 0.5:
+        reasons.append(f"stressed profitability (ROA {roa:.2f}%) limiting their ability to compete on rate")
+    if noncurrent > 2:
+        reasons.append(f"elevated asset-quality concerns ({noncurrent:.1f}% noncurrent) likely constraining growth appetite")
+    if not reasons:
+        return "a stable competitor — not showing acute weakness, but still a realistic size-based target"
+    return "; ".join(reasons)
+
 
 
 def fetch_branch_geo(ik):
@@ -1760,7 +1835,8 @@ def _lookup_branch_narrative(narr_dict, b, default=None):
 
 
 def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts, branch_plays,
-                             branch_audiences, geo_by_uid, tmpdir, heading_space_before=4):
+                             branch_audiences, geo_by_uid, tmpdir, heading_space_before=4,
+                             vuln_targets=None):
     """Renders one branch's full deep-dive section: verdict, deposits/radius
     methodology, named competitors + competitor map, capture scenario,
     audience signal, assigned play. Extracted from the main per-branch loop
@@ -1840,10 +1916,82 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     method_run.font.name = FONT_HEAD
 
     # ── Competitors (top 3, size-filtered) ──
-    _heading(doc, "Named Competitors", size=11, space_before=10, space_after=4)
+    _heading(doc, "Named Competitors — Who To Target", size=11, space_before=10, space_after=4)
     top3 = (strat.get("top3_competitors") if strat else []) or []
     all_comp = (strat.get("all_competitors") if strat else []) or []
-    if top3:
+    vuln_list = sorted((vuln_targets or {}).get(b.get("uninumbr"), []), key=lambda c: c.get("rank") or 99)
+
+    if all_comp:
+        own = geo_by_uid.get(b.get("uninumbr"))
+        if own and own.get("lat") is not None and own.get("lon") is not None:
+            radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
+            ok = chart_branch_radius_map(
+                own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
+            )
+            if ok:
+                p_img = doc.add_paragraph()
+                p_img.paragraph_format.space_before = Pt(4)
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img.add_run().add_picture(radius_img, width=Inches(4.6))
+                p_cap = doc.add_paragraph()
+                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                r_cap = p_cap.add_run(
+                    f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
+                    f"{radius_mi or 3.0:.1f}mi shown — full competitive density in this market."
+                )
+                r_cap.italic = True
+                r_cap.font.size = Pt(7.5)
+                r_cap.font.color.rgb = GRAY3
+                r_cap.font.name = FONT_HEAD
+
+    if vuln_list:
+        # This is the actual answer to "who do we go after" -- ranked by a
+        # composite vulnerability score (declining deposits, weak ROA,
+        # asset-quality stress), not just by size. The map above shows the
+        # full competitive landscape; this table is the prioritized target
+        # list drawn from it.
+        p_lead = doc.add_paragraph()
+        p_lead.paragraph_format.space_before = Pt(8)
+        r_lead = p_lead.add_run(
+            "Ranked by vulnerability, not size — which nearby institutions are actually "
+            "losing ground, not just which are largest."
+        )
+        r_lead.italic = True
+        r_lead.font.size = Pt(9)
+        r_lead.font.color.rgb = GRAY3
+        r_lead.font.name = FONT_HEAD
+
+        vt = doc.add_table(rows=1, cols=6)
+        vt.style = "Light Grid Accent 1"
+        vt_hdr = vt.rows[0].cells
+        for j, h in enumerate(["Rank", "Competitor", "Deposits", "YoY", "ROA", "Noncurrent %"]):
+            vt_hdr[j].text = h
+        for c in vuln_list[:3]:
+            row = vt.add_row().cells
+            row[0].text = str(c.get("rank") or "—")
+            row[1].text = str(c.get("bank_name", "—"))
+            row[2].text = f"${_sf(c.get('deposits'))/1e6:.1f}M"
+            row[3].text = f"{_sf(c.get('yoy_pct')):+.1f}%"
+            row[4].text = f"{_sf(c.get('roa')):.2f}%"
+            row[5].text = f"{_sf(c.get('noncurrent_pct')):.1f}%"
+
+        top_target = vuln_list[0]
+        p_win = doc.add_paragraph()
+        p_win.paragraph_format.space_before = Pt(8)
+        r_win_label = p_win.add_run("Priority target: ")
+        r_win_label.bold = True
+        r_win_label.font.size = Pt(9.5)
+        r_win_label.font.color.rgb = NAVY
+        r_win_label.font.name = FONT_HEAD
+        r_win = p_win.add_run(
+            f"{top_target.get('bank_name')} — {_vulnerability_reasoning(top_target)}. "
+            f"This is where deposit capture is realistically winnable, not just theoretically "
+            f"contestable."
+        )
+        r_win.font.size = Pt(9.5)
+        r_win.font.name = FONT_HEAD
+        r_win.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    elif top3:
         cot = doc.add_table(rows=1, cols=4)
         cot.style = "Light Grid Accent 1"
         cot_hdr = cot.rows[0].cells
@@ -1859,29 +2007,6 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         _body(doc, "No competitor within the adaptive radius meets the 0.1x-5x size filter — "
                    "this branch has natural geographic protection rather than a capture target.",
               size=9.5)
-
-    if all_comp:
-        own = geo_by_uid.get(b.get("uninumbr"))
-        if own and own.get("lat") is not None and own.get("lon") is not None:
-            radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
-            ok = chart_branch_radius_map(
-                own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
-            )
-            if ok:
-                p_img = doc.add_paragraph()
-                p_img.paragraph_format.space_before = Pt(4)
-                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p_img.add_run().add_picture(radius_img, width=Inches(2.4))
-                p_cap = doc.add_paragraph()
-                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                r_cap = p_cap.add_run(
-                    f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
-                    f"{radius_mi or 3.0:.1f}mi shown; table above highlights the top 3 by deposits."
-                )
-                r_cap.italic = True
-                r_cap.font.size = Pt(7.5)
-                r_cap.font.color.rgb = GRAY3
-                r_cap.font.name = FONT_HEAD
 
     # ── Capture Scenario ──
     capture_pool = e["capture_pool"]
@@ -2005,7 +2130,7 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
                           branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None,
-                          persona_brief=None, market_offer_brief=None):
+                          persona_brief=None, market_offer_brief=None, vulnerability_targets=None):
     capped_yoy = capped_yoy or {}
     geo_by_uid = {g["uninumbr"]: g for g in (branches_geo or []) if g.get("uninumbr") is not None}
     doc = Document()
@@ -2424,7 +2549,8 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             play = e["play"]
             render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                                      branch_plays, branch_audiences, geo_by_uid, tmpdir,
-                                     heading_space_before=(0 if i == 0 else 4))
+                                     heading_space_before=(0 if i == 0 else 4),
+                                     vuln_targets=vulnerability_targets)
             if i < len(dives) - 1:
                 doc.add_page_break()
 
@@ -2573,7 +2699,8 @@ def run(ik, name_hint=None):
                                     d["branches"], d.get("branches_geo"),
                                     d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                     capped_yoy=d.get("capped_yoy"),
-                                    persona_brief=persona_brief, market_offer_brief=market_offer_brief)
+                                    persona_brief=persona_brief, market_offer_brief=market_offer_brief,
+                                    vulnerability_targets=d.get("vulnerability_targets"))
         path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
