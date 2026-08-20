@@ -131,7 +131,7 @@ Every claim needs a number. Return ONLY valid JSON, no markdown fences:
 
 
 def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, narr,
-                              total_branch_count, geo_by_uid, tmpdir="."):
+                              total_branch_count, geo_by_uid, tmpdir=".", vuln_targets=None):
     """Short standalone document: intro framing -> the one branch's full deep
     dive (via bad.render_branch_deep_dive, identical to the paid Assessment)
     -> closing CTA. Uses the same brand styling as bmap_assessment_doc.py."""
@@ -197,7 +197,7 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
         doc, branch, strat, play, entry, capped_yoy,
         narr.get("branch_verdicts") or {}, narr.get("branch_plays") or {},
         narr.get("branch_audiences") or {}, geo_by_uid,
-        tmpdir, heading_space_before=0,
+        tmpdir, heading_space_before=0, vuln_targets=vuln_targets,
     )
 
     # ── Closing CTA ──
@@ -246,6 +246,7 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
     branches = d["branches"]
     branch_strategy = d.get("branch_strategy") or []
     capped_yoy = d.get("capped_yoy") or {}
+    vulnerability_targets = d.get("vulnerability_targets") or {}
     geo_by_uid = {g["uninumbr"]: g for g in (d.get("branches_geo") or []) if g.get("uninumbr") is not None}
 
     summary = bad.summarize_network(d)
@@ -274,7 +275,8 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
 
     narr = get_single_branch_narrative(bank_name, branch, strat, play)
     doc = build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, narr,
-                                    len(branches), geo_by_uid, tmpdir=tmpdir)
+                                    len(branches), geo_by_uid, tmpdir=tmpdir,
+                                    vuln_targets=vulnerability_targets)
     return doc, bank_name, branch_label, len(branches)
 
 
