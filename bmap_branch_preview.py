@@ -86,6 +86,7 @@ def get_single_branch_narrative(bank_name, branch, strat, play):
                 f"{bad._sf(top_comp.get('distance_miles')):.2f}mi away with "
                 f"${bad._sf(top_comp.get('deposits'))/1e6:.0f}M deposits"
                 if top_comp else "no named competitor within the adaptive radius")
+    driver_clause = bad._score_driver_clause(branch)
 
     ctx = (
         f"Bank: {bank_name}\n"
@@ -93,7 +94,8 @@ def get_single_branch_narrative(bank_name, branch, strat, play):
         f"Score {bad._sf(branch.get('opportunity_score')):.0f}/100, "
         f"zone {branch.get('opportunity_zone')}, "
         f"${bad._sf(branch.get('latest_dep'))/1e6:.0f}M deposits, "
-        f"{bad._sf(branch.get('yoy_deposits'))*100:+.1f}% YoY, {comp_str}.\n"
+        f"{bad._sf(branch.get('yoy_deposits'))*100:+.1f}% YoY, {comp_str}."
+        + (f" {driver_clause[0].upper()}{driver_clause[1:]}." if driver_clause else "") + "\n"
         f"Household income ${bad._sf(branch.get('household_income')):.0f} "
         f"({bad._sf(branch.get('yoy_income_growth'))*100:+.1f}% YoY), "
         f"population YoY {bad._sf(branch.get('yoy_pop_growth'))*100:+.1f}%, "
@@ -106,7 +108,7 @@ shown live in a sales pitch to demonstrate analytical depth. Same standards as t
 paid Assessment: confident, commercial, decisive, grounded in the specific numbers given.
 Every claim needs a number. Return ONLY valid JSON, no markdown fences:
 {
-  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences synthesizing score, zone, the named competitive threat (or its absence), and deposit trajectory into a clear verdict -- the 'why' behind the assigned play."},
+  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences synthesizing score, zone, the named competitive threat (or its absence), and deposit trajectory into a clear verdict -- the 'why' behind the assigned play. If a score-driver sentence is given (what's actually driving the score up or down), use it explicitly -- naming the real driver (e.g. 'capped by a shrinking local market, not competition' or 'reflects deposit scale, not underlying growth') is exactly the insight a prospect is paying to see, not a restatement of the number."},
   "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in this branch's specific numbers -- not a generic play-name restatement. If no named competitor exists within the adaptive radius, do NOT write language implying one does.", "media_brief": "One to two sentences, naming the actual target audience and product implied by this branch's specific data."}},
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospect, Regression-Scored Lookalike, Competitive Conquesting, Warm Retargeting) where the signal supports it. Never invent a named persona."}
 }"""
