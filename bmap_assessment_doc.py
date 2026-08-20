@@ -123,7 +123,8 @@ def fetch_full_network_data(ik):
         "branch_opportunity_base",
         f"inst_key=eq.{ik}&select=uninumbr,namebr,citybr,stalpbr,latest_dep,"
         "yoy_deposits,opportunity_score,opportunity_zone,matrix_quadrant,"
-        "priority_tier,market_growth_score,rel_growth_norm,namefull,"
+        "priority_tier,market_growth_normalized,rel_growth_norm,"
+        "inv_density_norm_winsor,deposit_size_norm,namefull,"
         "household_income,yoy_income_growth,total_population,yoy_pop_growth,"
         "zhvi_yoy_pct&order=opportunity_score.desc",
     )
@@ -239,6 +240,33 @@ def fmt_yoy(b, capped_map):
     return f"{_sf(b.get('yoy_deposits'))*100:+.1f}%"
 
 
+def _score_driver_clause(b):
+    """Identifies what's actually driving a branch's opportunity score, in
+    plain language -- not for display, for feeding the AI real analytical
+    ammunition so the Branch Verdict can explain WHY a score is what it is
+    (e.g. 'capped by a shrinking local market, not competition') instead of
+    just restating the number. This is the insight-generating use of the
+    four weighted score components; a visual breakdown chart exposing the
+    raw numbers to the reader was deliberately removed from the document --
+    a stacked bar of normalized sub-scores is mechanical transparency, not
+    the analysis a buyer is paying for. The same underlying data is more
+    valuable as an input to the narrative than as its own exhibit."""
+    components = [
+        ("market growth", _sf(b.get("market_growth_normalized")), 0.25),
+        ("relative growth vs. peers", _sf(b.get("rel_growth_norm")), 0.30),
+        ("low competitive density", _sf(b.get("inv_density_norm_winsor")), 0.25),
+        ("deposit base size", _sf(b.get("deposit_size_norm")), 0.20),
+    ]
+    weighted = [(name, val * w) for name, val, w in components]
+    if all(w == 0 for _, w in weighted):
+        return ""
+    dominant = max(weighted, key=lambda x: x[1])
+    weakest = min(weighted, key=lambda x: x[1])
+    if dominant[0] == weakest[0]:
+        return ""
+    return f"score driven primarily by {dominant[0]}, weakest on {weakest[0]}"
+
+
 # ═══════════════════════════════════════════════════════════════
 # VISUALS — matplotlib charts + geographic map, embedded as PNGs.
 # McKinsey-style: clean, minimal chrome, brand colors, direct labels
@@ -310,6 +338,69 @@ def chart_top_bottom_branches(top5, bottom3, path):
     fig.tight_layout(pad=0.6)
     fig.savefig(path, transparent=True)
     plt.close(fig)
+
+
+def chart_score_breakdown(branch, path):
+    """Horizontal stacked bar showing the four weighted components that sum
+    to a branch's opportunity_score -- makes the score legible instead of a
+    single black-box number. Verified mathematically exact against real
+    production data before building this: 0.25*market_growth_normalized +
+    0.30*rel_growth_norm + 0.25*inv_density_norm_winsor + 0.20*deposit_size_norm
+    equals the stored opportunity_score to within rounding (confirmed on a
+    real branch: 0.25*1.98 + 0.30*0.00 + 0.25*19.92 + 0.20*68.17 = 19.109,
+    matching a stored opportunity_score of 19.11). Returns False (renders
+    nothing) if any component is missing, rather than showing a chart that
+    silently doesn't add up -- these fields aren't populated for every bank/
+    branch in every environment, and a chart that's visibly wrong is worse
+    than no chart."""
+    components = [
+        ("Market\nGrowth", _sf(branch.get("market_growth_normalized")), 0.25, "#083D5F"),
+        ("Relative\nGrowth", _sf(branch.get("rel_growth_norm")), 0.30, "#02A7C2"),
+        ("Competitive\nDensity", _sf(branch.get("inv_density_norm_winsor")), 0.25, "#66CC99"),
+        ("Deposit\nSize", _sf(branch.get("deposit_size_norm")), 0.20, "#BFC815"),
+    ]
+    if all(v == 0 for _, v, _, _ in components):
+        return False  # fields likely unpopulated for this branch/bank -- skip rather than show all-zero
+
+    contributions = [v * w for _, v, w, _ in components]
+    total = sum(contributions)
+    labels = [c[0] for c in components]
+    colors = [c[3] for c in components]
+
+    fig, ax = plt.subplots(figsize=(6.0, 2.1), dpi=200)
+    left = 0
+    for label, contrib, color in zip(labels, contributions, colors):
+        ax.barh([0], [contrib], left=left, color=color, height=0.55,
+                edgecolor="white", linewidth=1.5)
+        if contrib > total * 0.04:  # skip label if the segment is too thin to read
+            ax.text(left + contrib / 2, 0, f"{contrib:.1f}", ha="center", va="center",
+                     fontsize=8.5, fontweight="bold", color="white")
+        left += contrib
+
+    ax.set_xlim(0, max(total * 1.02, 1))
+    ax.set_ylim(-0.6, 0.6)
+    ax.axis("off")
+    ax.text(-max(total, 1) * 0.02, 0, f"{total:.0f}", ha="right", va="center",
+             fontsize=13, fontweight="bold", color=NAVY_HEX)
+
+    # Legend below the bar, in axes-fraction coordinates (0-1) so it's
+    # independent of the bar's data scale entirely. 2x2 grid, not a single
+    # row -- a single row overlapped ("Competitive Density (25%)" collided
+    # with the next label) since label text lengths vary too much for even
+    # fixed spacing to handle safely.
+    legend_positions = [(0.02, -0.30), (0.52, -0.30), (0.02, -0.55), (0.52, -0.55)]
+    for i, (label, contrib, color) in enumerate(zip(labels, contributions, colors)):
+        weight_pct = int(components[i][2] * 100)
+        lx, ly = legend_positions[i]
+        ax.add_patch(plt.Rectangle((lx, ly), 0.02, 0.09, color=color,
+                                     transform=ax.transAxes, clip_on=False))
+        ax.text(lx + 0.03, ly + 0.045, f"{label.replace(chr(10), ' ')} ({weight_pct}%)",
+                fontsize=7.5, va="center", color="#333333", transform=ax.transAxes)
+
+    fig.tight_layout(pad=0.3)
+    fig.savefig(path, transparent=True, bbox_inches="tight")
+    plt.close(fig)
+    return True
 
 
 def chart_financial_benchmark(fin, bank_name, path):
@@ -641,6 +732,36 @@ def chart_branch_map_states(branches_geo, path):
     return True
 
 
+def _select_spread_labels(competitors, position_fn, max_labels=5, min_sep=0.35):
+    """Picks which competitors get a text label on a competitor map, prioritizing
+    by deposits like before, but skipping any candidate whose position is too
+    close to an already-selected label. Fixes real dense-market behavior where
+    naively labeling the top 5 by deposits produced 3 stacked, illegible
+    'Bank of America' labels on top of each other while the actual #1
+    competitor's label ended up buried underneath.
+
+    position_fn(c) -> (x, y) in the same coordinate space the caller will plot
+    in (pixels for the Mapbox version, miles for the local fallback).
+    min_sep is in that same unit -- callers pass a value appropriate to their
+    coordinate space (e.g. ~35px on a 700px image, or a fraction of a mile).
+    Diversifying which competitors get labeled (favoring geographic spread
+    over a strict deposit ranking once the top pick is locked in) is a better
+    outcome anyway -- five labels scattered across the map are more useful
+    than three overlapping in one corner and two elsewhere."""
+    ordered = sorted(competitors, key=lambda c: -_sf(c.get("deposits")))
+    selected, positions = [], []
+    for c in ordered:
+        if len(selected) >= max_labels:
+            break
+        pos = position_fn(c)
+        if pos is None:
+            continue
+        if all(((pos[0] - p[0]) ** 2 + (pos[1] - p[1]) ** 2) ** 0.5 >= min_sep for p in positions):
+            selected.append(c)
+            positions.append(pos)
+    return {id(c) for c in selected}
+
+
 def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path):
     """FALLBACK: plain circle-plot version (no basemap). Used only if the
     Mapbox version fails for any reason — same reasoning as
@@ -662,7 +783,11 @@ def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi
     circ_y = [radius_mi * math.sin(t) for t in theta]
     ax.plot(circ_x, circ_y, color="#083D5F", linewidth=1.0, linestyle="--", alpha=0.5, zorder=2)
 
-    labeled_ids = {id(c) for c in sorted(competitors, key=lambda c: -_sf(c.get("deposits")))[:5]}
+    labeled_ids = _select_spread_labels(
+        competitors,
+        position_fn=lambda c: to_local_mi(c["lat"], c["lon"]) if c.get("lat") is not None else None,
+        max_labels=5, min_sep=radius_mi * 0.12,
+    )
     for c in competitors:
         clat, clon = c.get("lat"), c.get("lon")
         if clat is None or clon is None:
@@ -760,10 +885,19 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
     ax.plot(circ_px, circ_py, color="#083D5F", linewidth=1.3, linestyle="--", alpha=0.7, zorder=2)
 
     # Every competitor within the radius gets a dot (some markets have 20+,
-    # e.g. Camden at 1mi in validation testing) — but labeling all of them
-    # would be unreadable on a small inset, so only the top 5 by deposits
-    # get a text label. The table above still lists the top 3 in full.
-    labeled_ids = {id(c) for c in sorted(competitors, key=lambda c: -_sf(c.get("deposits")))[:5]}
+    # e.g. Camden at 1mi in validation testing, or Clinton Savings Bank's
+    # Clinton branch at 44) -- but labeling all of them would be unreadable
+    # on a small inset, so only up to 5 get a text label. Naively picking
+    # the top 5 by deposits produced a real, confirmed bug: 3 "Bank of
+    # America" branches clustered together all got labeled, stacking
+    # illegibly on top of each other while the actual #1 competitor's own
+    # label ended up buried underneath the pile. _select_spread_labels
+    # skips candidates too close (in pixels) to an already-picked label.
+    labeled_ids = _select_spread_labels(
+        competitors,
+        position_fn=lambda c: to_px(c["lon"], c["lat"]) if c.get("lat") is not None else None,
+        max_labels=5, min_sep=50,
+    )
     for c in competitors:
         clat, clon = c.get("lat"), c.get("lon")
         if clat is None or clon is None:
@@ -1274,11 +1408,13 @@ Named examples: {named_str}
                         f"{_sf(top_comp.get('distance_miles')):.2f}mi away with "
                         f"${_sf(top_comp.get('deposits'))/1e6:.0f}M deposits"
                         if top_comp else "no named competitor within the adaptive radius")
+            driver_clause = _score_driver_clause(b)
             lines.append(
                 f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
                 f"score {_sf(b.get('opportunity_score')):.0f}/100, zone {b.get('opportunity_zone')}, "
                 f"${_sf(b.get('latest_dep'))/1e6:.0f}M deposits, {fmt_yoy(b, capped_yoy or {})} YoY, "
                 f"{comp_str}, "
+                f"{driver_clause + ', ' if driver_clause else ''}"
                 f"household income ${_sf(b.get('household_income')):.0f} "
                 f"({_sf(b.get('yoy_income_growth'))*100:+.1f}% YoY), "
                 f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
@@ -1306,7 +1442,7 @@ Return ONLY valid JSON, no markdown fences:
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
   "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead.", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above."}},
-  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
+  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
   "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
 
