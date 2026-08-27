@@ -47,7 +47,7 @@ import json
 # the doc can just look at the bottom of the last page and compare the
 # build id to what they expect, instead of guessing from symptoms again.
 # Bump this string any time this file changes.
-GENERATOR_BUILD = "2026-08-27.5"
+GENERATOR_BUILD = "2026-08-27.9"
 print(f"[bmap_assessment_doc] build {GENERATOR_BUILD}")
 
 # ── Config — matches current bmap_snapshot.py production pattern ──
@@ -1066,7 +1066,17 @@ def _vulnerability_reasoning(c):
     the actual weakness signal (declining deposits, stressed profitability,
     asset quality concerns) that makes their depositors realistically
     winnable. Ties directly to 'who to go after, predictably' rather than
-    leaving vuln_score as an opaque number."""
+    leaving vuln_score as an opaque number.
+
+    Used only where all 3 competitors are NOT shown side by side (the AI
+    prompt context, where the full numbers sit right alongside this text
+    so the model can differentiate itself). For reader-facing prose that
+    shows all 3 competitors together, use _vulnerability_sentence()
+    instead -- this per-row version has no visibility into the other two
+    competitors, so it independently produces 'declining deposits' for
+    any competitor with unremarkable ROA/noncurrent, which reads as a
+    repeated, undifferentiated line when three such competitors are
+    listed one after another (a real, recurring case, not hypothetical)."""
     reasons = []
     yoy = c.get("yoy_pct", 0)
     roa = c.get("roa", 0)
@@ -1082,6 +1092,40 @@ def _vulnerability_reasoning(c):
     if not reasons:
         return "a stable competitor — not showing acute weakness, but still a realistic size-based target"
     return "; ".join(reasons)
+
+
+def _vulnerability_sentence(c, vuln_list):
+    """Full-sentence version of _vulnerability_tags()'s GROUP-COMPARATIVE
+    differentiation -- for reader-facing prose (Priority target, Where you
+    have the edge) that shows all 3 competitors together, where
+    _vulnerability_reasoning()'s per-row-only version was producing the
+    same 'declining deposits (-X.X% YoY)' line three times in a row
+    whenever none individually crossed the ROA/noncurrent absolute
+    thresholds. Reuses the exact same tag computed for the table's
+    Weakness column, so the table and this prose can never disagree on
+    which dimension is called out for a given competitor -- just
+    expanded into a full clause with the actual numbers."""
+    tags = _vulnerability_tags(vuln_list)
+    name = c.get("bank_name")
+    tag = tags.get(name)
+    yoy = _sf(c.get("yoy_pct"))
+    roa = _sf(c.get("roa"))
+    noncurrent = _sf(c.get("noncurrent_pct"))
+    opp = c.get("opportunity_score")
+
+    if tag == "Losing deposits fast":
+        return f"already losing deposits at scale ({yoy:+.1f}% YoY)"
+    if tag == "Highest credit stress of the three":
+        return f"carries the highest noncurrent-asset ratio of the three ({noncurrent:.1f}%), a real balance-sheet stress signal"
+    if tag == "Weakest profitability of the three":
+        return f"has the weakest profitability of the three (ROA {roa:.2f}%), limiting its ability to compete on rate"
+    if tag == "Declining fastest of the three":
+        return f"declining faster than the other two ({yoy:+.1f}% YoY)"
+    if tag == "Weakest overall position" and opp is not None:
+        return f"the weakest overall competitive position of the three (opportunity score {opp:.0f}/100), even with a milder {yoy:+.1f}% YoY decline"
+    if tag == "Declining deposits":
+        return f"declining deposits ({yoy:+.1f}% YoY)"
+    return "a stable competitor — not showing acute weakness, but still a realistic size-based target"
 
 
 def _vulnerability_tags(vuln_list):
@@ -2752,7 +2796,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_win_label.font.color.rgb = NAVY
         r_win_label.font.name = FONT_HEAD
         r_win = p_win.add_run(
-            f"{top_target.get('bank_name')} — {_vulnerability_reasoning(top_target)}. "
+            f"{top_target.get('bank_name')} — {_vulnerability_sentence(top_target, vuln_list[:3])}. "
             f"This is where deposit capture is realistically winnable, not just theoretically "
             f"contestable."
         )
@@ -2779,7 +2823,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                 r_e_name.font.size = Pt(9)
                 r_e_name.font.name = FONT_HEAD
                 r_e_name.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-                r_e = p_e.add_run(_vulnerability_reasoning(c))
+                r_e = p_e.add_run(_vulnerability_sentence(c, vuln_list[:3]))
                 r_e.font.size = Pt(9)
                 r_e.font.name = FONT_HEAD
                 r_e.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
