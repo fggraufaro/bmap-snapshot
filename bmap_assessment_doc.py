@@ -105,17 +105,51 @@ def supabase(table, params):
     return r.json()
 
 
-def supabase_rpc(fn_name, payload, timeout=20):
+def supabase_rpc(fn_name, payload, timeout=20, paginate=False, page_size=1000):
     """Call a Postgres function via PostgREST's /rpc/ endpoint (e.g. the
-    parametrized branches_within_radius(lat, lon, radius, exclude_bank_id))."""
+    parametrized branches_within_radius(lat, lon, radius, exclude_bank_id)).
+
+    paginate=True fetches ALL rows across multiple requests using PostgREST's
+    Range header -- needed for branches_within_radius_batch specifically,
+    which returns one row per (client branch, nearby competitor) pair and can
+    exceed 10,000 rows for a large network (Trustmark: 166 branches x up to
+    10mi radius each = 11,072 rows). PostgREST caps an unpaginated response
+    at 1000 rows by default with NO error -- still a 200, just a silently
+    incomplete list. Real-world symptom this caused: Jones Valley's 82
+    competitor rows landed at position ~5,908 in the unordered 11,072-row
+    response, so they never made it into the first page. The branch's
+    competitor TABLE still rendered fine (a separate, small, per-branch
+    query with its own limit=3), so nothing about the doc looked broken --
+    only the map, fed exclusively by this truncated batch, silently had
+    nothing to draw."""
     url = f"{SUPA_URL}/rest/v1/rpc/{fn_name}"
     headers = {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}",
                "Content-Type": "application/json"}
-    r = requests.post(url, headers=headers, json=payload, timeout=timeout)
-    if r.status_code != 200:
-        print(f"  ⚠ RPC {fn_name} error {r.status_code}: {r.text[:200]}")
-        return []
-    return r.json()
+    if not paginate:
+        r = requests.post(url, headers=headers, json=payload, timeout=timeout)
+        if r.status_code != 200:
+            print(f"  ⚠ RPC {fn_name} error {r.status_code}: {r.text[:200]}")
+            return []
+        return r.json()
+
+    all_rows = []
+    offset = 0
+    while True:
+        page_headers = {**headers, "Range-Unit": "items", "Range": f"{offset}-{offset + page_size - 1}"}
+        r = requests.post(url, headers=page_headers, json=payload, timeout=timeout)
+        if r.status_code not in (200, 206):
+            print(f"  ⚠ RPC {fn_name} error {r.status_code} at offset {offset}: {r.text[:200]}")
+            break
+        page = r.json()
+        if not isinstance(page, list):
+            break
+        all_rows.extend(page)
+        if len(page) < page_size:
+            break  # short page -- this was the last one
+        offset += page_size
+    print(f"  ✓ RPC {fn_name} paginated: {len(all_rows)} total rows "
+          f"({offset // page_size + 1} page{'s' if offset else ''})")
+    return all_rows
 
 
 def fetch_full_network_data(ik):
@@ -1262,7 +1296,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
           f"(single batched call)...")
     all_candidates = supabase_rpc("branches_within_radius_batch", {
         "p_inst_key": ik, "p_exclude_bank_id": bank_id, "p_max_radius_miles": 10.0,
-    })
+    }, timeout=45, paginate=True)
     if not isinstance(all_candidates, list):
         all_candidates = []
 
@@ -2252,22 +2286,54 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         cst_val[1].text = f"${capture_pool*0.03/1e6:.2f}M"
         cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
 
-    # ── Audience Signal (real Census/ZHVI, no fabricated personas) ──
+    # ── Audience Signal — visually distinct card, stats-first ──
     audience_text = _lookup_branch_narrative(branch_audiences, b, default="")
     if audience_text or b.get("household_income"):
-        _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
-        if audience_text:
-            _body(doc, audience_text, size=9.5)
-        else:
-            inc = _sf(b.get("household_income"))
-            inc_yoy = _sf(b.get("yoy_income_growth")) * 100
-            pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
-            zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
+        inc = _sf(b.get("household_income"))
+        inc_yoy = _sf(b.get("yoy_income_growth")) * 100
+        pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
+        zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
 
-            # Deterministic interpretation, not just a stat dump — mirrors
-            # the framing the AI path is instructed to use, so the fallback
-            # (used when AI narrative generation is unavailable) still reads
-            # as analysis rather than raw numbers with no "so what."
+        _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
+
+        card = doc.add_table(rows=1, cols=1)
+        card_cell = card.rows[0].cells[0]
+        _set_cell_shading(card_cell, "EAF6F8")  # light teal tint -- distinct from the
+        card_cell.paragraphs[0].paragraph_format.space_after = Pt(8)  # navy AT-A-GLANCE box above
+
+        # Stat row: three numbers up front, the thing a reader's eye should
+        # land on before any prose -- household income, income momentum,
+        # population momentum. Nested table inside the shaded cell so each
+        # stat gets its own column rather than being buried in a sentence.
+        stat_tbl = card_cell.add_table(rows=2, cols=3)
+        stat_tbl.autofit = True
+        stats = [
+            (f"${inc:,.0f}", "Household Income"),
+            (f"{inc_yoy:+.1f}%", "Income YoY"),
+            (f"{pop_yoy:+.1f}%", "Population YoY"),
+        ]
+        for j, (val, lbl) in enumerate(stats):
+            vcell, lcell = stat_tbl.rows[0].cells[j], stat_tbl.rows[1].cells[j]
+            vcell.paragraphs[0].text = ""
+            vr = vcell.paragraphs[0].add_run(val)
+            vr.bold = True
+            vr.font.size = Pt(19)
+            vr.font.color.rgb = TEAL
+            vr.font.name = FONT_HEAD
+            vcell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+            lcell.paragraphs[0].text = ""
+            lr = lcell.paragraphs[0].add_run(lbl.upper())
+            lr.font.size = Pt(7.5)
+            lr.font.color.rgb = GRAY3
+            lr.font.name = FONT_HEAD
+            lr.bold = True
+            lcell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+        p_narr = card_cell.add_paragraph()
+        p_narr.paragraph_format.space_before = Pt(10)
+        if audience_text:
+            r_narr = p_narr.add_run(audience_text)
+        else:
             if inc_yoy > 3 and pop_yoy > 1:
                 segment_read = ("supports an expansion-oriented read — High-Quality Local "
                                  "Prospect targeting fits a market growing in both income and population")
@@ -2276,16 +2342,17 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                                  "Warm Retargeting of the existing base outperforms broad prospecting here")
             else:
                 segment_read = "reads as stable — steady-state prospecting, no urgency in either direction"
-
             wealth_note = ""
             if zhvi_yoy > 5:
                 wealth_note = " Rising home values add a supporting tailwind for CD/HYSA acquisition."
             elif zhvi_yoy < -2:
                 wealth_note = " Softening home values warrant caution on aggressive acquisition spend."
-
-            _body(doc, f"Household income ${inc:,.0f} ({inc_yoy:+.1f}% YoY), population "
-                       f"{pop_yoy:+.1f}% YoY, home values {zhvi_yoy:+.1f}% YoY — this profile "
-                       f"{segment_read}.{wealth_note}", size=9.5)
+            r_narr = p_narr.add_run(
+                f"Home values {zhvi_yoy:+.1f}% YoY. This profile {segment_read}.{wealth_note}"
+            )
+        r_narr.font.size = Pt(9.5)
+        r_narr.font.name = FONT_HEAD
+        r_narr.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
     # ── Play ──
     if play:
