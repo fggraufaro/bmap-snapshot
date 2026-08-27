@@ -170,7 +170,7 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
         "priority_tier,market_growth_normalized,rel_growth_norm,"
         "inv_density_norm_winsor,deposit_size_norm,namefull,"
         "household_income,yoy_income_growth,total_population,yoy_pop_growth,"
-        "zhvi_yoy_pct&order=opportunity_score.desc",
+        "zhvi_yoy_pct,smb_zone,smb_index&order=opportunity_score.desc",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
 
@@ -1716,9 +1716,20 @@ Return ONLY valid JSON, no markdown fences:
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
   "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead. If a relative-size figure is given for a vulnerability-ranked competitor, use it as part of the resourcing argument (e.g. 'this branch is 2.8x the size of its weakest named competitor').", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above. If a vulnerability-ranked competitor shows real weakness (declining deposits, weak ROA, elevated noncurrent assets), name conquesting that competitor's depositors as part of the angle."}},
-  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. If vulnerability-ranked competitors are given, name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group -- this is the same data the reader sees highlighted in the competitor table, so the verdict must not read thinner than the table it introduces. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
-  "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using the household income, income YoY, population YoY, home value YoY figures given, AND the competitive weakness data where present -- not demographics alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
-}"""
+  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. If vulnerability-ranked competitors are given, name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group -- this is the same data the reader sees highlighted in the competitor table, so the verdict must not read thinner than the table it introduces. Ground every claim in the specific numbers given -- no generic branch commentary.",
+  "branch_audiences": {"Branch Name (City, ST)": {
+    "narrative": "2-3 sentences per branch, using the household income, income YoY, population YoY, home value YoY figures given, AND the competitive weakness data where present -- not demographics alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting.",
+    "persona_name": "A short archetype-style label for this branch's dominant audience segment, in the style of 'The Equity Plateau' or 'The Cash-Flow Balancer' -- an income/wealth-stage ARCHETYPE grounded in the actual numbers given. Never a specific named individual (e.g. 'Sarah, 34') -- Verlocity's persona layer names segments, not people.",
+    "persona_tagline": "One short line under the persona name (5-10 words) capturing the segment's core motivation.",
+    "life_stage": "e.g. 'Mid-career to pre-retirement, 40s-60s' -- inferred from income level and market-maturity signals given, not invented biographical detail.",
+    "wealth_signal": "Income range + home value context, grounded directly in the numbers given for this branch.",
+    "primary_need": "The banking product or need this segment most likely prioritizes, grounded in the income/growth profile given.",
+    "switch_driver": "What would actually move this segment to switch banks or deepen a relationship here -- grounded in the competitive weakness data given, when present.",
+    "strong_signals": ["1-2 short (under 15 words) bullets naming concrete reasons this branch's audience opportunity is real. Every bullet needs a number from the data given."],
+    "validate_before_activating": ["1 short (under 20 words) honest caveat on what this read can't confirm from the data alone -- this is what makes the read credible rather than just optimistic. Do not skip it."]
+  }}
+}
+Keys in branch_plays, branch_verdicts, and branch_audiences must exactly match the branch name+city+state given, in the "Branch Name (City, ST)" format shown."""
 
     if deep_dive_ctx:
         ctx += deep_dive_ctx
@@ -2361,13 +2372,28 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         cst_val[1].text = f"${capture_pool*0.03/1e6:.2f}M"
         cst_val[2].text = f"${capture_pool*0.07/1e6:.2f}M"
 
-    # ── Audience Signal — visually distinct card, stats-first ──
-    audience_text = _lookup_branch_narrative(branch_audiences, b, default="")
+    # ── Audience Signal — condensed single-branch version of the multi-branch
+    # Audience Intelligence Brief pattern: stat row, one synthesized paragraph,
+    # a single persona card, then "where it's strong" / "validate before
+    # activating" bullets. Same analytical shape as the portfolio-level
+    # brief, just scaled to one branch instead of a market of them. ──
+    audience_detail = _lookup_branch_narrative(branch_audiences, b, default=None)
+    audience_text, persona, strong_signals, validate_signals = "", None, [], []
+    if isinstance(audience_detail, dict):
+        audience_text = audience_detail.get("narrative") or ""
+        if audience_detail.get("persona_name"):
+            persona = audience_detail
+        strong_signals = audience_detail.get("strong_signals") or []
+        validate_signals = audience_detail.get("validate_before_activating") or []
+    elif isinstance(audience_detail, str):
+        audience_text = audience_detail  # backward-compat with the older string-only shape
+
     if audience_text or b.get("household_income"):
         inc = _sf(b.get("household_income"))
         inc_yoy = _sf(b.get("yoy_income_growth")) * 100
         pop_yoy = _sf(b.get("yoy_pop_growth")) * 100
         zhvi_yoy = _sf(b.get("zhvi_yoy_pct"))  # already a percentage, not a decimal
+        smb_zone = b.get("smb_zone")
 
         _heading(doc, "Audience Signal", size=11, space_before=10, space_after=4)
 
@@ -2376,23 +2402,24 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         _set_cell_shading(card_cell, "EAF6F8")  # light teal tint -- distinct from the
         card_cell.paragraphs[0].paragraph_format.space_after = Pt(8)  # navy AT-A-GLANCE box above
 
-        # Stat row: three numbers up front, the thing a reader's eye should
-        # land on before any prose -- household income, income momentum,
-        # population momentum. Nested table inside the shaded cell so each
+        # Stat row: numbers up front, the thing a reader's eye should land
+        # on before any prose. Nested table inside the shaded cell so each
         # stat gets its own column rather than being buried in a sentence.
-        stat_tbl = card_cell.add_table(rows=2, cols=3)
-        stat_tbl.autofit = True
         stats = [
             (f"${inc:,.0f}", "Household Income"),
             (f"{inc_yoy:+.1f}%", "Income YoY"),
             (f"{pop_yoy:+.1f}%", "Population YoY"),
         ]
+        if smb_zone:
+            stats.append((str(smb_zone), "SMB Zone"))
+        stat_tbl = card_cell.add_table(rows=2, cols=len(stats))
+        stat_tbl.autofit = True
         for j, (val, lbl) in enumerate(stats):
             vcell, lcell = stat_tbl.rows[0].cells[j], stat_tbl.rows[1].cells[j]
             vcell.paragraphs[0].text = ""
             vr = vcell.paragraphs[0].add_run(val)
             vr.bold = True
-            vr.font.size = Pt(19)
+            vr.font.size = Pt(17 if len(stats) > 3 else 19)
             vr.font.color.rgb = TEAL
             vr.font.name = FONT_HEAD
             vcell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -2404,6 +2431,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             lr.bold = True
             lcell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
 
+        # "The audience in one paragraph"
         p_narr = card_cell.add_paragraph()
         p_narr.paragraph_format.space_before = Pt(10)
         if audience_text:
@@ -2428,6 +2456,91 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_narr.font.size = Pt(9.5)
         r_narr.font.name = FONT_HEAD
         r_narr.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+        # Persona mini-card — one named persona for this branch (not a
+        # multi-persona list; that's the portfolio-brief version of this).
+        if persona:
+            persona_tbl = card_cell.add_table(rows=1, cols=1)
+            p_cell = persona_tbl.rows[0].cells[0]
+            _set_cell_shading(p_cell, "FFFFFF")
+            p_cell.paragraphs[0].paragraph_format.space_before = Pt(4)
+            r_pname = p_cell.paragraphs[0].add_run(persona.get("persona_name", ""))
+            r_pname.bold = True
+            r_pname.font.size = Pt(10.5)
+            r_pname.font.color.rgb = NAVY
+            r_pname.font.name = FONT_HEAD
+            if persona.get("persona_tagline"):
+                p_tag = p_cell.add_paragraph()
+                r_tag = p_tag.add_run(persona["persona_tagline"])
+                r_tag.italic = True
+                r_tag.font.size = Pt(8.5)
+                r_tag.font.color.rgb = GRAY3
+                r_tag.font.name = FONT_HEAD
+            for label, value in [("Life stage", persona.get("life_stage")),
+                                  ("Wealth signal", persona.get("wealth_signal")),
+                                  ("Primary need", persona.get("primary_need")),
+                                  ("Switch driver", persona.get("switch_driver"))]:
+                if not value:
+                    continue
+                p_attr = p_cell.add_paragraph()
+                p_attr.paragraph_format.space_before = Pt(3)
+                r_lbl = p_attr.add_run(f"{label}: ")
+                r_lbl.bold = True
+                r_lbl.font.size = Pt(8.5)
+                r_lbl.font.color.rgb = NAVY
+                r_lbl.font.name = FONT_HEAD
+                r_val = p_attr.add_run(value)
+                r_val.font.size = Pt(8.5)
+                r_val.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                r_val.font.name = FONT_HEAD
+            p_cell.paragraphs[-1].paragraph_format.space_after = Pt(4)
+
+        # Where it's strong / validate before activating — condensed to one
+        # branch's worth (2 + 1 bullets) instead of the portfolio brief's
+        # per-market lists, but the same "here's the case, here's the
+        # caveat" honesty that makes it read as analysis, not a sales pitch.
+        if strong_signals:
+            p_strong_h = card_cell.add_paragraph()
+            p_strong_h.paragraph_format.space_before = Pt(10)
+            r_strong_h = p_strong_h.add_run("Where it's strong")
+            r_strong_h.bold = True
+            r_strong_h.font.size = Pt(8.5)
+            r_strong_h.font.color.rgb = RGBColor(0x1A, 0x7A, 0x4A)
+            r_strong_h.font.name = FONT_HEAD
+            for s in strong_signals[:2]:
+                p_s = card_cell.add_paragraph()
+                p_s.paragraph_format.space_before = Pt(1)
+                r_arrow = p_s.add_run("→ ")
+                r_arrow.bold = True
+                r_arrow.font.size = Pt(8.5)
+                r_arrow.font.color.rgb = RGBColor(0x1A, 0x7A, 0x4A)
+                r_arrow.font.name = FONT_HEAD
+                r_s = p_s.add_run(s)
+                r_s.font.size = Pt(8.5)
+                r_s.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                r_s.font.name = FONT_HEAD
+
+        if validate_signals:
+            p_val_h = card_cell.add_paragraph()
+            p_val_h.paragraph_format.space_before = Pt(8)
+            r_val_h = p_val_h.add_run("Validate before activating")
+            r_val_h.bold = True
+            r_val_h.font.size = Pt(8.5)
+            r_val_h.font.color.rgb = RED_WEAK
+            r_val_h.font.name = FONT_HEAD
+            for v in validate_signals[:2]:
+                p_v = card_cell.add_paragraph()
+                p_v.paragraph_format.space_before = Pt(1)
+                r_arrow2 = p_v.add_run("→ ")
+                r_arrow2.bold = True
+                r_arrow2.font.size = Pt(8.5)
+                r_arrow2.font.color.rgb = RED_WEAK
+                r_arrow2.font.name = FONT_HEAD
+                r_v = p_v.add_run(v)
+                r_v.font.size = Pt(8.5)
+                r_v.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                r_v.font.name = FONT_HEAD
+        card_cell.paragraphs[-1].paragraph_format.space_after = Pt(6)
 
     # ── Play ──
     if play:
