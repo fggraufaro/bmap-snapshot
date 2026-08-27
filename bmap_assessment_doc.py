@@ -47,7 +47,7 @@ import json
 # the doc can just look at the bottom of the last page and compare the
 # build id to what they expect, instead of guessing from symptoms again.
 # Bump this string any time this file changes.
-GENERATOR_BUILD = "2026-08-27.9"
+GENERATOR_BUILD = "2026-08-27.10"
 print(f"[bmap_assessment_doc] build {GENERATOR_BUILD}")
 
 # ── Config — matches current bmap_snapshot.py production pattern ──
@@ -85,21 +85,18 @@ ZONE_LIGHT = {
 ZONE_HEX_MPL = {  # matplotlib wants '#rrggbb'
     z: f"#{h}" for z, h in ZONE_COLOR.items()
 }
-FONT_HEAD = "Inter"   # the correct brand font per Verlocity_Brand_Guidelines_R2.pdf.
-                       # Real Inter TTF files now ship alongside this script
-                       # (verlocity_font_bold.ttf / verlocity_font_regular.ttf --
-                       # via npm's @fontsource/inter, not a placeholder) and are
-                       # used directly for the cover image, which doesn't depend
-                       # on what's installed system-wide. Word-native text (every
-                       # heading, table, body paragraph) still just references
-                       # this font by NAME, though -- python-docx has no built-in
-                       # way to embed a font inside the .docx the way the cover
-                       # image bakes it in directly. For those to render as true
-                       # Inter rather than falling back to a substitute, Inter
-                       # needs to be installed on whichever machine opens the
-                       # file, or embedded via Word's own File > Options > Save >
-                       # "Embed fonts in the file" when someone finalizes it --
-                       # both real Inter TTFs are available for that.
+FONT_HEAD = "Segoe UI"   # Word-native text (headings, tables, body) references
+                          # a font by NAME only -- python-docx can't embed a font
+                          # the way the cover image bakes Inter directly into its
+                          # pixels (that part IS genuine Inter, unaffected by this
+                          # setting). "Inter" as the name here means Word tries to
+                          # find Inter installed locally and silently substitutes
+                          # something else if it isn't -- confirmed not rendering
+                          # for Francisco, so back to Segoe UI, which is actually
+                          # installed everywhere Word is. Real Inter TTFs still
+                          # ship alongside this script if anyone wants to install
+                          # them locally or embed via Word's own File > Options >
+                          # Save > "Embed fonts in the file" for a true match.
 
 # ═══════════════════════════════════════════════════════════════
 # DATA FETCH — full network, no truncation
