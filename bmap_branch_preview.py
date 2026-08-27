@@ -310,7 +310,17 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
         r_item.font.name = bad.FONT_HEAD
     list_cell.paragraphs[-1].paragraph_format.space_after = Pt(8)
 
+    # Build stamp -- tiny, gray, easy to ignore, exists so anyone looking at
+    # the doc can confirm which code generated it without guessing.
+    p_build = doc.add_paragraph()
+    p_build.paragraph_format.space_before = Pt(8)
+    r_build = p_build.add_run(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · build {bad.GENERATOR_BUILD}")
+    r_build.font.size = Pt(7)
+    r_build.font.color.rgb = RGBColor(0xB0, 0xB0, 0xB0)
+    r_build.font.name = bad.FONT_HEAD
+
     return doc
+
 
 
 def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
