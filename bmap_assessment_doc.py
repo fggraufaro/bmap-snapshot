@@ -1086,34 +1086,50 @@ def _vulnerability_reasoning(c):
 
 def _vulnerability_tags(vuln_list):
     """Assigns each competitor in this branch's ranked set (up to 3) a
-    DISTINCT short tag -- comparative within the group, not a fixed
-    per-row threshold check. The old per-row version checked YoY < -10%,
-    ROA < 0.5%, noncurrent > 2% independently for each competitor and
-    fell back to 'Declining deposits' whenever none of those tripped --
-    a real, recurring case (not hypothetical) where all 3 ranked
-    competitors are simply declining at different, more moderate rates,
-    producing the same generic tag 3 times with nothing to tell them
-    apart. This compares the group against itself: whoever is declining
-    fastest gets called out as such, whoever has the weakest OWN
-    opportunity score (a real driver of vuln_score, now shown as its own
-    column) gets called out separately, and only the remainder falls
-    back to the generic tag -- so at least two of three read distinctly
-    whenever the group has any real variance, which real competitor
-    sets almost always do. Returns {bank_name: tag}."""
+    DISTINCT short tag -- comparative across FOUR dimensions (deposit
+    trend, profitability, asset quality, overall competitive position),
+    not deposits alone. The earlier version only ever compared YoY and
+    opportunity score, so every tag read as some flavor of "declining
+    deposits" even when ROA and noncurrent-asset data (already fetched,
+    just not previously surfaced in a tag) told a sharper story --
+    exactly the "it looks like it just deposits" gap this fixes.
+
+    For each competitor, finds which single dimension it's the WEAKEST
+    on relative to the other names in this specific group, checked in
+    priority order (asset quality and profitability surface before a
+    relative YoY comparison, since a bank bleeding capital or margin is
+    a more fundamental problem than a milder deposit dip) -- so real
+    variance in the underlying financials produces genuinely different
+    phrases instead of three restatements of the same metric. Returns
+    {bank_name: tag}."""
     if not vuln_list:
         return {}
+
+    def _worst_name(key, higher_is_worse):
+        scored = [c for c in vuln_list if c.get(key) is not None]
+        if not scored:
+            return None
+        fn = max if higher_is_worse else min
+        return fn(scored, key=lambda c: _sf(c.get(key))).get("bank_name")
+
+    worst_noncurrent = _worst_name("noncurrent_pct", higher_is_worse=True)
+    worst_roa = _worst_name("roa", higher_is_worse=False)
+    worst_yoy = _worst_name("yoy_pct", higher_is_worse=False)
+    worst_score = _worst_name("opportunity_score", higher_is_worse=False)
+
     tags = {}
-    worst_yoy_name = min(vuln_list, key=lambda c: _sf(c.get("yoy_pct"))).get("bank_name")
-    scored = [c for c in vuln_list if c.get("opportunity_score") is not None]
-    weakest_score_name = min(scored, key=lambda c: _sf(c.get("opportunity_score"))).get("bank_name") if scored else None
     for c in vuln_list:
         yoy = _sf(c.get("yoy_pct"))
         name = c.get("bank_name")
         if yoy < -10:
             tags[name] = "Losing deposits fast"
-        elif name == worst_yoy_name and yoy < 0:
+        elif name == worst_noncurrent and _sf(c.get("noncurrent_pct")) > 1:
+            tags[name] = "Highest credit stress of the three"
+        elif name == worst_roa and _sf(c.get("roa")) < 1.5:
+            tags[name] = "Weakest profitability of the three"
+        elif name == worst_yoy and yoy < 0:
             tags[name] = "Declining fastest of the three"
-        elif name == weakest_score_name:
+        elif name == worst_score:
             tags[name] = "Weakest overall position"
         elif yoy < 0:
             tags[name] = "Declining deposits"
@@ -2624,21 +2640,33 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_lead.font.color.rgb = GRAY3
         r_lead.font.name = FONT_HEAD
 
-        vt = doc.add_table(rows=1, cols=7)
+        vt = doc.add_table(rows=1, cols=8)
         vt.style = "Light Grid Accent 1"
+        vt.autofit = False
+        # Explicit widths -- 8 columns is tight on a US Letter page at
+        # default autofit, which was breaking headers mid-word ("Opportuni-
+        # ty Score", "Competito-r"). Narrow columns for short values, more
+        # room for the two text-heavy ones (Competitor, Weakness).
+        col_widths = [Inches(0.35), Inches(1.35), Inches(0.7), Inches(0.65),
+                      Inches(0.55), Inches(0.65), Inches(0.65), Inches(1.45)]
         vt_hdr = vt.rows[0].cells
-        for j, h in enumerate(["Rank", "Competitor", "Deposits", "Mkt Share", "YoY", "Opportunity Score", "Weakness"]):
+        for j, h in enumerate(["Rank", "Competitor", "Deposits", "Mkt Share", "YoY", "Opp Score",
+                                "Vuln Score", "Weakness"]):
             vt_hdr[j].text = h
+            vt_hdr[j].width = col_widths[j]
 
         def _cell_run(cell, text, bold=False, color=None):
             cell.text = ""
             r = cell.paragraphs[0].add_run(text)
             r.font.name = FONT_HEAD
-            r.font.size = Pt(9.5)
+            r.font.size = Pt(8.5)
             if bold:
                 r.font.bold = True
             if color:
                 r.font.color.rgb = color
+        for c in vt_hdr:
+            for run in c.paragraphs[0].runs:
+                run.font.size = Pt(8.5)
 
         # Tags computed once for the whole group -- see _vulnerability_tags()
         # docstring for why this can't be done per-row independently.
@@ -2650,8 +2678,11 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
 
         for c in vuln_list[:3]:
             row = vt.add_row().cells
+            for j, cell in enumerate(row):
+                cell.width = col_widths[j]
             yoy = _sf(c.get("yoy_pct"))
             opp_score = c.get("opportunity_score")
+            vuln_score = c.get("vuln_score")
             is_top = c is vuln_list[0]
             name = c.get("bank_name")
             tag = tags_by_name.get(name, "Declining deposits")
@@ -2672,7 +2703,8 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             _cell_run(row[4], f"{yoy:+.1f}%", bold=(yoy < 0), color=RED_WEAK if yoy < 0 else None)
             _cell_run(row[5], f"{opp_score:.0f}/100" if opp_score is not None else "—",
                       bold=(name == weakest_score_name), color=RED_WEAK if name == weakest_score_name else None)
-            _cell_run(row[6], tag, bold=True, color=RED_WEAK if tag != "Stable, size-based target only" else GRAY3)
+            _cell_run(row[6], f"{vuln_score:.0f}" if vuln_score is not None else "—", bold=is_top)
+            _cell_run(row[7], tag, bold=True, color=RED_WEAK if tag != "Stable, size-based target only" else GRAY3)
 
             # The #1 vulnerability-ranked competitor's whole row is shaded so
             # it's the one row a skimming reader's eye lands on first, before
