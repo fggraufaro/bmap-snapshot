@@ -41,6 +41,15 @@ except ImportError:
 
 import json
 
+# ── Build marker — printed to logs AND stamped tiny/gray on the closing
+# page of both the Assessment and the Preview. Exists specifically to kill
+# the "did my last fix actually deploy" back-and-forth: whoever generated
+# the doc can just look at the bottom of the last page and compare the
+# build id to what they expect, instead of guessing from symptoms again.
+# Bump this string any time this file changes.
+GENERATOR_BUILD = "2026-08-27.5"
+print(f"[bmap_assessment_doc] build {GENERATOR_BUILD}")
+
 # ── Config — matches current bmap_snapshot.py production pattern ──
 # (previous version of this file used a hardcoded legacy anon key, which
 # is dead now that RLS + service-role-only access is in place — fixed here)
@@ -170,7 +179,7 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
         "priority_tier,market_growth_normalized,rel_growth_norm,"
         "inv_density_norm_winsor,deposit_size_norm,namefull,"
         "household_income,yoy_income_growth,total_population,yoy_pop_growth,"
-        "zhvi_yoy_pct,smb_zone,smb_index&order=opportunity_score.desc",
+        "zhvi_yoy_pct,smb_zone,smb_index,total_deposits_10mi&order=opportunity_score.desc",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
 
@@ -1094,6 +1103,31 @@ def _vulnerability_tag(c):
     return " + ".join(tags) if tags else "Stable"
 
 
+def _rank_order_note(vuln_list):
+    """Explains why the rank order isn't simply sorted by YoY severity --
+    the vuln_score formula weighs deposit trend, profitability, asset
+    quality, proximity, and the competitor's OWN overall market position
+    together, so the steepest decliner doesn't always come out on top (a
+    real, recurring case: a competitor with a much worse YoY number can
+    still rank below one with a milder decline, because vuln_score isn't a
+    single-metric sort). Returns None when the visible order already
+    matches YoY severity -- nothing counterintuitive to flag in that case."""
+    if len(vuln_list) < 2:
+        return None
+    for i in range(len(vuln_list) - 1):
+        higher, lower = vuln_list[i], vuln_list[i + 1]
+        higher_yoy, lower_yoy = _sf(higher.get("yoy_pct")), _sf(lower.get("yoy_pct"))
+        if lower_yoy < higher_yoy:  # the LOWER-ranked one is declining faster
+            return (
+                f"{lower.get('bank_name')} is declining faster ({lower_yoy:+.1f}% YoY) than "
+                f"{higher.get('bank_name')} ({higher_yoy:+.1f}% YoY) but ranks behind it here — "
+                f"vulnerability isn't a sort on deposit trend alone. Profitability, asset quality, "
+                f"proximity, and {higher.get('bank_name')}'s own weaker overall competitive position "
+                f"combine to outweigh the steeper single-metric decline."
+            )
+    return None
+
+
 def _relative_size_line(own_deposits, competitors):
     """One sentence placing the client branch's own deposit size against the
     named competitor set, e.g. 'larger than X (2.8x), smaller than Y (0.28x)'.
@@ -1336,6 +1370,12 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
         )
         top_competitor = filtered[0] if filtered else None
         top3_competitors = filtered[:3]
+        # Total market deposits WITHIN THE ADAPTIVE RADIUS -- see matching
+        # note in fetch_single_branch_strategy() below (kept identical so
+        # the two paths never disagree on what "market share" means).
+        total_radius_deposits = deposits + sum(
+            _sf(c.get("deposits")) for c in candidates if _sf(c.get("distance_miles")) <= radius
+        )
 
         results.append({
             "namebr": b.get("namebr"),
@@ -1350,6 +1390,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
             "top_competitor": top_competitor,
             "top3_competitors": top3_competitors,
             "all_competitors": filtered,  # full radius+size-filtered set, for the map
+            "total_market_deposits_radius": total_radius_deposits,
         })
     print(f"  ✓ {len(results)} branches assessed")
     return results
@@ -1368,11 +1409,11 @@ def fetch_single_branch_strategy(ik, target_branch):
     just this branch's own lat/lon, so it costs one small request no matter
     how large the network is.
 
-    Note: this RPC's return shape doesn't include each competitor's lat/lon
-    (the batch version does), so all_competitors here can't drive the map
-    directly -- render_branch_deep_dive()'s map already falls back to the
-    vulnerability-ranked competitor list (which has its own geo join) for
-    exactly this case, so the map still renders correctly."""
+    branches_within_radius() now returns lat/lon per competitor directly
+    (added at the database level -- it originally didn't, which meant the
+    map could only draw whichever vuln_list competitors happened to have
+    geo from a separate, unrelated join, sometimes just one of three).
+    all_competitors below carries real geo now, same as the batch version."""
     try:
         bank_id = int(ik.replace("bank_", ""))
     except ValueError:
@@ -1403,6 +1444,13 @@ def fetch_single_branch_strategy(ik, target_branch):
     )
     print(f"  ✓ single-branch strategy: {len(candidates)} candidates, "
           f"{len(filtered)} pass radius+size filter (radius={radius}mi)")
+    # Total market deposits WITHIN THE ADAPTIVE RADIUS -- every branch in
+    # range (not just the size-filtered "named competitor" subset), plus
+    # this branch's own deposits, since market share means share of the
+    # whole local market, not just of the handful of named targets.
+    total_radius_deposits = deposits + sum(
+        _sf(c.get("deposits")) for c in candidates if _sf(c.get("distance_miles")) <= radius
+    )
     return {
         "namebr": target_branch.get("namebr"),
         "citybr": target_branch.get("citybr"),
@@ -1415,7 +1463,8 @@ def fetch_single_branch_strategy(ik, target_branch):
         "competitor_count": len(filtered),
         "top_competitor": filtered[0] if filtered else None,
         "top3_competitors": filtered[:3],
-        "all_competitors": filtered,  # no lat/lon here -- map falls back to vuln_list
+        "all_competitors": filtered,  # now carries lat/lon -- see docstring
+        "total_market_deposits_radius": total_radius_deposits,
     }
 
 
@@ -2124,10 +2173,20 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     # that's a real data gap flagged separately, not yet built. Labeled as
     # an estimate in the header itself so it's never read as precise.
     est_households = _sf(b.get("total_population")) / 2.5
-    dr = doc.add_table(rows=2, cols=5)
+    # Market share denominator is total deposits WITHIN THE SAME ADAPTIVE
+    # RADIUS shown in this row (not a fixed 10mi figure) -- every branch in
+    # range, not just the size-filtered named competitors, plus this
+    # branch's own deposits. Column label carries the actual radius so it
+    # never has to be cross-checked against a different distance elsewhere
+    # in the row.
+    total_mkt_dep = _sf(strat.get("total_market_deposits_radius")) if strat else 0.0
+    mkt_share = (dep / total_mkt_dep * 100) if total_mkt_dep > 0 else None
+    mkt_share_label = f"Market Share ({radius_mi:.1f}mi)" if radius_mi else "Market Share"
+    dr = doc.add_table(rows=2, cols=6)
     dr.style = "Light Grid Accent 1"
     dr_hdr = dr.rows[0].cells
-    for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used", "Households (est.)"]):
+    for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used",
+                            "Households (est.)", mkt_share_label]):
         dr_hdr[j].text = h
     dr_val = dr.rows[1].cells
     dr_val[0].text = f"${dep/1e6:.1f}M"
@@ -2135,6 +2194,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     dr_val[2].text = tier_label or "—"
     dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
     dr_val[4].text = f"~{est_households:,.0f}" if est_households > 0 else "—"
+    dr_val[5].text = f"{mkt_share:.1f}%" if mkt_share is not None else "—"
     p_method = doc.add_paragraph()
     p_method.paragraph_format.space_before = Pt(4)
     method_run = p_method.add_run(
@@ -2142,7 +2202,10 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         "dense, high-value markets, up to 10mi for rural or low-deposit branches — "
         "rather than one fixed distance for the whole network. Households (est.) is "
         "the branch ZIP's population divided by the Census national average household "
-        "size (2.5) — a fast estimate, not a radius-level Census household count."
+        "size (2.5) — a fast estimate, not a radius-level Census household count. "
+        "Market Share is this branch's deposits as a share of ALL deposits within the "
+        "same adaptive radius shown here (FDIC Summary of Deposits) — every branch in "
+        "range, not just the named competitors below."
     )
     method_run.italic = True
     method_run.font.size = Pt(8.5)
@@ -2236,17 +2299,20 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         p_lead.paragraph_format.space_before = Pt(8)
         r_lead = p_lead.add_run(
             "Ranked by vulnerability, not size — which nearby institutions are actually "
-            "losing ground, not just which are largest."
+            "losing ground, not just which are largest. The score weighs deposit trend, "
+            "profitability, asset-quality stress, proximity, and each competitor's own "
+            "overall market position together — a bank losing deposits fastest doesn't "
+            "automatically rank first if it's otherwise financially stronger."
         )
         r_lead.italic = True
         r_lead.font.size = Pt(9)
         r_lead.font.color.rgb = GRAY3
         r_lead.font.name = FONT_HEAD
 
-        vt = doc.add_table(rows=1, cols=7)
+        vt = doc.add_table(rows=1, cols=8)
         vt.style = "Light Grid Accent 1"
         vt_hdr = vt.rows[0].cells
-        for j, h in enumerate(["Rank", "Competitor", "Deposits", "YoY", "ROA", "Noncurrent %", "Weakness"]):
+        for j, h in enumerate(["Rank", "Competitor", "Deposits", "Mkt Share", "YoY", "ROA", "Noncurrent %", "Weakness"]):
             vt_hdr[j].text = h
 
         def _cell_run(cell, text, bold=False, color=None):
@@ -2266,17 +2332,24 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             noncurrent = _sf(c.get("noncurrent_pct"))
             is_top = c is vuln_list[0]
             tag = _vulnerability_tag(c)
+            comp_dep = _sf(c.get("deposits"))
+            # Same radius-scoped denominator as the branch's own Market
+            # Share above -- every competitor's share of that same total,
+            # not a separately-computed figure, so the numbers in this
+            # table and the row above are directly comparable.
+            comp_share = (comp_dep / total_mkt_dep * 100) if total_mkt_dep > 0 else None
 
             _cell_run(row[0], str(c.get("rank") or "—"), bold=is_top)
             _cell_run(row[1], str(c.get("bank_name", "—")), bold=is_top)
-            _cell_run(row[2], f"${_sf(c.get('deposits'))/1e6:.1f}M")
+            _cell_run(row[2], f"${comp_dep/1e6:.1f}M")
+            _cell_run(row[3], f"{comp_share:.1f}%" if comp_share is not None else "—")
             # Weak individual metrics get flagged red/bold right in the cell
             # so the eye catches the specific weakness without reading the
             # Weakness column or any prose below the table.
-            _cell_run(row[3], f"{yoy:+.1f}%", bold=(yoy < 0), color=RED_WEAK if yoy < 0 else None)
-            _cell_run(row[4], f"{roa:.2f}%", bold=(roa < 0.5), color=RED_WEAK if roa < 0.5 else None)
-            _cell_run(row[5], f"{noncurrent:.1f}%", bold=(noncurrent > 2), color=RED_WEAK if noncurrent > 2 else None)
-            _cell_run(row[6], tag, bold=True, color=RED_WEAK if tag != "Stable" else GRAY3)
+            _cell_run(row[4], f"{yoy:+.1f}%", bold=(yoy < 0), color=RED_WEAK if yoy < 0 else None)
+            _cell_run(row[5], f"{roa:.2f}%", bold=(roa < 0.5), color=RED_WEAK if roa < 0.5 else None)
+            _cell_run(row[6], f"{noncurrent:.1f}%", bold=(noncurrent > 2), color=RED_WEAK if noncurrent > 2 else None)
+            _cell_run(row[7], tag, bold=True, color=RED_WEAK if tag != "Stable" else GRAY3)
 
             # The #1 vulnerability-ranked competitor's whole row is shaded so
             # it's the one row a skimming reader's eye lands on first, before
@@ -2284,6 +2357,20 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             if is_top:
                 for cell in row:
                     _set_cell_shading(cell, RED_WEAK_FILL)
+
+        # Explains the rank order itself when it isn't a simple sort by YoY
+        # severity -- e.g. #2 declining faster than #1. Real, recurring case,
+        # not hypothetical: the vuln_score formula weighs several factors
+        # together, so this comes up whenever one factor pulls against another.
+        rank_note = _rank_order_note(vuln_list[:3])
+        if rank_note:
+            p_rank = doc.add_paragraph()
+            p_rank.paragraph_format.space_before = Pt(6)
+            r_rank = p_rank.add_run(rank_note)
+            r_rank.italic = True
+            r_rank.font.size = Pt(8.5)
+            r_rank.font.color.rgb = GRAY3
+            r_rank.font.name = FONT_HEAD
 
         # Relative size — where THIS branch stands against the named
         # competitors, not just who they are and how big they are.
@@ -3135,6 +3222,15 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     _heading(doc, "Discussed Live", space_before=0)
     _body(doc, "This assessment includes a working session to walk through these findings and answer "
                "specific questions about your network. Session notes and next-step scope are recorded separately.")
+
+    # Build stamp -- tiny, gray, easy to ignore, exists so anyone looking at
+    # the doc can confirm which code generated it without guessing.
+    p_build = doc.add_paragraph()
+    p_build.paragraph_format.space_before = Pt(14)
+    r_build = p_build.add_run(f"Generated {datetime.now().strftime('%Y-%m-%d %H:%M')} · build {GENERATOR_BUILD}")
+    r_build.font.size = Pt(7)
+    r_build.font.color.rgb = RGBColor(0xB0, 0xB0, 0xB0)
+    r_build.font.name = FONT_HEAD
 
     return doc
 
