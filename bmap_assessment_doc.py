@@ -939,6 +939,18 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
     return True
 
 
+def _distance_miles(lat1, lon1, lat2, lon2):
+    """Simple haversine — used only to backfill distance_miles for the
+    vuln_list map fallback below, which doesn't carry it natively."""
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    r = 3958.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
 def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
     """Dispatcher: real map tiles when available, local-plot fallback
     otherwise. Same pattern as chart_branch_map/chart_branch_map_osm."""
@@ -1987,22 +1999,30 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     dep = _sf(b.get("latest_dep"))
     radius_mi = strat.get("radius_mi") if strat else None
     tier_label = strat.get("tier") if strat else None
-    dr = doc.add_table(rows=2, cols=4)
+    # Households is a fast estimate (branch-ZIP population / 2.5, the Census
+    # national average household size), not a radius-level ACS ingestion --
+    # that's a real data gap flagged separately, not yet built. Labeled as
+    # an estimate in the header itself so it's never read as precise.
+    est_households = _sf(b.get("total_population")) / 2.5
+    dr = doc.add_table(rows=2, cols=5)
     dr.style = "Light Grid Accent 1"
     dr_hdr = dr.rows[0].cells
-    for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used"]):
+    for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used", "Households (est.)"]):
         dr_hdr[j].text = h
     dr_val = dr.rows[1].cells
     dr_val[0].text = f"${dep/1e6:.1f}M"
     dr_val[1].text = fmt_yoy(b, capped_yoy)
     dr_val[2].text = tier_label or "—"
     dr_val[3].text = f"{radius_mi}mi" if radius_mi else "—"
+    dr_val[4].text = f"~{est_households:,.0f}" if est_households > 0 else "—"
     p_method = doc.add_paragraph()
     p_method.paragraph_format.space_before = Pt(4)
     method_run = p_method.add_run(
         "Radius scales to local density and deposit size — as tight as 0.5mi for "
         "dense, high-value markets, up to 10mi for rural or low-deposit branches — "
-        "rather than one fixed distance for the whole network."
+        "rather than one fixed distance for the whole network. Households (est.) is "
+        "the branch ZIP's population divided by the Census national average household "
+        "size (2.5) — a fast estimate, not a radius-level Census household count."
     )
     method_run.italic = True
     method_run.font.size = Pt(8.5)
@@ -2025,15 +2045,47 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         print(f"  ⚠ [map] no all_competitors for {b.get('namebr')} — skipping radius map "
               f"(strat={'present' if strat else 'MISSING'}, "
               f"all_competitors_key={'present' if strat and 'all_competitors' in strat else 'MISSING'})")
-    if all_comp:
-        own = geo_by_uid.get(b.get("uninumbr"))
+
+    own = geo_by_uid.get(b.get("uninumbr"))
+
+    # Map competitor source — prefer the radius-based all_competitors list,
+    # but fall back to vuln_list (branch_target_competitors) when it's empty.
+    # vuln_list already carries lat/lon from its own geo join in
+    # fetch_vulnerability_targets() and has rendered correctly in every real
+    # generation so far (it's the same data behind the competitor table
+    # above), whereas all_competitors has gone empty for reasons not yet
+    # isolated. This means the map now renders whenever the table does,
+    # instead of the two being silently decoupled from each other.
+    map_competitors = all_comp
+    if not map_competitors and vuln_list:
+        own_lat = own.get("lat") if own else None
+        own_lon = own.get("lon") if own else None
+        map_competitors = [
+            {
+                "bank_name": c.get("bank_name"),
+                "deposits": c.get("deposits"),
+                "lat": c.get("lat"),
+                "lon": c.get("lon"),
+                "distance_miles": _distance_miles(own_lat, own_lon, c.get("lat"), c.get("lon")),
+            }
+            for c in vuln_list if c.get("lat") is not None and c.get("lon") is not None
+        ]
+        if map_competitors:
+            print(f"  ✓ [map] built from vuln_list fallback for {b.get('namebr')} "
+                  f"({len(map_competitors)} of {len(vuln_list)} vuln competitors had usable geo)")
+        elif vuln_list:
+            print(f"  ⚠ [map] vuln_list present ({len(vuln_list)} competitors) but none had "
+                  f"usable lat/lon — geo join in fetch_vulnerability_targets() likely missed "
+                  f"these target_uninumbr values in branches_master_v2")
+
+    if map_competitors:
         if not own or own.get("lat") is None or own.get("lon") is None:
             print(f"  ⚠ [map] no usable geo for {b.get('namebr')} (uninumbr={b.get('uninumbr')}) "
                   f"in geo_by_uid ({len(geo_by_uid)} entries loaded) — skipping radius map")
         if own and own.get("lat") is not None and own.get("lon") is not None:
             radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
             ok = chart_branch_radius_map(
-                own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
+                own["lat"], own["lon"], map_competitors, radius_mi or 3.0, radius_img
             )
             if not ok:
                 print(f"  ⚠ [map] chart_branch_radius_map returned False for {b.get('namebr')} "
@@ -2046,8 +2098,8 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                 p_cap = doc.add_paragraph()
                 p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 r_cap = p_cap.add_run(
-                    f"All {len(all_comp)} competitor{'s' if len(all_comp) != 1 else ''} within "
-                    f"{radius_mi or 3.0:.1f}mi shown — full competitive density in this market."
+                    f"{len(map_competitors)} competitor{'s' if len(map_competitors) != 1 else ''} "
+                    f"shown, sized by deposits — full competitive density in this market."
                 )
                 r_cap.italic = True
                 r_cap.font.size = Pt(7.5)
