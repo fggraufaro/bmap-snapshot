@@ -308,39 +308,42 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
     or raises ValueError with a clear message. Separated from run() so both
     the CLI entry point (saves to disk) and the Hub's Quick Export endpoint
     (streams from memory, same pattern as /generate-assessment) can share
-    it without duplicating the fetch/pick/narrate/build sequence."""
+    it without duplicating the fetch/pick/narrate/build sequence.
+
+    Uses skip_competitive_strategy=True + fetch_single_branch_strategy() for
+    the target branch specifically, rather than the full $10K Assessment's
+    network-wide competitive-strategy fetch. That network-wide fetch pages
+    through every branch's competitor rows (11,000+ for a 166-branch network
+    like Trustmark) and this flow only ever used one branch's slice of it --
+    real cause of a production timeout once that batch call started being
+    correctly paginated instead of silently truncated. This keeps the
+    Preview fast regardless of network size, which matters since it's meant
+    to run live in a pitch meeting."""
     print(f"[branch-preview] fetching network data for {ik}...")
-    d = bad.fetch_full_network_data(ik)
+    d = bad.fetch_full_network_data(ik, skip_competitive_strategy=True)
     if not d["branches"]:
         raise ValueError(f"No branch data found for inst_key='{ik}'. This bank may not be "
                           f"ingested into BMAP yet, or the inst_key is incorrect.")
 
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     branches = d["branches"]
-    branch_strategy = d.get("branch_strategy") or []
     capped_yoy = d.get("capped_yoy") or {}
     vulnerability_targets = d.get("vulnerability_targets") or {}
     geo_by_uid = {g["uninumbr"]: g for g in (d.get("branches_geo") or []) if g.get("uninumbr") is not None}
 
     summary = bad.summarize_network(d)
-    dives, _ = bad.build_branch_deep_dives(branches, branch_strategy)
 
     target = pick_preview_branch(summary, branches, branch_name)
     if not target:
         raise ValueError("Could not select a branch to preview — network has no branches.")
 
-    entry = next((e for e in dives if e["branch"].get("uninumbr") == target.get("uninumbr")), None)
-    if not entry:
-        # Target branch wasn't in the curated top-15 (large network) --
-        # build its entry directly so the preview isn't limited to only
-        # branches the full Assessment happened to curate.
-        strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in branch_strategy}
-        key = (target.get("namebr"), target.get("citybr"), target.get("stalpbr"))
-        strat = strategy_by_name.get(key)
-        play = bad.get_play(target.get("opportunity_zone"), target.get("matrix_quadrant"))
-        top_comp = strat.get("top_competitor") if strat else None
-        capture_pool = bad._sf(top_comp.get("deposits")) if top_comp else 0.0
-        entry = {"branch": target, "strategy": strat, "play": play, "capture_pool": capture_pool}
+    target_geo = geo_by_uid.get(target.get("uninumbr")) or {}
+    target_with_geo = {**target, "lat": target_geo.get("lat"), "lon": target_geo.get("lon")}
+    strat = bad.fetch_single_branch_strategy(ik, target_with_geo)
+    play = bad.get_play(target.get("opportunity_zone"), target.get("matrix_quadrant"))
+    top_comp = strat.get("top_competitor") if strat else None
+    capture_pool = bad._sf(top_comp.get("deposits")) if top_comp else 0.0
+    entry = {"branch": target, "strategy": strat, "play": play, "capture_pool": capture_pool}
 
     branch, strat, play = entry["branch"], entry["strategy"], entry["play"]
     branch_label = f"{branch.get('namebr')} ({branch.get('citybr')}, {branch.get('stalpbr')})"
