@@ -30,7 +30,7 @@ from pathlib import Path
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 
@@ -2002,6 +2002,161 @@ def _set_cell_shading(cell, hex_color):
     tcPr.append(shd)
 
 
+def _remove_table_borders(table):
+    """Strips visible gridlines from a table used purely as a layout
+    device (the cover page, header/footer bands) -- these aren't data
+    tables and shouldn't look like one."""
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "nil")
+        borders.append(el)
+    tblPr.append(borders)
+
+
+def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
+    """Full-bleed Primary Dark Blue (#083D5F) cover matching
+    Verlocity_Brand_Guidelines_R2.pdf -- built as a shaded table cell
+    sized to the exact printable page area (WD_ROW_HEIGHT_RULE.EXACTLY),
+    not Word's native page-background color. That native background
+    color is invisible to most readers by default (gated behind a
+    "Print Background Colors" setting almost nobody enables) and won't
+    print either -- a bad silent failure for a client deliverable. A
+    shaded table cell always renders, in Word, in preview panes, and
+    when printed.
+
+    Logo treatment is the guide's own approved "Reverse Logo -- white,
+    for use on black, dark, or mid-tone backgrounds" (brand guide p.8),
+    rendered as styled Inter text since no white/reverse logo image
+    asset (the guide's own "Verlocity Logo_KO_white" file, p.11) is
+    available in this environment. Drop that file in next to this
+    script and swap it in here for a pixel-exact result -- this is a
+    faithful but text-only approximation until then."""
+    section = doc.sections[0]
+    printable_width = section.page_width - section.left_margin - section.right_margin
+    printable_height = section.page_height - section.top_margin - section.bottom_margin
+
+    cover = doc.add_table(rows=1, cols=1)
+    cover.autofit = False
+    cover.alignment = WD_TABLE_ALIGNMENT.CENTER
+    row = cover.rows[0]
+    row.height = printable_height
+    row.height_rule = WD_ROW_HEIGHT_RULE.AT_LEAST  # AT_LEAST is forgiving if content
+    cell = row.cells[0]                            # runs slightly over/under; EXACTLY
+    cell.width = printable_width                   # caused a stray blank second page
+    _set_cell_shading(cell, "083D5F")
+    _remove_table_borders(cover)
+
+    def _line(text, size, color, bold=False, italic=False, space_before=0,
+              space_after=0, all_caps=False, align=WD_ALIGN_PARAGRAPH.LEFT, first=False):
+        p = cell.paragraphs[0] if first else cell.add_paragraph()
+        p.paragraph_format.space_before = Pt(space_before)
+        p.paragraph_format.space_after = Pt(space_after)
+        p.alignment = align
+        r = p.add_run(text.upper() if all_caps else text)
+        r.font.size = Pt(size)
+        r.font.color.rgb = color
+        r.font.name = FONT_HEAD
+        r.bold = bold
+        r.italic = italic
+        return p
+
+    WHITE = RGBColor(0xFF, 0xFF, 0xFF)
+    LIGHT_TEAL = RGBColor(0x7D, 0xD8, 0xE8)
+    MUTED_ON_NAVY = RGBColor(0xAF, 0xC4, 0xD6)
+
+    # Wordmark + tagline lockup -- HEADLINES per the brand guide's own
+    # typography spec: Inter Bold, all caps. Top spacer approximates the
+    # reference cover's vertical placement -- deliberately not true
+    # cell-centering (WD_ALIGN_VERTICAL.CENTER would center the ENTIRE
+    # flow including the bottom corner mark as one block, pulling it up
+    # into the middle of the page instead of pinning it near the bottom).
+    _line("", 1, WHITE, space_before=130, first=True)
+    _line("VERLOCITY", 34, WHITE, bold=True, all_caps=True)
+    _line("Stop Guessing. Start Growing.", 13, LIGHT_TEAL, space_before=2, space_after=44)
+
+    # Bank name + doc title -- the actual per-generation content
+    _line(bank_name, 24, WHITE, bold=True, space_before=8)
+    _line(doc_title, 13, LIGHT_TEAL, space_before=4)
+    if subtitle:
+        _line(subtitle, 10.5, MUTED_ON_NAVY, italic=True, space_before=6)
+    _line(datetime.now().strftime("%B %Y"), 10, MUTED_ON_NAVY, space_before=10)
+
+    # Corner mark, matching the reference cover's bottom-right placement.
+    # Fixed (not computed) gap -- modest rather than page-filling, so it
+    # stays safely on one page regardless of subtitle length varying
+    # between the Assessment and the Preview.
+    _line("", 1, WHITE, space_before=90)
+    _line("VERLOCITY.AI", 9, WHITE, bold=True, align=WD_ALIGN_PARAGRAPH.RIGHT)
+
+    # No explicit page_break() here -- the table's own AT_LEAST height
+    # (set to the full printable page height above) already guarantees
+    # whatever comes next starts on a new page. Adding an explicit break
+    # on top of that was pushing content two pages forward instead of
+    # one -- the actual cause of the stray blank page this function used
+    # to produce.
+
+
+def setup_branded_header_footer(doc, bank_name):
+    """Consistent header/footer for every page AFTER the cover -- the
+    cover gets its own full-bleed treatment via build_branded_cover() and
+    should not repeat this header, so this enables 'different first page'
+    and only sets the header/footer on section.header (page 2 onward),
+    leaving section.first_page_header/footer blank."""
+    section = doc.sections[0]
+    section.different_first_page_header_footer = True
+
+    header = section.header
+    hp = header.paragraphs[0]
+    hp.text = ""
+    r_logo = hp.add_run("VERLOCITY")
+    r_logo.bold = True
+    r_logo.font.size = Pt(10)
+    r_logo.font.color.rgb = NAVY
+    r_logo.font.name = FONT_HEAD
+    r_sep = hp.add_run(f"   |   {bank_name}")
+    r_sep.font.size = Pt(10)
+    r_sep.font.color.rgb = GRAY3
+    r_sep.font.name = FONT_HEAD
+    hp.paragraph_format.space_after = Pt(4)
+    # thin rule under the header
+    pPr = hp._p.get_or_add_pPr()
+    pBdr = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "4")
+    bottom.set(qn("w:space"), "4")
+    bottom.set(qn("w:color"), "02A7C2")
+    pBdr.append(bottom)
+    pPr.append(pBdr)
+
+    footer = section.footer
+    fp = footer.paragraphs[0]
+    fp.text = ""
+    fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_conf = fp.add_run("VERLOCITY.AI  ·  CONFIDENTIAL  ·  Page ")
+    r_conf.font.size = Pt(8)
+    r_conf.font.color.rgb = GRAY3
+    r_conf.font.name = FONT_HEAD
+    # PAGE field
+    run_field = fp.add_run()
+    fld_begin = OxmlElement("w:fldChar")
+    fld_begin.set(qn("w:fldCharType"), "begin")
+    instr = OxmlElement("w:instrText")
+    instr.set(qn("xml:space"), "preserve")
+    instr.text = "PAGE"
+    fld_end = OxmlElement("w:fldChar")
+    fld_end.set(qn("w:fldCharType"), "end")
+    run_field._r.append(fld_begin)
+    run_field._r.append(instr)
+    run_field._r.append(fld_end)
+    run_field.font.size = Pt(8)
+    run_field.font.color.rgb = GRAY3
+    run_field.font.name = FONT_HEAD
+
+
 def _render_signal_brief(doc, title, raw_text):
     """Renders a web-search signal brief's structured plain-text output
     (three ALL-CAPS headers per the analyst prompts) into formatted doc
@@ -2712,42 +2867,14 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     section.left_margin = Cm(2.2)
     section.right_margin = Cm(2.2)
 
-    # ── Cover ──
-    p0 = doc.add_paragraph()
-    p0.paragraph_format.space_before = Pt(50)
-    logo_path = str(Path(__file__).parent / "verlocity_logo.jpg") if (Path(__file__).parent / "verlocity_logo.jpg").exists() else None
-    if logo_path:
-        run0 = p0.add_run()
-        run0.add_picture(logo_path, width=Inches(2.0))  # brand guide: min 1.0" width
-    else:
-        run0 = p0.add_run("VERLOCITY")
-        run0.bold = True
-        run0.font.size = Pt(14)
-        run0.font.color.rgb = TEAL
-        run0.font.name = FONT_HEAD
+    # ── Cover + branded header/footer (brand guide-aligned) ──
+    build_branded_cover(doc, bank_name, "BMAP Market Assessment")
+    setup_branded_header_footer(doc, bank_name)
 
-    p2 = doc.add_paragraph()
-    p2.paragraph_format.space_before = Pt(18)
-    run2 = p2.add_run(bank_name)
-    run2.bold = True
-    run2.font.size = Pt(28)
-    run2.font.color.rgb = NAVY
-    run2.font.name = FONT_HEAD
-
-    p3 = doc.add_paragraph()
-    run3 = p3.add_run("BMAP Market Assessment")
-    run3.font.size = Pt(14)
-    run3.font.color.rgb = GRAY3
-    run3.font.name = FONT_HEAD
-
-    p4 = doc.add_paragraph()
-    p4.paragraph_format.space_after = Pt(30)
-    run4 = p4.add_run(datetime.now().strftime("%B %Y"))
-    run4.font.size = Pt(10)
-    run4.font.color.rgb = GRAY3
-    run4.font.name = FONT_HEAD
-
-    # Cover hero visual — zone distribution, sets the McKinsey "big number up front" tone
+    # Zone distribution hero visual -- kept as its own opening page right
+    # after the cover (a matplotlib chart doesn't read well directly on
+    # the navy cover background), sets the McKinsey "big number up front"
+    # tone before the Executive Summary text begins.
     zone_chart_path = f"{tmpdir}/_chart_zones.png"
     chart_zone_distribution(summary["zones"], zone_chart_path)
     doc.add_picture(zone_chart_path, width=Inches(6.3))
