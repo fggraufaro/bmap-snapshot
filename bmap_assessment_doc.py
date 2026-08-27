@@ -62,6 +62,8 @@ EMERALD = rgb("66CC99")
 LEMON   = rgb("CDD61A")
 GRAY3  = rgb("778899")
 GRAY_FILL = "F5F5F2"
+RED_WEAK = rgb("B02A2A")       # weakness-signal text color in competitor tables
+RED_WEAK_FILL = "FBEAEA"       # light red row-shading for the top target
 
 # Zone colors — matches BMAP_Snapshot_Hancock_Whitney_Bank_20260813.pptx exactly
 # (brand-guideline navy→teal→emerald→lemon progression, not a red/green traffic-light scheme)
@@ -1015,6 +1017,51 @@ def _vulnerability_reasoning(c):
     return "; ".join(reasons)
 
 
+def _vulnerability_tag(c):
+    """Short (2-4 word) scannable tag for a 'Weakness' table column -- a CEO
+    should be able to read this one column alone, with no prose, and know
+    who's actually beatable. Same thresholds as _vulnerability_reasoning()
+    so the tag and the fuller sentence never disagree with each other."""
+    yoy = c.get("yoy_pct", 0)
+    roa = c.get("roa", 0)
+    noncurrent = c.get("noncurrent_pct", 0)
+    tags = []
+    if yoy < -10:
+        tags.append("Losing deposits fast")
+    elif yoy < 0:
+        tags.append("Declining deposits")
+    if roa < 0.5:
+        tags.append("Weak profitability")
+    if noncurrent > 2:
+        tags.append("Asset-quality risk")
+    return " + ".join(tags) if tags else "Stable"
+
+
+def _relative_size_line(own_deposits, competitors):
+    """One sentence placing the client branch's own deposit size against the
+    named competitor set, e.g. 'larger than X (2.8x), smaller than Y (0.28x)'.
+    Answers a question the doc never used to answer: not just who's nearby
+    and who's weak, but where THIS branch actually stands in that lineup —
+    the size context a banker in the room will ask for immediately."""
+    own_deposits = _sf(own_deposits)
+    if own_deposits <= 0 or not competitors:
+        return None
+    parts = []
+    for c in competitors:
+        comp_dep = _sf(c.get("deposits"))
+        if comp_dep <= 0:
+            continue
+        ratio = own_deposits / comp_dep
+        name = c.get("bank_name", "—")
+        if ratio >= 1:
+            parts.append(f"larger than {name} ({ratio:.1f}x)")
+        else:
+            parts.append(f"smaller than {name} ({ratio:.2f}x)")
+    if not parts:
+        return None
+    return f"${own_deposits/1e6:.1f}M in deposits — " + ", ".join(parts) + "."
+
+
 
 def fetch_branch_geo(ik):
     """Lat/lon for the branch map — joined from geo.branches_master_v2.
@@ -1398,7 +1445,8 @@ def summarize_branch_strategy(branch_strategy):
     return {"tiers": tiers, "named_hits": named_hits}
 
 
-def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None, capped_yoy=None):
+def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None, capped_yoy=None,
+                    vulnerability_targets=None):
     branch_strategy = branch_strategy or []
     dives = dives or []
     capped_yoy = capped_yoy or {}
@@ -1484,6 +1532,35 @@ Named examples: {named_str}
                         f"${_sf(top_comp.get('deposits'))/1e6:.0f}M deposits"
                         if top_comp else "no named competitor within the adaptive radius")
             driver_clause = _score_driver_clause(b)
+
+            # Vulnerability-ranked competitors (ROA, noncurrent %, YoY, and
+            # relative size) for THIS branch -- previously never reached this
+            # prompt at all, so the batched verdict/play/audience text had no
+            # visibility into which competitors are actually weak, only the
+            # nearest one's name/distance/deposits. Same fix as the standalone
+            # Preview's get_single_branch_narrative(), applied here so the
+            # $10K Assessment and the free Preview never diverge in quality.
+            own_dep = _sf(b.get("latest_dep"))
+            vuln_list_b = sorted((vulnerability_targets or {}).get(b.get("uninumbr"), []),
+                                  key=lambda c: c.get("rank") or 99)[:3]
+            vuln_str = ""
+            if vuln_list_b:
+                parts = []
+                for c in vuln_list_b:
+                    comp_dep = _sf(c.get("deposits"))
+                    ratio_str = ""
+                    if comp_dep > 0 and own_dep > 0:
+                        ratio = own_dep / comp_dep
+                        ratio_str = (f", branch is {ratio:.1f}x their size" if ratio >= 1
+                                     else f", branch is {ratio:.2f}x their size (smaller)")
+                    parts.append(
+                        f"#{c.get('rank')} {c.get('bank_name')} (${comp_dep/1e6:.0f}M, "
+                        f"{_sf(c.get('yoy_pct')):+.1f}% YoY, ROA {_sf(c.get('roa')):.2f}%, "
+                        f"noncurrent {_sf(c.get('noncurrent_pct')):.1f}%{ratio_str} — "
+                        f"{_vulnerability_reasoning(c)})"
+                    )
+                vuln_str = " | vulnerability-ranked competitors: " + "; ".join(parts)
+
             lines.append(
                 f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
                 f"score {_sf(b.get('opportunity_score')):.0f}/100, zone {b.get('opportunity_zone')}, "
@@ -1495,6 +1572,7 @@ Named examples: {named_str}
                 f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
                 f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%, "
                 f"assigned play {e['play'] or 'n/a'}"
+                f"{vuln_str}"
             )
         deep_dive_ctx = "\n\nBranches needing a full deep-dive writeup (real data, no fabricated " \
                         "personas -- Verlocity's persona layer is still in development):\n" + \
@@ -1516,9 +1594,9 @@ Return ONLY valid JSON, no markdown fences:
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
-  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead.", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above."}},
-  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
-  "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using ONLY the household income, income YoY, population YoY, and home value YoY figures given. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
+  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead. If a relative-size figure is given for a vulnerability-ranked competitor, use it as part of the resourcing argument (e.g. 'this branch is 2.8x the size of its weakest named competitor').", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above. If a vulnerability-ranked competitor shows real weakness (declining deposits, weak ROA, elevated noncurrent assets), name conquesting that competitor's depositors as part of the angle."}},
+  "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. If vulnerability-ranked competitors are given, name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group -- this is the same data the reader sees highlighted in the competitor table, so the verdict must not read thinner than the table it introduces. Ground every claim in the specific numbers given -- no generic branch commentary. Key must exactly match the branch name+city+state given.",
+  "branch_audiences": {"Branch Name (City, ST)": "2-3 sentences per branch, using the household income, income YoY, population YoY, home value YoY figures given, AND the competitive weakness data where present -- not demographics alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting. Never invent a named persona (e.g. 'Sarah, 34') -- Verlocity's demographic persona layer is in development, not live. Key must exactly match the branch name+city+state given."}
 }"""
 
     if deep_dive_ctx:
@@ -1881,12 +1959,28 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                    f"{fmt_yoy(b, capped_yoy)} YoY. "
                    f"{comp_clause[0].upper() + comp_clause[1:]}. "
                    f"Assigned play: {play or 'under review'}.")
-    p_verdict = doc.add_paragraph()
-    p_verdict.paragraph_format.space_after = Pt(8)
-    r_verdict = p_verdict.add_run(verdict)
-    r_verdict.font.size = Pt(10)
+
+    # "At a glance" callout — a CEO skimming top to bottom should get the
+    # whole story from this box alone before reaching a single table. Plain
+    # gray body text was easy to skip past; a shaded box with a bold label
+    # is the first thing the eye lands on.
+    glance_box = doc.add_table(rows=1, cols=1)
+    glance_cell = glance_box.rows[0].cells[0]
+    _set_cell_shading(glance_cell, "F0F4F8")
+    glance_cell.paragraphs[0].text = ""
+    glance_cell.paragraphs[0].paragraph_format.space_before = Pt(8)
+    glance_cell.paragraphs[0].paragraph_format.space_after = Pt(2)
+    r_glance_lbl = glance_cell.paragraphs[0].add_run("AT A GLANCE\n")
+    r_glance_lbl.bold = True
+    r_glance_lbl.font.size = Pt(8.5)
+    r_glance_lbl.font.color.rgb = zone_rgb
+    r_glance_lbl.font.name = FONT_HEAD
+    r_verdict = glance_cell.paragraphs[0].add_run(verdict)
+    r_verdict.font.size = Pt(10.5)
     r_verdict.font.name = FONT_HEAD
-    r_verdict.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+    r_verdict.font.color.rgb = NAVY
+    glance_cell.paragraphs[0].paragraph_format.space_after = Pt(8)
+    doc.add_paragraph().paragraph_format.space_after = Pt(2)
 
     # ── Deposits & Radius ──
     _heading(doc, "Deposits & Radius Methodology", size=11, space_before=8, space_after=4)
@@ -1921,13 +2015,29 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     all_comp = (strat.get("all_competitors") if strat else []) or []
     vuln_list = sorted((vuln_targets or {}).get(b.get("uninumbr"), []), key=lambda c: c.get("rank") or 99)
 
+    # Diagnostic logging — the competitor map has gone missing from at least
+    # one real generation (Trustmark / Jones Valley) with no exception raised,
+    # which means it silently hit one of the conditions below rather than
+    # failing loudly. These prints turn that into a visible, one-line answer
+    # in the Railway logs on the next run instead of another round of
+    # static-code guessing.
+    if not all_comp:
+        print(f"  ⚠ [map] no all_competitors for {b.get('namebr')} — skipping radius map "
+              f"(strat={'present' if strat else 'MISSING'}, "
+              f"all_competitors_key={'present' if strat and 'all_competitors' in strat else 'MISSING'})")
     if all_comp:
         own = geo_by_uid.get(b.get("uninumbr"))
+        if not own or own.get("lat") is None or own.get("lon") is None:
+            print(f"  ⚠ [map] no usable geo for {b.get('namebr')} (uninumbr={b.get('uninumbr')}) "
+                  f"in geo_by_uid ({len(geo_by_uid)} entries loaded) — skipping radius map")
         if own and own.get("lat") is not None and own.get("lon") is not None:
             radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
             ok = chart_branch_radius_map(
                 own["lat"], own["lon"], all_comp, radius_mi or 3.0, radius_img
             )
+            if not ok:
+                print(f"  ⚠ [map] chart_branch_radius_map returned False for {b.get('namebr')} "
+                      f"— both Mapbox and local-plot fallback failed")
             if ok:
                 p_img = doc.add_paragraph()
                 p_img.paragraph_format.space_before = Pt(4)
@@ -1961,19 +2071,63 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_lead.font.color.rgb = GRAY3
         r_lead.font.name = FONT_HEAD
 
-        vt = doc.add_table(rows=1, cols=6)
+        vt = doc.add_table(rows=1, cols=7)
         vt.style = "Light Grid Accent 1"
         vt_hdr = vt.rows[0].cells
-        for j, h in enumerate(["Rank", "Competitor", "Deposits", "YoY", "ROA", "Noncurrent %"]):
+        for j, h in enumerate(["Rank", "Competitor", "Deposits", "YoY", "ROA", "Noncurrent %", "Weakness"]):
             vt_hdr[j].text = h
+
+        def _cell_run(cell, text, bold=False, color=None):
+            cell.text = ""
+            r = cell.paragraphs[0].add_run(text)
+            r.font.name = FONT_HEAD
+            r.font.size = Pt(9.5)
+            if bold:
+                r.font.bold = True
+            if color:
+                r.font.color.rgb = color
+
         for c in vuln_list[:3]:
             row = vt.add_row().cells
-            row[0].text = str(c.get("rank") or "—")
-            row[1].text = str(c.get("bank_name", "—"))
-            row[2].text = f"${_sf(c.get('deposits'))/1e6:.1f}M"
-            row[3].text = f"{_sf(c.get('yoy_pct')):+.1f}%"
-            row[4].text = f"{_sf(c.get('roa')):.2f}%"
-            row[5].text = f"{_sf(c.get('noncurrent_pct')):.1f}%"
+            yoy = _sf(c.get("yoy_pct"))
+            roa = _sf(c.get("roa"))
+            noncurrent = _sf(c.get("noncurrent_pct"))
+            is_top = c is vuln_list[0]
+            tag = _vulnerability_tag(c)
+
+            _cell_run(row[0], str(c.get("rank") or "—"), bold=is_top)
+            _cell_run(row[1], str(c.get("bank_name", "—")), bold=is_top)
+            _cell_run(row[2], f"${_sf(c.get('deposits'))/1e6:.1f}M")
+            # Weak individual metrics get flagged red/bold right in the cell
+            # so the eye catches the specific weakness without reading the
+            # Weakness column or any prose below the table.
+            _cell_run(row[3], f"{yoy:+.1f}%", bold=(yoy < 0), color=RED_WEAK if yoy < 0 else None)
+            _cell_run(row[4], f"{roa:.2f}%", bold=(roa < 0.5), color=RED_WEAK if roa < 0.5 else None)
+            _cell_run(row[5], f"{noncurrent:.1f}%", bold=(noncurrent > 2), color=RED_WEAK if noncurrent > 2 else None)
+            _cell_run(row[6], tag, bold=True, color=RED_WEAK if tag != "Stable" else GRAY3)
+
+            # The #1 vulnerability-ranked competitor's whole row is shaded so
+            # it's the one row a skimming reader's eye lands on first, before
+            # reading rank numbers or any column at all.
+            if is_top:
+                for cell in row:
+                    _set_cell_shading(cell, RED_WEAK_FILL)
+
+        # Relative size — where THIS branch stands against the named
+        # competitors, not just who they are and how big they are.
+        size_line = _relative_size_line(b.get("latest_dep"), vuln_list[:3])
+        if size_line:
+            p_size = doc.add_paragraph()
+            p_size.paragraph_format.space_before = Pt(6)
+            r_size_label = p_size.add_run("Where this branch stands: ")
+            r_size_label.bold = True
+            r_size_label.font.size = Pt(9.5)
+            r_size_label.font.color.rgb = NAVY
+            r_size_label.font.name = FONT_HEAD
+            r_size = p_size.add_run(size_line)
+            r_size.font.size = Pt(9.5)
+            r_size.font.name = FONT_HEAD
+            r_size.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
         top_target = vuln_list[0]
         p_win = doc.add_paragraph()
@@ -1991,6 +2145,30 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_win.font.size = Pt(9.5)
         r_win.font.name = FONT_HEAD
         r_win.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+        # Where you have the edge — the #1 target above gets the fullest
+        # framing, but reps need to be able to speak to #2 and #3 too if
+        # the conversation goes there. Previously only rank 1's weakness
+        # was ever surfaced; ranks 2-3 sat in the table with no narrative.
+        if len(vuln_list) > 1:
+            p_edge_h = doc.add_paragraph()
+            p_edge_h.paragraph_format.space_before = Pt(8)
+            r_edge_h = p_edge_h.add_run("Where you have the edge:")
+            r_edge_h.bold = True
+            r_edge_h.font.size = Pt(9.5)
+            r_edge_h.font.color.rgb = NAVY
+            r_edge_h.font.name = FONT_HEAD
+            for c in vuln_list[:3]:
+                p_e = doc.add_paragraph(style="List Bullet")
+                r_e_name = p_e.add_run(f"{c.get('bank_name')}: ")
+                r_e_name.bold = True
+                r_e_name.font.size = Pt(9)
+                r_e_name.font.name = FONT_HEAD
+                r_e_name.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+                r_e = p_e.add_run(_vulnerability_reasoning(c))
+                r_e.font.size = Pt(9)
+                r_e.font.name = FONT_HEAD
+                r_e.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
     elif top3:
         cot = doc.add_table(rows=1, cols=4)
         cot.style = "Light Grid Accent 1"
@@ -2680,7 +2858,7 @@ def run(ik, name_hint=None):
     summary = summarize_network(d)
     dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
-                           d.get("capped_yoy"))
+                           d.get("capped_yoy"), vulnerability_targets=d.get("vulnerability_targets"))
     persona_brief, market_offer_brief = None, None
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
         fut_persona = pool.submit(get_persona_signal_brief, bank_name, dives)
