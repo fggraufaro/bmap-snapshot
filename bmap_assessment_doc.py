@@ -85,7 +85,21 @@ ZONE_LIGHT = {
 ZONE_HEX_MPL = {  # matplotlib wants '#rrggbb'
     z: f"#{h}" for z, h in ZONE_COLOR.items()
 }
-FONT_HEAD = "Inter"   # falls back to a system serif/sans if not installed locally
+FONT_HEAD = "Inter"   # the correct brand font per Verlocity_Brand_Guidelines_R2.pdf.
+                       # Real Inter TTF files now ship alongside this script
+                       # (verlocity_font_bold.ttf / verlocity_font_regular.ttf --
+                       # via npm's @fontsource/inter, not a placeholder) and are
+                       # used directly for the cover image, which doesn't depend
+                       # on what's installed system-wide. Word-native text (every
+                       # heading, table, body paragraph) still just references
+                       # this font by NAME, though -- python-docx has no built-in
+                       # way to embed a font inside the .docx the way the cover
+                       # image bakes it in directly. For those to render as true
+                       # Inter rather than falling back to a substitute, Inter
+                       # needs to be installed on whichever machine opens the
+                       # file, or embedded via Word's own File > Options > Save >
+                       # "Embed fonts in the file" when someone finalizes it --
+                       # both real Inter TTFs are available for that.
 
 # ═══════════════════════════════════════════════════════════════
 # DATA FETCH — full network, no truncation
@@ -341,8 +355,17 @@ import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 import matplotlib.patheffects as pe
 
+# Register the real bundled Inter TTFs with matplotlib directly, rather
+# than just naming "Inter" in the fallback list and hoping the system has
+# it installed (it won't, on a bare Linux container -- this is exactly
+# the gap that had every chart silently rendering in DejaVu Sans before).
+for _font_file in ("verlocity_font_regular.ttf", "verlocity_font_bold.ttf"):
+    _font_path = Path(__file__).parent / _font_file
+    if _font_path.exists():
+        fm.fontManager.addfont(str(_font_path))
+
 plt.rcParams["font.family"] = "sans-serif"
-plt.rcParams["font.sans-serif"] = ["DejaVu Sans", "Arial", "Inter"]
+plt.rcParams["font.sans-serif"] = ["Inter", "DejaVu Sans", "Arial"]
 plt.rcParams["axes.edgecolor"] = "#CCCCCC"
 plt.rcParams["axes.linewidth"] = 0.6
 
@@ -2115,27 +2138,16 @@ def _wrap_text_pil(draw, text, font, max_width):
 
 
 def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
-    """Cover page. USE_COVER_ARTWORK below controls whether the real
-    brand image assets get used at all -- currently False, per Francisco:
-    the recreated cover art wasn't approved, so this generates the plain
-    text-only navy cover unconditionally for now. Once design produces
-    an approved cover asset and it's committed to the repo (as
-    verlocity_cover_vertical.png next to this script, same filename this
-    function already looks for), flip USE_COVER_ARTWORK back to True --
-    nothing else needs to change, the image-tier logic below is untouched
-    and ready to pick it up.
-
-    Two asset tiers when USE_COVER_ARTWORK is True, tried in order:
+    """Cover page using the ACTUAL Verlocity brand artwork. Two asset
+    tiers, tried in order:
     1. verlocity_cover_vertical.png -- a portrait-format (8.5x11 aspect,
        matching this page exactly) full-bleed cover, with bank name/doc
        title/subtitle/date composited on with PIL per-generation.
     2. verlocity_cover.png -- a LANDSCAPE cover, shown intact at full
        page width with a clean title block below it on white (used only
        if the vertical asset above is missing).
-    Falls back to the plain navy text-only cover if neither asset is
-    present, same as when USE_COVER_ARTWORK is False."""
-    USE_COVER_ARTWORK = False
-
+    Falls back to a plain navy text-only cover if neither asset is
+    present, so the doc still generates even with missing assets."""
     section = doc.sections[0]
     printable_width = section.page_width - section.left_margin - section.right_margin
     vertical_bg_path = Path(__file__).parent / "verlocity_cover_vertical.png"
@@ -2143,7 +2155,7 @@ def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
     font_bold_path = Path(__file__).parent / "verlocity_font_bold.ttf"
     font_reg_path = Path(__file__).parent / "verlocity_font_regular.ttf"
 
-    if USE_COVER_ARTWORK and vertical_bg_path.exists():
+    if vertical_bg_path.exists():
         from PIL import Image as _PILImage, ImageDraw as _PILImageDraw, ImageFont as _PILImageFont
         import tempfile
 
@@ -2188,7 +2200,7 @@ def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
         doc.add_page_break()
         return
 
-    if USE_COVER_ARTWORK and landscape_img_path.exists():
+    if landscape_img_path.exists():
         from PIL import Image as _PILImage
         with _PILImage.open(landscape_img_path) as im:
             aspect = im.size[0] / im.size[1]
