@@ -232,7 +232,11 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
         tmpdir, heading_space_before=0, vuln_targets=vuln_targets,
     )
 
-    # ── Closing CTA ──
+    # ── Closing CTA — big number up front, checklist instead of one dense
+    # paragraph. The old version was a single wall of bold white text in a
+    # box; nothing for the eye to land on first. This leads with the branch
+    # count as the actual visual anchor, then lists what's included as
+    # scannable lines rather than one run-on sentence. ──
     doc.add_page_break()
     p_cta_h = doc.add_paragraph()
     p_cta_h.paragraph_format.space_before = Pt(20)
@@ -242,22 +246,59 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
     r_cta_h.font.color.rgb = bad.NAVY
     r_cta_h.font.name = bad.FONT_HEAD
 
-    cta_box = doc.add_table(rows=1, cols=1)
-    cell = cta_box.rows[0].cells[0]
-    bad._set_cell_shading(cell, "083D5F")
-    cell.paragraphs[0].text = ""
-    r_cta = cell.paragraphs[0].add_run(
-        f"{bank_name}'s network has {total_branch_count} branches. The full BMAP Assessment "
-        f"delivers this exact depth — verdict, competitive radius map, capture-dollar modeling, "
-        f"audience signal, assigned play — for every priority branch, plus network-wide "
-        f"executive synthesis, live market intelligence, and financial benchmarking."
-    )
-    r_cta.font.size = Pt(12)
-    r_cta.font.bold = True
-    r_cta.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-    r_cta.font.name = bad.FONT_HEAD
-    cell.paragraphs[0].paragraph_format.space_before = Pt(10)
-    cell.paragraphs[0].paragraph_format.space_after = Pt(10)
+    cta_box = doc.add_table(rows=1, cols=2)
+    cta_box.autofit = False
+    stat_cell, list_cell = cta_box.rows[0].cells
+    stat_cell.width = Inches(1.9)
+    list_cell.width = Inches(4.6)
+    for c in (stat_cell, list_cell):
+        bad._set_cell_shading(c, "083D5F")
+
+    stat_cell.paragraphs[0].text = ""
+    stat_cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_num = stat_cell.paragraphs[0].add_run(str(total_branch_count))
+    r_num.bold = True
+    r_num.font.size = Pt(44)
+    r_num.font.color.rgb = RGBColor(0x02, 0xA7, 0xC2)  # teal
+    r_num.font.name = bad.FONT_HEAD
+    p_num_lbl = stat_cell.add_paragraph()
+    p_num_lbl.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r_num_lbl = p_num_lbl.add_run(f"BRANCHES IN\n{bank_name.upper()}'S NETWORK")
+    r_num_lbl.font.size = Pt(8)
+    r_num_lbl.bold = True
+    r_num_lbl.font.color.rgb = RGBColor(0xAF, 0xD8, 0xE2)
+    r_num_lbl.font.name = bad.FONT_HEAD
+
+    list_cell.paragraphs[0].text = ""
+    p_lead = list_cell.paragraphs[0]
+    p_lead.paragraph_format.space_after = Pt(6)
+    r_lead = p_lead.add_run("The full BMAP Assessment delivers this exact depth for every priority branch:")
+    r_lead.bold = True
+    r_lead.font.size = Pt(10.5)
+    r_lead.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+    r_lead.font.name = bad.FONT_HEAD
+
+    deliverables = [
+        "Verdict + assigned play, per branch",
+        "Competitive radius map — all competitors, sized by deposits",
+        "Capture-dollar modeling (low / medium / aggressive)",
+        "Audience signal, per branch",
+        "Network-wide executive synthesis",
+        "Live market intelligence + financial benchmarking",
+    ]
+    for item in deliverables:
+        p_item = list_cell.add_paragraph()
+        p_item.paragraph_format.space_after = Pt(2)
+        r_check = p_item.add_run("✓  ")
+        r_check.bold = True
+        r_check.font.size = Pt(9.5)
+        r_check.font.color.rgb = RGBColor(0x02, 0xA7, 0xC2)
+        r_check.font.name = bad.FONT_HEAD
+        r_item = p_item.add_run(item)
+        r_item.font.size = Pt(9.5)
+        r_item.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        r_item.font.name = bad.FONT_HEAD
+    list_cell.paragraphs[-1].paragraph_format.space_after = Pt(8)
 
     return doc
 
