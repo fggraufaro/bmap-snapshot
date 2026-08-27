@@ -152,9 +152,16 @@ def supabase_rpc(fn_name, payload, timeout=20, paginate=False, page_size=1000):
     return all_rows
 
 
-def fetch_full_network_data(ik):
+def fetch_full_network_data(ik, skip_competitive_strategy=False):
     """Pull FULL branch network — no limit=N slice. This is the structural
-    difference vs. the free Snapshot."""
+    difference vs. the free Snapshot.
+
+    skip_competitive_strategy=True skips fetch_branch_competitive_strategy()
+    (the network-wide, paginated branches_within_radius_batch() call) --
+    used by the single-branch Preview flow, which only ever needs ONE
+    branch's competitor data and was otherwise paying full-network cost
+    (11,000+ rows for a 166-branch network) to throw away 165/166ths of it.
+    The full $10K Assessment still calls this with the default False."""
     print(f"  Fetching full branch network for {ik}...")
     branches = supabase(
         "branch_opportunity_base",
@@ -188,7 +195,11 @@ def fetch_full_network_data(ik):
     branches_geo = fetch_branch_geo(ik)
     print(f"  ✓ {len(branches_geo)} branches geocoded")
 
-    branch_strategy = fetch_branch_competitive_strategy(ik, branches, branches_geo)
+    if skip_competitive_strategy:
+        print(f"  ⏭ Skipping network-wide competitive strategy (single-branch flow)")
+        branch_strategy = []
+    else:
+        branch_strategy = fetch_branch_competitive_strategy(ik, branches, branches_geo)
 
     print(f"  Fetching competitor vulnerability scoring...")
     vulnerability_targets = fetch_vulnerability_targets(ik, branches)
@@ -1344,6 +1355,70 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
     return results
 
 
+def fetch_single_branch_strategy(ik, target_branch):
+    """Lightweight equivalent of fetch_branch_competitive_strategy() for
+    exactly ONE branch -- built for the standalone Preview flow, which needs
+    to stay fast enough to run live in a pitch meeting. The full-network
+    version pages through EVERY branch's competitor rows (11,000+ for a
+    166-branch network like Trustmark) via branches_within_radius_batch(),
+    which the Preview was calling and then discarding 165/166ths of --
+    real cause of a production timeout once that batch call started being
+    correctly paginated instead of silently (and wrongly) truncated. This
+    uses the single-branch branches_within_radius() RPC instead, scoped to
+    just this branch's own lat/lon, so it costs one small request no matter
+    how large the network is.
+
+    Note: this RPC's return shape doesn't include each competitor's lat/lon
+    (the batch version does), so all_competitors here can't drive the map
+    directly -- render_branch_deep_dive()'s map already falls back to the
+    vulnerability-ranked competitor list (which has its own geo join) for
+    exactly this case, so the map still renders correctly."""
+    try:
+        bank_id = int(ik.replace("bank_", ""))
+    except ValueError:
+        print(f"  ⚠ Could not derive numeric bank_id from '{ik}' — skipping single-branch strategy.")
+        return None
+
+    lat = target_branch.get("lat")
+    lon = target_branch.get("lon")
+    if lat is None or lon is None:
+        print(f"  ⚠ No lat/lon on target branch for single-branch strategy fetch.")
+        return None
+
+    candidates = supabase_rpc("branches_within_radius", {
+        "p_lat": lat, "p_lon": lon, "p_radius_miles": 10.0, "p_exclude_bank_id": bank_id,
+    })
+    if not isinstance(candidates, list):
+        candidates = []
+
+    density_1mi = sum(1 for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
+    deposits = _sf(target_branch.get("latest_dep"))
+    radius = determine_adaptive_radius(density_1mi, deposits)
+    min_dep, max_dep = deposits * 0.10, deposits * 5.0
+    filtered = sorted(
+        (c for c in candidates
+         if _sf(c.get("distance_miles")) <= radius
+         and min_dep <= _sf(c.get("deposits")) <= max_dep),
+        key=lambda c: -_sf(c.get("deposits"))
+    )
+    print(f"  ✓ single-branch strategy: {len(candidates)} candidates, "
+          f"{len(filtered)} pass radius+size filter (radius={radius}mi)")
+    return {
+        "namebr": target_branch.get("namebr"),
+        "citybr": target_branch.get("citybr"),
+        "stalpbr": target_branch.get("stalpbr"),
+        "deposits": deposits,
+        "radius_mi": radius,
+        "tier": ("Dense/High-Value" if radius == 0.5 else
+                 "Dense" if radius == 1.0 else
+                 "Suburban" if radius == 3.0 else "Low-Density"),
+        "competitor_count": len(filtered),
+        "top_competitor": filtered[0] if filtered else None,
+        "top3_competitors": filtered[:3],
+        "all_competitors": filtered,  # no lat/lon here -- map falls back to vuln_list
+    }
+
+
 DEEP_DIVE_THRESHOLD = 25  # <25 branches -> assess every branch. >=25 -> curate top opportunities.
 # Was 20 -- raised after a real case: a 22-branch network (Penn Community
 # Bank) missed full-network coverage by an arbitrary 2-branch margin and got
@@ -2082,15 +2157,15 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
 
     own = geo_by_uid.get(b.get("uninumbr"))
 
-    # Map competitor source — prefer the radius-based all_competitors list,
-    # but fall back to vuln_list (branch_target_competitors) when it's empty.
-    # vuln_list already carries lat/lon from its own geo join in
-    # fetch_vulnerability_targets() and has rendered correctly in every real
-    # generation so far (it's the same data behind the competitor table
-    # above), whereas all_competitors has gone empty for reasons not yet
-    # isolated. This means the map now renders whenever the table does,
-    # instead of the two being silently decoupled from each other.
-    map_competitors = all_comp
+    # Map competitor source — prefer all_competitors entries that actually
+    # carry lat/lon (the full-network batch RPC includes it; the lightweight
+    # single-branch RPC used by the Preview flow does NOT), falling back to
+    # vuln_list (branch_target_competitors) otherwise. vuln_list has its own
+    # geo join in fetch_vulnerability_targets() and has rendered correctly
+    # in every real generation so far. Checking for usable geo specifically
+    # (not just non-empty) matters now that all_competitors can be non-empty
+    # but geo-less depending on which fetch path produced it.
+    map_competitors = [c for c in all_comp if c.get("lat") is not None and c.get("lon") is not None]
     if not map_competitors and vuln_list:
         own_lat = own.get("lat") if own else None
         own_lon = own.get("lon") if own else None
