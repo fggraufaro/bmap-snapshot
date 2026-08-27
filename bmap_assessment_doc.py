@@ -1030,8 +1030,8 @@ def fetch_vulnerability_targets(ik, branches):
     rows = supabase(
         "branch_target_competitors",
         f"my_inst_key=eq.{ik}&select=my_branch_id,target_uninumbr,target_namefull,"
-        "target_dep_m,target_yoy_pct,target_roa,target_noncurrent_pct,vuln_score,"
-        "target_rank&order=my_branch_id.asc,target_rank.asc",
+        "target_dep_m,target_yoy_pct,target_roa,target_noncurrent_pct,target_opp_score,"
+        "vuln_score,target_rank&order=my_branch_id.asc,target_rank.asc",
     )
     rows = rows if isinstance(rows, list) else []
     if not rows:
@@ -1051,6 +1051,7 @@ def fetch_vulnerability_targets(ik, branches):
             "yoy_pct": _sf(r.get("target_yoy_pct")),
             "roa": _sf(r.get("target_roa")),
             "noncurrent_pct": _sf(r.get("target_noncurrent_pct")),
+            "opportunity_score": _sf(r.get("target_opp_score")),
             "vuln_score": _sf(r.get("vuln_score")),
             "rank": r.get("target_rank"),
             "lat": g.get("lat"),
@@ -1083,24 +1084,42 @@ def _vulnerability_reasoning(c):
     return "; ".join(reasons)
 
 
-def _vulnerability_tag(c):
-    """Short (2-4 word) scannable tag for a 'Weakness' table column -- a CEO
-    should be able to read this one column alone, with no prose, and know
-    who's actually beatable. Same thresholds as _vulnerability_reasoning()
-    so the tag and the fuller sentence never disagree with each other."""
-    yoy = c.get("yoy_pct", 0)
-    roa = c.get("roa", 0)
-    noncurrent = c.get("noncurrent_pct", 0)
-    tags = []
-    if yoy < -10:
-        tags.append("Losing deposits fast")
-    elif yoy < 0:
-        tags.append("Declining deposits")
-    if roa < 0.5:
-        tags.append("Weak profitability")
-    if noncurrent > 2:
-        tags.append("Asset-quality risk")
-    return " + ".join(tags) if tags else "Stable"
+def _vulnerability_tags(vuln_list):
+    """Assigns each competitor in this branch's ranked set (up to 3) a
+    DISTINCT short tag -- comparative within the group, not a fixed
+    per-row threshold check. The old per-row version checked YoY < -10%,
+    ROA < 0.5%, noncurrent > 2% independently for each competitor and
+    fell back to 'Declining deposits' whenever none of those tripped --
+    a real, recurring case (not hypothetical) where all 3 ranked
+    competitors are simply declining at different, more moderate rates,
+    producing the same generic tag 3 times with nothing to tell them
+    apart. This compares the group against itself: whoever is declining
+    fastest gets called out as such, whoever has the weakest OWN
+    opportunity score (a real driver of vuln_score, now shown as its own
+    column) gets called out separately, and only the remainder falls
+    back to the generic tag -- so at least two of three read distinctly
+    whenever the group has any real variance, which real competitor
+    sets almost always do. Returns {bank_name: tag}."""
+    if not vuln_list:
+        return {}
+    tags = {}
+    worst_yoy_name = min(vuln_list, key=lambda c: _sf(c.get("yoy_pct"))).get("bank_name")
+    scored = [c for c in vuln_list if c.get("opportunity_score") is not None]
+    weakest_score_name = min(scored, key=lambda c: _sf(c.get("opportunity_score"))).get("bank_name") if scored else None
+    for c in vuln_list:
+        yoy = _sf(c.get("yoy_pct"))
+        name = c.get("bank_name")
+        if yoy < -10:
+            tags[name] = "Losing deposits fast"
+        elif name == worst_yoy_name and yoy < 0:
+            tags[name] = "Declining fastest of the three"
+        elif name == weakest_score_name:
+            tags[name] = "Weakest overall position"
+        elif yoy < 0:
+            tags[name] = "Declining deposits"
+        else:
+            tags[name] = "Stable, size-based target only"
+    return tags
 
 
 def _rank_order_note(vuln_list):
@@ -2016,28 +2035,132 @@ def _remove_table_borders(table):
     tblPr.append(borders)
 
 
-def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
-    """Full-bleed Primary Dark Blue (#083D5F) cover matching
-    Verlocity_Brand_Guidelines_R2.pdf -- built as a shaded table cell
-    sized to the exact printable page area (WD_ROW_HEIGHT_RULE.EXACTLY),
-    not Word's native page-background color. That native background
-    color is invisible to most readers by default (gated behind a
-    "Print Background Colors" setting almost nobody enables) and won't
-    print either -- a bad silent failure for a client deliverable. A
-    shaded table cell always renders, in Word, in preview panes, and
-    when printed.
+def _wrap_text_pil(draw, text, font, max_width):
+    """Simple greedy word-wrap for PIL ImageDraw text -- PIL has no native
+    wrapping, and the cover's subtitle can run 150-250 characters (the
+    Branch Preview's framing sentence)."""
+    words = text.split()
+    lines, current = [], ""
+    for w in words:
+        trial = f"{current} {w}".strip()
+        if draw.textbbox((0, 0), trial, font=font)[2] <= max_width:
+            current = trial
+        else:
+            if current:
+                lines.append(current)
+            current = w
+    if current:
+        lines.append(current)
+    return lines
 
-    Logo treatment is the guide's own approved "Reverse Logo -- white,
-    for use on black, dark, or mid-tone backgrounds" (brand guide p.8),
-    rendered as styled Inter text since no white/reverse logo image
-    asset (the guide's own "Verlocity Logo_KO_white" file, p.11) is
-    available in this environment. Drop that file in next to this
-    script and swap it in here for a pixel-exact result -- this is a
-    faithful but text-only approximation until then."""
+
+def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
+    """Cover page. USE_COVER_ARTWORK below controls whether the real
+    brand image assets get used at all -- currently False, per Francisco:
+    the recreated cover art wasn't approved, so this generates the plain
+    text-only navy cover unconditionally for now. Once design produces
+    an approved cover asset and it's committed to the repo (as
+    verlocity_cover_vertical.png next to this script, same filename this
+    function already looks for), flip USE_COVER_ARTWORK back to True --
+    nothing else needs to change, the image-tier logic below is untouched
+    and ready to pick it up.
+
+    Two asset tiers when USE_COVER_ARTWORK is True, tried in order:
+    1. verlocity_cover_vertical.png -- a portrait-format (8.5x11 aspect,
+       matching this page exactly) full-bleed cover, with bank name/doc
+       title/subtitle/date composited on with PIL per-generation.
+    2. verlocity_cover.png -- a LANDSCAPE cover, shown intact at full
+       page width with a clean title block below it on white (used only
+       if the vertical asset above is missing).
+    Falls back to the plain navy text-only cover if neither asset is
+    present, same as when USE_COVER_ARTWORK is False."""
+    USE_COVER_ARTWORK = False
+
     section = doc.sections[0]
     printable_width = section.page_width - section.left_margin - section.right_margin
-    printable_height = section.page_height - section.top_margin - section.bottom_margin
+    vertical_bg_path = Path(__file__).parent / "verlocity_cover_vertical.png"
+    landscape_img_path = Path(__file__).parent / "verlocity_cover.png"
+    font_bold_path = Path(__file__).parent / "verlocity_font_bold.ttf"
+    font_reg_path = Path(__file__).parent / "verlocity_font_regular.ttf"
 
+    if USE_COVER_ARTWORK and vertical_bg_path.exists():
+        from PIL import Image as _PILImage, ImageDraw as _PILImageDraw, ImageFont as _PILImageFont
+        import tempfile
+
+        img = _PILImage.open(vertical_bg_path).convert("RGB")
+        W, H = img.size
+        draw = _PILImageDraw.Draw(img)
+
+        def _font(path, size, fallback_size=None):
+            try:
+                return _PILImageFont.truetype(str(path), size)
+            except Exception:
+                return _PILImageFont.load_default()
+
+        f_bank = _font(font_bold_path, 64)
+        f_title = _font(font_reg_path, 38)
+        f_sub = _font(font_reg_path, 28)
+        f_date = _font(font_reg_path, 26)
+
+        # Text block sits below the tagline (icon+wordmark occupy roughly
+        # the top-left third of the image -- see build script), left
+        # margin matched to the wordmark's own left edge.
+        x = 160
+        y = 1220  # well below the static wordmark (~960) + tagline (~1068-1118)
+        draw.text((x, y), bank_name, font=f_bank, fill=(255, 255, 255))
+        y += 90
+        draw.text((x, y), doc_title, font=f_title, fill=(200, 235, 242))
+        y += 56
+        if subtitle:
+            for line in _wrap_text_pil(draw, subtitle, f_sub, W - x - 120):
+                draw.text((x, y), line, font=f_sub, fill=(175, 196, 214))
+                y += 38
+            y += 14
+        draw.text((x, y), datetime.now().strftime("%B %Y"), font=f_date, fill=(175, 196, 214))
+
+        out_path = Path(tempfile.gettempdir()) / f"_cover_{abs(hash(bank_name + doc_title)) % 100000}.png"
+        img.save(out_path, "PNG")
+
+        p_img = doc.add_paragraph()
+        p_img.paragraph_format.space_before = Pt(0)
+        p_img.paragraph_format.space_after = Pt(0)
+        p_img.add_run().add_picture(str(out_path), width=printable_width)
+        doc.add_page_break()
+        return
+
+    if USE_COVER_ARTWORK and landscape_img_path.exists():
+        from PIL import Image as _PILImage
+        with _PILImage.open(landscape_img_path) as im:
+            aspect = im.size[0] / im.size[1]
+        p_img = doc.add_paragraph()
+        p_img.paragraph_format.space_before = Pt(0)
+        p_img.paragraph_format.space_after = Pt(0)
+        p_img.add_run().add_picture(str(landscape_img_path), width=printable_width)
+
+        def _line(text, size, color, bold=False, italic=False, space_before=0,
+                  space_after=0, align=WD_ALIGN_PARAGRAPH.LEFT):
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(space_before)
+            p.paragraph_format.space_after = Pt(space_after)
+            p.alignment = align
+            r = p.add_run(text)
+            r.font.size = Pt(size)
+            r.font.color.rgb = color
+            r.font.name = FONT_HEAD
+            r.bold = bold
+            r.italic = italic
+            return p
+
+        _line(bank_name, 24, NAVY, bold=True, space_before=28)
+        _line(doc_title, 13, TEAL, space_before=4)
+        if subtitle:
+            _line(subtitle, 10.5, GRAY3, italic=True, space_before=6)
+        _line(datetime.now().strftime("%B %Y"), 10, GRAY3, space_before=10)
+        doc.add_page_break()
+        return
+
+    # ── Fallback: no image asset found -- plain navy cover, text only ──
+    printable_height = section.page_height - section.top_margin - section.bottom_margin
     cover = doc.add_table(rows=1, cols=1)
     cover.autofit = False
     cover.alignment = WD_TABLE_ALIGNMENT.CENTER
@@ -2067,36 +2190,73 @@ def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
     LIGHT_TEAL = RGBColor(0x7D, 0xD8, 0xE8)
     MUTED_ON_NAVY = RGBColor(0xAF, 0xC4, 0xD6)
 
-    # Wordmark + tagline lockup -- HEADLINES per the brand guide's own
-    # typography spec: Inter Bold, all caps. Top spacer approximates the
-    # reference cover's vertical placement -- deliberately not true
-    # cell-centering (WD_ALIGN_VERTICAL.CENTER would center the ENTIRE
-    # flow including the bottom corner mark as one block, pulling it up
-    # into the middle of the page instead of pinning it near the bottom).
     _line("", 1, WHITE, space_before=130, first=True)
     _line("VERLOCITY", 34, WHITE, bold=True, all_caps=True)
     _line("Stop Guessing. Start Growing.", 13, LIGHT_TEAL, space_before=2, space_after=44)
-
-    # Bank name + doc title -- the actual per-generation content
     _line(bank_name, 24, WHITE, bold=True, space_before=8)
     _line(doc_title, 13, LIGHT_TEAL, space_before=4)
     if subtitle:
         _line(subtitle, 10.5, MUTED_ON_NAVY, italic=True, space_before=6)
     _line(datetime.now().strftime("%B %Y"), 10, MUTED_ON_NAVY, space_before=10)
-
-    # Corner mark, matching the reference cover's bottom-right placement.
-    # Fixed (not computed) gap -- modest rather than page-filling, so it
-    # stays safely on one page regardless of subtitle length varying
-    # between the Assessment and the Preview.
     _line("", 1, WHITE, space_before=90)
     _line("VERLOCITY.AI", 9, WHITE, bold=True, align=WD_ALIGN_PARAGRAPH.RIGHT)
+    # No explicit page_break() -- the table's own AT_LEAST height (set to
+    # the full printable page height above) already guarantees whatever
+    # comes next starts on a new page.
 
-    # No explicit page_break() here -- the table's own AT_LEAST height
-    # (set to the full printable page height above) already guarantees
-    # whatever comes next starts on a new page. Adding an explicit break
-    # on top of that was pushing content two pages forward instead of
-    # one -- the actual cause of the stray blank page this function used
-    # to produce.
+
+def build_snapshot_intro_cover(doc, title_lines, subtitle=None, date_str=None):
+    """Cover using the Verlocity Growth System intro artwork
+    (verlocity_cover_snapshot.png -- the photo-collage design used for
+    the BMAP Snapshot deck intro: laptop, world map, chart bars behind
+    the wordmark). This is a genuine widescreen photo composite
+    (~1.77:1, close to 16:9), not a flat-color gradient like
+    build_branded_cover()'s vertical version -- there's no way to
+    regenerate it at a different aspect ratio the way that one can,
+    since it isn't built from separable vector/flat-color layers here,
+    only a single flattened image. Stretching or cropping a real photo
+    into an 8.5x11 portrait would visibly distort the map/keyboard/chart
+    imagery, so this shows it intact at full page width, with a clean
+    text block below -- same reliable pattern as build_branded_cover()'s
+    own landscape fallback tier.
+
+    title_lines: list of strings, one per line (e.g. ["Introducing",
+    "The Verlocity Growth System"] to match the reference exactly, or a
+    single-item list for a plain one-line title).
+    date_str: defaults to today's date in "Month D, YYYY" form, matching
+    the reference cover's "July 15, 2026" style, if not supplied."""
+    section = doc.sections[0]
+    printable_width = section.page_width - section.left_margin - section.right_margin
+    img_path = Path(__file__).parent / "verlocity_cover_snapshot.png"
+
+    if not img_path.exists():
+        # No asset -- fall back to the plain navy cover rather than fail.
+        build_branded_cover(doc, " / ".join(title_lines), subtitle or "")
+        return
+
+    p_img = doc.add_paragraph()
+    p_img.paragraph_format.space_before = Pt(0)
+    p_img.paragraph_format.space_after = Pt(0)
+    p_img.add_run().add_picture(str(img_path), width=printable_width)
+
+    def _line(text, size, color, bold=False, italic=False, space_before=0, space_after=0):
+        p = doc.add_paragraph()
+        p.paragraph_format.space_before = Pt(space_before)
+        p.paragraph_format.space_after = Pt(space_after)
+        r = p.add_run(text)
+        r.font.size = Pt(size)
+        r.font.color.rgb = color
+        r.font.name = FONT_HEAD
+        r.bold = bold
+        r.italic = italic
+        return p
+
+    for i, line in enumerate(title_lines):
+        _line(line, 22, NAVY, bold=True, space_before=(28 if i == 0 else 0))
+    if subtitle:
+        _line(subtitle, 12, TEAL, space_before=6)
+    _line(date_str or datetime.now().strftime("%B %-d, %Y"), 11, GRAY3, space_before=8)
+    doc.add_page_break()
 
 
 def setup_branded_header_footer(doc, bank_name):
@@ -2464,10 +2624,10 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_lead.font.color.rgb = GRAY3
         r_lead.font.name = FONT_HEAD
 
-        vt = doc.add_table(rows=1, cols=8)
+        vt = doc.add_table(rows=1, cols=7)
         vt.style = "Light Grid Accent 1"
         vt_hdr = vt.rows[0].cells
-        for j, h in enumerate(["Rank", "Competitor", "Deposits", "Mkt Share", "YoY", "ROA", "Noncurrent %", "Weakness"]):
+        for j, h in enumerate(["Rank", "Competitor", "Deposits", "Mkt Share", "YoY", "Opportunity Score", "Weakness"]):
             vt_hdr[j].text = h
 
         def _cell_run(cell, text, bold=False, color=None):
@@ -2480,13 +2640,21 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             if color:
                 r.font.color.rgb = color
 
+        # Tags computed once for the whole group -- see _vulnerability_tags()
+        # docstring for why this can't be done per-row independently.
+        tags_by_name = _vulnerability_tags(vuln_list[:3])
+        weakest_score_name = min(
+            (c for c in vuln_list[:3] if c.get("opportunity_score") is not None),
+            key=lambda c: _sf(c.get("opportunity_score")), default={}
+        ).get("bank_name")
+
         for c in vuln_list[:3]:
             row = vt.add_row().cells
             yoy = _sf(c.get("yoy_pct"))
-            roa = _sf(c.get("roa"))
-            noncurrent = _sf(c.get("noncurrent_pct"))
+            opp_score = c.get("opportunity_score")
             is_top = c is vuln_list[0]
-            tag = _vulnerability_tag(c)
+            name = c.get("bank_name")
+            tag = tags_by_name.get(name, "Declining deposits")
             comp_dep = _sf(c.get("deposits"))
             # Same radius-scoped denominator as the branch's own Market
             # Share above -- every competitor's share of that same total,
@@ -2502,9 +2670,9 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             # so the eye catches the specific weakness without reading the
             # Weakness column or any prose below the table.
             _cell_run(row[4], f"{yoy:+.1f}%", bold=(yoy < 0), color=RED_WEAK if yoy < 0 else None)
-            _cell_run(row[5], f"{roa:.2f}%", bold=(roa < 0.5), color=RED_WEAK if roa < 0.5 else None)
-            _cell_run(row[6], f"{noncurrent:.1f}%", bold=(noncurrent > 2), color=RED_WEAK if noncurrent > 2 else None)
-            _cell_run(row[7], tag, bold=True, color=RED_WEAK if tag != "Stable" else GRAY3)
+            _cell_run(row[5], f"{opp_score:.0f}/100" if opp_score is not None else "—",
+                      bold=(name == weakest_score_name), color=RED_WEAK if name == weakest_score_name else None)
+            _cell_run(row[6], tag, bold=True, color=RED_WEAK if tag != "Stable, size-based target only" else GRAY3)
 
             # The #1 vulnerability-ranked competitor's whole row is shaded so
             # it's the one row a skimming reader's eye lands on first, before
