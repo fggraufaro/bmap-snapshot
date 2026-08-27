@@ -184,55 +184,16 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
     section.left_margin = Cm(2.2)
     section.right_margin = Cm(2.2)
 
-    # ── Cover / intro ──
-    p0 = doc.add_paragraph()
-    p0.paragraph_format.space_before = Pt(50)
-    logo_path = str(Path(__file__).parent / "verlocity_logo.jpg")
-    if os.path.exists(logo_path):
-        p0.add_run().add_picture(logo_path, width=Inches(2.0))
-    else:
-        r0 = p0.add_run("VERLOCITY")
-        r0.bold = True
-        r0.font.size = Pt(14)
-        r0.font.color.rgb = bad.TEAL
-        r0.font.name = bad.FONT_HEAD
-
-    p1 = doc.add_paragraph()
-    p1.paragraph_format.space_before = Pt(18)
-    r1 = p1.add_run(bank_name)
-    r1.bold = True
-    r1.font.size = Pt(28)
-    r1.font.color.rgb = bad.NAVY
-    r1.font.name = bad.FONT_HEAD
-
-    p2 = doc.add_paragraph()
-    p2.paragraph_format.space_after = Pt(6)
-    r2 = p2.add_run("BMAP Assessment — Branch Deep Dive Preview")
-    r2.font.size = Pt(14)
-    r2.font.color.rgb = bad.GRAY3
-    r2.font.name = bad.FONT_HEAD
-
-    p3 = doc.add_paragraph()
-    p3.paragraph_format.space_after = Pt(30)
-    r3 = p3.add_run(datetime.now().strftime("%B %Y"))
-    r3.font.size = Pt(11)
-    r3.font.color.rgb = bad.GRAY3
-    r3.font.name = bad.FONT_HEAD
-
-    p_intro = doc.add_paragraph()
-    p_intro.paragraph_format.space_after = Pt(20)
-    r_intro = p_intro.add_run(
-        f"This is one branch, shown at the exact depth and analytical rigor of the full "
-        f"BMAP Assessment — the same competitive geocoding, adaptive-radius modeling, "
-        f"and capture-dollar sizing your team would receive for every priority branch "
-        f"in {bank_name}'s {total_branch_count}-branch network."
+    # ── Cover + branded header/footer (brand guide-aligned, shared with
+    # the full Assessment via bmap_assessment_doc.py) ──
+    bad.build_branded_cover(
+        doc, bank_name, "BMAP Assessment — Branch Deep Dive Preview",
+        subtitle=(f"This is one branch, shown at the exact depth and analytical rigor of the full "
+                  f"BMAP Assessment — the same competitive geocoding, adaptive-radius modeling, "
+                  f"and capture-dollar sizing your team would receive for every priority branch "
+                  f"in {bank_name}'s {total_branch_count}-branch network."),
     )
-    r_intro.italic = True
-    r_intro.font.size = Pt(11)
-    r_intro.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-    r_intro.font.name = bad.FONT_HEAD
-
-    doc.add_page_break()
+    bad.setup_branded_header_footer(doc, bank_name)
 
     # ── The one branch, full depth — identical code path to the paid Assessment ──
     bad.render_branch_deep_dive(
