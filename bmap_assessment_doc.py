@@ -2135,96 +2135,33 @@ def _wrap_text_pil(draw, text, font, max_width):
 
 
 def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
-    """Cover page using the ACTUAL Verlocity brand artwork. Two asset
-    tiers, tried in order:
-    1. verlocity_cover_vertical.png -- a portrait-format (8.5x11 aspect,
-       matching this page exactly) full-bleed cover, with bank name/doc
-       title/subtitle/date composited on with PIL per-generation.
-    2. verlocity_cover.png -- a LANDSCAPE cover, shown intact at full
-       page width with a clean title block below it on white (used only
-       if the vertical asset above is missing).
-    Falls back to a plain navy text-only cover if neither asset is
-    present, so the doc still generates even with missing assets."""
+    """Cover page -- CURRENTLY STATIC, using Brandon's actual cover export
+    as-is (verlocity_cover_vertical.png), bank name and all baked in. This
+    is a deliberate, known, temporary state: his source has the bank name/
+    title/subtitle/date flattened directly into the image with no separate
+    text layer, so nothing here can vary per-bank right now -- every doc
+    shows "Trustmark National Bank" regardless of which bank was actually
+    generated. Fix in progress: Brandon is producing an updated export with
+    the text kept editable/separate so this can go back to compositing
+    bank name dynamically per document, the way the rest of this doc
+    already works for every other per-branch value.
+
+    bank_name/doc_title/subtitle params are intentionally unused for now --
+    kept in the signature so callers don't need to change when the dynamic
+    version comes back.
+
+    Falls back to a plain navy text-only cover (WITH real dynamic text) if
+    the image asset isn't present, so a missing file doesn't break
+    generation -- it just means fewer bells and whistles."""
     section = doc.sections[0]
     printable_width = section.page_width - section.left_margin - section.right_margin
     vertical_bg_path = Path(__file__).parent / "verlocity_cover_vertical.png"
-    landscape_img_path = Path(__file__).parent / "verlocity_cover.png"
-    font_bold_path = Path(__file__).parent / "verlocity_font_bold.ttf"
-    font_reg_path = Path(__file__).parent / "verlocity_font_regular.ttf"
 
     if vertical_bg_path.exists():
-        from PIL import Image as _PILImage, ImageDraw as _PILImageDraw, ImageFont as _PILImageFont
-        import tempfile
-
-        img = _PILImage.open(vertical_bg_path).convert("RGB")
-        W, H = img.size
-        draw = _PILImageDraw.Draw(img)
-
-        def _font(path, size, fallback_size=None):
-            try:
-                return _PILImageFont.truetype(str(path), size)
-            except Exception:
-                return _PILImageFont.load_default()
-
-        f_bank = _font(font_bold_path, 64)
-        f_title = _font(font_reg_path, 38)
-        f_sub = _font(font_reg_path, 28)
-        f_date = _font(font_reg_path, 26)
-
-        # Text block sits below the tagline (icon+wordmark occupy roughly
-        # the top-left third of the image -- see build script), left
-        # margin matched to the wordmark's own left edge.
-        x = 160
-        y = 1220  # well below the static wordmark (~960) + tagline (~1068-1118)
-        draw.text((x, y), bank_name, font=f_bank, fill=(255, 255, 255))
-        y += 90
-        draw.text((x, y), doc_title, font=f_title, fill=(200, 235, 242))
-        y += 56
-        if subtitle:
-            for line in _wrap_text_pil(draw, subtitle, f_sub, W - x - 120):
-                draw.text((x, y), line, font=f_sub, fill=(175, 196, 214))
-                y += 38
-            y += 14
-        draw.text((x, y), datetime.now().strftime("%B %Y"), font=f_date, fill=(175, 196, 214))
-
-        out_path = Path(tempfile.gettempdir()) / f"_cover_{abs(hash(bank_name + doc_title)) % 100000}.png"
-        img.save(out_path, "PNG")
-
         p_img = doc.add_paragraph()
         p_img.paragraph_format.space_before = Pt(0)
         p_img.paragraph_format.space_after = Pt(0)
-        p_img.add_run().add_picture(str(out_path), width=printable_width)
-        doc.add_page_break()
-        return
-
-    if landscape_img_path.exists():
-        from PIL import Image as _PILImage
-        with _PILImage.open(landscape_img_path) as im:
-            aspect = im.size[0] / im.size[1]
-        p_img = doc.add_paragraph()
-        p_img.paragraph_format.space_before = Pt(0)
-        p_img.paragraph_format.space_after = Pt(0)
-        p_img.add_run().add_picture(str(landscape_img_path), width=printable_width)
-
-        def _line(text, size, color, bold=False, italic=False, space_before=0,
-                  space_after=0, align=WD_ALIGN_PARAGRAPH.LEFT):
-            p = doc.add_paragraph()
-            p.paragraph_format.space_before = Pt(space_before)
-            p.paragraph_format.space_after = Pt(space_after)
-            p.alignment = align
-            r = p.add_run(text)
-            r.font.size = Pt(size)
-            r.font.color.rgb = color
-            r.font.name = FONT_HEAD
-            r.bold = bold
-            r.italic = italic
-            return p
-
-        _line(bank_name, 24, NAVY, bold=True, space_before=28)
-        _line(doc_title, 13, TEAL, space_before=4)
-        if subtitle:
-            _line(subtitle, 10.5, GRAY3, italic=True, space_before=6)
-        _line(datetime.now().strftime("%B %Y"), 10, GRAY3, space_before=10)
+        p_img.add_run().add_picture(str(vertical_bg_path), width=printable_width)
         doc.add_page_break()
         return
 
