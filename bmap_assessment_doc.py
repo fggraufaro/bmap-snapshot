@@ -29,7 +29,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -2270,10 +2270,21 @@ def setup_branded_header_footer(doc, bank_name):
     cover gets its own full-bleed treatment via build_branded_cover() and
     should not repeat this header, so this enables 'different first page'
     and only sets the header/footer on section.header (page 2 onward),
-    leaving section.first_page_header/footer blank."""
+    leaving section.first_page_header/footer blank.
+
+    Uses Brandon's actual logo (verlocity_header_logo.png) and footer band
+    (verlocity_footer_band.png) graphics rather than plain text -- both
+    were missing from the doc entirely before, just styled text standing
+    in for them. Falls back to text-only if either asset is missing next
+    to this script, so a missing file doesn't break generation."""
     section = doc.sections[0]
     section.different_first_page_header_footer = True
+    printable_width = section.page_width - section.left_margin - section.right_margin
+    logo_path = Path(__file__).parent / "verlocity_header_logo.png"
+    band_path = Path(__file__).parent / "verlocity_footer_band.png"
 
+    # ── Header: bank context on the left, real logo right-aligned via a
+    # right tab stop landing at the printable width's right edge ──
     header = section.header
     hp = header.paragraphs[0]
     hp.text = ""
@@ -2286,6 +2297,11 @@ def setup_branded_header_footer(doc, bank_name):
     r_sep.font.size = Pt(10)
     r_sep.font.color.rgb = GRAY3
     r_sep.font.name = FONT_HEAD
+    if logo_path.exists():
+        hp.paragraph_format.tab_stops.add_tab_stop(printable_width, WD_TAB_ALIGNMENT.RIGHT)
+        r_tab = hp.add_run("\t")
+        r_img = hp.add_run()
+        r_img.add_picture(str(logo_path), height=Pt(20))
     hp.paragraph_format.space_after = Pt(4)
     # thin rule under the header
     pPr = hp._p.get_or_add_pPr()
@@ -2298,9 +2314,47 @@ def setup_branded_header_footer(doc, bank_name):
     pBdr.append(bottom)
     pPr.append(pBdr)
 
+    # ── Footer: Brandon's teal-to-navy gradient band, image spanning most
+    # of the width, with a solid-navy cell for the page number sampled
+    # directly from the band's own right-edge color (RGB 8,62,96 -- an
+    # exact match to brand Navy #083D5F) so the seam is invisible. ──
     footer = section.footer
     fp = footer.paragraphs[0]
     fp.text = ""
+
+    if band_path.exists():
+        band_w = Inches(5.6)
+        num_w = printable_width - band_w
+        ft = footer.add_table(rows=1, cols=2, width=printable_width)
+        ft.autofit = False
+        _remove_table_borders(ft)
+        img_cell, num_cell = ft.rows[0].cells
+        img_cell.width = band_w
+        num_cell.width = num_w
+        img_cell.text = ""
+        img_cell.paragraphs[0].paragraph_format.space_after = Pt(0)
+        img_cell.paragraphs[0].add_run().add_picture(str(band_path), width=band_w)
+        _set_cell_shading(num_cell, "083D5F")
+        num_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        np_ = num_cell.paragraphs[0]
+        np_.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run_field = np_.add_run()
+        fld_begin = OxmlElement("w:fldChar")
+        fld_begin.set(qn("w:fldCharType"), "begin")
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = "PAGE"
+        fld_end = OxmlElement("w:fldChar")
+        fld_end.set(qn("w:fldCharType"), "end")
+        run_field._r.append(fld_begin)
+        run_field._r.append(instr)
+        run_field._r.append(fld_end)
+        run_field.bold = True
+        run_field.font.size = Pt(10)
+        run_field.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        run_field.font.name = FONT_HEAD
+        return
+
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
     r_conf = fp.add_run("VERLOCITY.AI  ·  CONFIDENTIAL  ·  Page ")
     r_conf.font.size = Pt(8)
@@ -2598,7 +2652,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                 p_img = doc.add_paragraph()
                 p_img.paragraph_format.space_before = Pt(4)
                 p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p_img.add_run().add_picture(radius_img, width=Inches(4.6))
+                p_img.add_run().add_picture(radius_img, width=Inches(3.6))
                 p_cap = doc.add_paragraph()
                 p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
                 r_cap = p_cap.add_run(
