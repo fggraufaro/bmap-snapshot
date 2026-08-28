@@ -29,7 +29,7 @@ from pathlib import Path
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT
+from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_BREAK
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
@@ -637,7 +637,7 @@ def chart_branch_map_osm(branches_geo, path):
     classic_zoom = _fit_zoom(lons, lats, W * (1 - pad_frac), H * (1 - pad_frac))
     mapbox_zoom = max(classic_zoom - 1, 0)  # GL/512px convention offset — see docstring
 
-    url = (f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/light-v11/static/"
            f"{lon_c},{lat_c},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
 
     resp = requests.get(url, timeout=10)
@@ -685,7 +685,7 @@ def chart_branch_map_osm(branches_geo, path):
                    edgecolors="white", linewidths=0.6, label=zone, zorder=3)
 
     # No custom city-label overlay here — unlike the fallback state-outline
-    # map, this basemap (streets-v12) already renders place names natively
+    # map, this basemap (light-v11) already renders place names natively
     # with its own collision-avoidance. A confirmed real render showed our
     # own labels duplicating and colliding with Mapbox's built-in ones (e.g.
     # "Bethlehem" drawn twice, a custom "Perkasie" label overlapping the
@@ -930,7 +930,7 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
     classic_zoom = _fit_zoom(lons, lats, W, H)
     mapbox_zoom = max(classic_zoom - 1, 0)
 
-    url = (f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/light-v11/static/"
            f"{branch_lon},{branch_lat},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
     resp = requests.get(url, timeout=10)
     if resp.status_code != 200:
@@ -2115,6 +2115,64 @@ def _remove_table_borders(table):
     tblPr.append(borders)
 
 
+def _apply_grid_borders(table, color="A6A6A6"):
+    """Thin uniform grid borders on every cell -- applied directly via
+    XML rather than table.style = 'Light Grid Accent 1', which depends on
+    that built-in style actually being defined in the document's
+    styles.xml. A blank Document() created from python-docx's own default
+    template always has it; a docx exported from Google Docs (Brandon's
+    cover template) does NOT include the full built-in Word style
+    gallery, only whatever styles it actually used -- so relying on the
+    named style crashed the moment data tables were appended after his
+    cover. This works regardless of which template produced the document,
+    since it only needs OOXML border syntax, not a style definition."""
+    tbl = table._tbl
+    tblPr = tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
+    for edge in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:val"), "single")
+        el.set(qn("w:sz"), "4")
+        el.set(qn("w:space"), "0")
+        el.set(qn("w:color"), color)
+        borders.append(el)
+    tblPr.append(borders)
+
+
+def _bullet_paragraph(doc):
+    """Manually-built bullet list item -- avoids depending on the built-in
+    'List Bullet' style, which (like 'Light Grid Accent 1') isn't defined
+    in a docx exported from Google Docs (Brandon's cover template only
+    ships styles it actually used, not the full built-in Word gallery),
+    so calling doc.add_paragraph(style='List Bullet') against that
+    template crashes the same way the table style did. A hanging indent
+    plus a manual bullet glyph produces the same visual result without
+    needing any named style to exist."""
+    p = doc.add_paragraph()
+    p.paragraph_format.left_indent = Pt(18)
+    p.paragraph_format.first_line_indent = Pt(-18)
+    p.add_run("•\t")
+    return p
+
+
+def _zero_cell_margins(cell):
+    """Word table cells carry default internal padding (w:tcMar) on all
+    four sides unless explicitly zeroed -- easy to miss since it doesn't
+    show up as a border, just an unexplained gap between cell content and
+    whatever sits next to it. That default padding is the likely real
+    cause of a visible seam between the footer band image and the
+    page-number cell next to it, independent of how well their colors
+    are matched."""
+    tcPr = cell._tc.get_or_add_tcPr()
+    tcMar = OxmlElement("w:tcMar")
+    for edge in ("top", "start", "bottom", "end"):
+        el = OxmlElement(f"w:{edge}")
+        el.set(qn("w:w"), "0")
+        el.set(qn("w:type"), "dxa")
+        tcMar.append(el)
+    tcPr.append(tcMar)
+
+
 def _wrap_text_pil(draw, text, font, max_width):
     """Simple greedy word-wrap for PIL ImageDraw text -- PIL has no native
     wrapping, and the cover's subtitle can run 150-250 characters (the
@@ -2132,6 +2190,85 @@ def _wrap_text_pil(draw, text, font, max_width):
     if current:
         lines.append(current)
     return lines
+
+
+def load_cover_template(bank_name, doc_title=None, subtitle=None):
+    """Uses Brandon's ACTUAL edited docx (verlocity_cover_template.docx) as
+    a live template, rather than reconstructing his design in code. This
+    is a real step toward "just use a Word template" instead of hand-
+    building fonts/colors/positioning in Python -- his cover text (bank
+    name, title, subtitle, date) is genuine editable Word paragraphs
+    flowing over a floating, behindDoc="1" background image, not baked
+    into a flattened picture, so it can be edited here exactly like any
+    other Word content: find the run, change its .text, done. Every bit
+    of formatting (font, size, color, spacing, positioning) stays exactly
+    as Brandon built it, because it's never rebuilt -- only the text
+    content of specific runs changes.
+
+    Returns a Document already containing Brandon's cover + real header/
+    footer, with his own example content (Jones Valley/Trustmark, tables,
+    everything from index 8 onward) stripped out so the caller's existing
+    render_branch_deep_dive() etc. calls can append fresh content right
+    after the cover, same as they already do with a blank Document().
+
+    Falls back to None if the template asset isn't present, so callers
+    can fall back to the older build_branded_cover() + blank Document()
+    path rather than crashing outright."""
+    template_path = Path(__file__).parent / "verlocity_cover_template.docx"
+    if not template_path.exists():
+        return None
+
+    doc = Document(str(template_path))
+
+    # Replace exactly the dynamic runs Brandon's cover carries -- indices
+    # verified directly against his file, not guessed. Formatting is
+    # untouched since only .text changes, never the run's rPr.
+    doc.paragraphs[3].runs[0].text = bank_name          # bank name
+    if doc_title:
+        doc.paragraphs[3].runs[2].text = doc_title       # title -- was being
+    # accepted as a parameter but never actually applied; every caller's
+    # title was silently staying as Brandon's original Preview-specific
+    # example text ("BMAP Assessment — Branch Deep Dive Preview") no
+    # matter what was passed in, which is flat wrong for the full
+    # Assessment ("BMAP Market Assessment", a different document).
+    if subtitle:
+        doc.paragraphs[4].runs[1].text = subtitle        # framing sentence
+    else:
+        # Brandon's own subtitle text is Preview-specific ("This is one
+        # branch..."); leaving it in place for a caller that didn't
+        # supply its own (the full Assessment, which previews nothing)
+        # would show text that's actively wrong, not just generic.
+        doc.paragraphs[4].runs[1].text = ""
+    doc.paragraphs[5].runs[0].text = f"\n{datetime.now().strftime('%B %Y')}"  # date
+
+    # Strip Brandon's own example content (his Jones Valley/Trustmark
+    # tables and text, paragraph index 8 onward) so fresh content can be
+    # appended after the cover -- keeping every paragraph/table intact
+    # would just duplicate his example alongside whatever gets generated.
+    # The final sectPr (page size, margins) must never be removed.
+    body = doc.element.body
+    boundary = doc.paragraphs[7]._p
+    removing = False
+    for child in list(body):
+        if removing:
+            if child.tag.endswith("}sectPr"):
+                continue
+            body.remove(child)
+        if child is boundary:
+            removing = True
+
+    # Explicit page break -- whatever pushed Brandon's own content to page
+    # 2 in his original file wasn't a break character on paragraphs 6/7
+    # (checked; neither carries one), so it was almost certainly just the
+    # cumulative height of content that's no longer here to push against.
+    # Relying on that same guessed spacing to still add up to a full page
+    # is exactly the kind of thing that silently breaks the next time
+    # anything upstream changes -- a real page break guarantees fresh
+    # content starts on page 2 regardless of how much space paragraphs
+    # 0-7 actually consume.
+    doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+
+    return doc
 
 
 def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
@@ -2301,7 +2438,7 @@ def setup_branded_header_footer(doc, bank_name):
         hp.paragraph_format.tab_stops.add_tab_stop(printable_width, WD_TAB_ALIGNMENT.RIGHT)
         r_tab = hp.add_run("\t")
         r_img = hp.add_run()
-        r_img.add_picture(str(logo_path), height=Pt(20))
+        r_img.add_picture(str(logo_path), height=Pt(30))
     hp.paragraph_format.space_after = Pt(4)
     # thin rule under the header
     pPr = hp._p.get_or_add_pPr()
@@ -2314,16 +2451,21 @@ def setup_branded_header_footer(doc, bank_name):
     pBdr.append(bottom)
     pPr.append(pBdr)
 
-    # ── Footer: Brandon's teal-to-navy gradient band, image spanning most
-    # of the width, with a solid-navy cell for the page number sampled
-    # directly from the band's own right-edge color (RGB 8,62,96 -- an
-    # exact match to brand Navy #083D5F) so the seam is invisible. ──
+    # ── Footer: Brandon's teal-to-navy gradient band. The band image
+    # itself is pre-extended (verlocity_footer_band.png now includes ~35%
+    # extra navy built directly into the same PNG, repeated from its own
+    # rightmost columns -- not a separately color-matched table cell,
+    # which was the real bug: default cell padding (w:tcMar) creates a
+    # gap between adjacent cells even with borders removed and colors
+    # matched, independent of how precise the color match is. Zeroing
+    # cell margins on both cells closes that gap for the page-number
+    # cell that still sits at the very end. ──
     footer = section.footer
     fp = footer.paragraphs[0]
     fp.text = ""
 
     if band_path.exists():
-        band_w = Inches(5.6)
+        band_w = printable_width - Inches(0.7)
         num_w = printable_width - band_w
         ft = footer.add_table(rows=1, cols=2, width=printable_width)
         ft.autofit = False
@@ -2331,6 +2473,8 @@ def setup_branded_header_footer(doc, bank_name):
         img_cell, num_cell = ft.rows[0].cells
         img_cell.width = band_w
         num_cell.width = num_w
+        _zero_cell_margins(img_cell)
+        _zero_cell_margins(num_cell)
         img_cell.text = ""
         img_cell.paragraphs[0].paragraph_format.space_after = Pt(0)
         img_cell.paragraphs[0].add_run().add_picture(str(band_path), width=band_w)
@@ -2416,7 +2560,7 @@ def _render_signal_brief(doc, title, raw_text):
             for bl in text.split("\n"):
                 bl = bl.strip().lstrip("•-*").strip()
                 if bl:
-                    p = doc.add_paragraph(style="List Bullet")
+                    p = _bullet_paragraph(doc)
                     r = p.add_run(bl)
                     r.font.size = Pt(9.5)
                     r.font.name = FONT_HEAD
@@ -2487,7 +2631,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
 
     # ── Overview stat block ──
     ov = doc.add_table(rows=2, cols=4)
-    ov.style = "Light Grid Accent 1"
+    _apply_grid_borders(ov)
     ov_hdr = ov.rows[0].cells
     for j, h in enumerate(["Zone", "Quadrant", "Priority Tier", "Opportunity Score"]):
         ov_hdr[j].text = h
@@ -2558,7 +2702,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     mkt_share = (dep / total_mkt_dep * 100) if total_mkt_dep > 0 else None
     mkt_share_label = f"Market Share ({radius_mi:.1f}mi)" if radius_mi else "Market Share"
     dr = doc.add_table(rows=2, cols=6)
-    dr.style = "Light Grid Accent 1"
+    _apply_grid_borders(dr)
     dr_hdr = dr.rows[0].cells
     for j, h in enumerate(["Deposits", "YoY Growth", "Market Tier", "Radius Used",
                             "Households (est.)", mkt_share_label]):
@@ -2685,7 +2829,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_lead.font.name = FONT_HEAD
 
         vt = doc.add_table(rows=1, cols=8)
-        vt.style = "Light Grid Accent 1"
+        _apply_grid_borders(vt)
         vt.autofit = False
         # Explicit widths -- 8 columns is tight on a US Letter page at
         # default autofit, which was breaking headers mid-word ("Opportuni-
@@ -2817,7 +2961,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             r_edge_h.font.color.rgb = NAVY
             r_edge_h.font.name = FONT_HEAD
             for c in vuln_list[:3]:
-                p_e = doc.add_paragraph(style="List Bullet")
+                p_e = _bullet_paragraph(doc)
                 r_e_name = p_e.add_run(f"{c.get('bank_name')}: ")
                 r_e_name.bold = True
                 r_e_name.font.size = Pt(9)
@@ -2829,7 +2973,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                 r_e.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
     elif top3:
         cot = doc.add_table(rows=1, cols=4)
-        cot.style = "Light Grid Accent 1"
+        _apply_grid_borders(cot)
         cot_hdr = cot.rows[0].cells
         for j, h in enumerate(["Competitor", "City / State", "Distance", "Deposits"]):
             cot_hdr[j].text = h
@@ -2849,7 +2993,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     if capture_pool:
         _heading(doc, "Projected Annual Capture", size=11, space_before=10, space_after=4)
         cst = doc.add_table(rows=2, cols=3)
-        cst.style = "Light Grid Accent 1"
+        _apply_grid_borders(cst)
         cst_hdr = cst.rows[0].cells
         for j, h in enumerate(["Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
             cst_hdr[j].text = h
@@ -3104,16 +3248,22 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                           persona_brief=None, market_offer_brief=None, vulnerability_targets=None):
     capped_yoy = capped_yoy or {}
     geo_by_uid = {g["uninumbr"]: g for g in (branches_geo or []) if g.get("uninumbr") is not None}
-    doc = Document()
-    section = doc.sections[0]
-    section.page_width = Cm(21.59)   # US Letter
-    section.page_height = Cm(27.94)
-    section.left_margin = Cm(2.2)
-    section.right_margin = Cm(2.2)
 
-    # ── Cover + branded header/footer (brand guide-aligned) ──
-    build_branded_cover(doc, bank_name, "BMAP Market Assessment")
-    setup_branded_header_footer(doc, bank_name)
+    # ── Cover + header/footer -- prefers Brandon's actual template (same
+    # as the Preview flow), falls back to the code-built version if that
+    # asset isn't deployed ──
+    doc = load_cover_template(bank_name, doc_title="BMAP Market Assessment")
+    if doc is not None:
+        section = doc.sections[0]
+    else:
+        doc = Document()
+        section = doc.sections[0]
+        section.page_width = Cm(21.59)   # US Letter
+        section.page_height = Cm(27.94)
+        section.left_margin = Cm(2.2)
+        section.right_margin = Cm(2.2)
+        build_branded_cover(doc, bank_name, "BMAP Market Assessment")
+        setup_branded_header_footer(doc, bank_name)
 
     # Zone distribution hero visual -- kept as its own opening page right
     # after the cover (a matplotlib chart doesn't read well directly on
@@ -3225,7 +3375,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     if next_12:
         _heading(doc, "What This Means for the Next 12 Months", size=12, space_before=12, space_after=4)
         for bullet in next_12:
-            p_b = doc.add_paragraph(style="List Bullet")
+            p_b = _bullet_paragraph(doc)
             r_b = p_b.add_run(bullet)
             r_b.font.size = Pt(10)
             r_b.font.name = FONT_HEAD
@@ -3347,7 +3497,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     _body(doc, narr.get("competitive_narrative") or "")
     if targets:
         ct = doc.add_table(rows=1, cols=4)
-        ct.style = "Light Grid Accent 1"
+        _apply_grid_borders(ct)
         hdr = ct.rows[0].cells
         for i, h in enumerate(["Target", "Branches Exposed", "Vulnerability", "Deposit YoY"]):
             hdr[i].text = h
@@ -3380,7 +3530,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
         bs_summary = summarize_branch_strategy(branch_strategy)
         rt = doc.add_table(rows=1, cols=3)
-        rt.style = "Light Grid Accent 1"
+        _apply_grid_borders(rt)
         hdr = rt.rows[0].cells
         for i, h in enumerate(["Market Tier", "Branches", "Deposits in Tier"]):
             hdr[i].text = h
@@ -3406,7 +3556,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         r2.font.name = FONT_HEAD
 
         st = doc.add_table(rows=1, cols=4)
-        st.style = "Light Grid Accent 1"
+        _apply_grid_borders(st)
         hdr = st.rows[0].cells
         for i, h in enumerate(["Market Tier", "Low (1%)", "Medium (3%)", "Aggressive (7%)"]):
             hdr[i].text = h
@@ -3444,7 +3594,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             r.font.size = Pt(11)
             r.font.color.rgb = NAVY
             nt = doc.add_table(rows=1, cols=5)
-            nt.style = "Light Grid Accent 1"
+            _apply_grid_borders(nt)
             hdr = nt.rows[0].cells
             for i, h in enumerate(["Branch", "Tier", "Radius", "Largest Nearby Competitor", "Distance"]):
                 hdr[i].text = h
@@ -3506,7 +3656,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     doc.add_picture(fin_chart_path, width=Inches(6.3))
 
     ft = doc.add_table(rows=1, cols=3)
-    ft.style = "Light Grid Accent 1"
+    _apply_grid_borders(ft)
     hdr = ft.rows[0].cells
     for i, h in enumerate(["Metric", "Value", "Industry Benchmark"]):
         hdr[i].text = h
@@ -3562,7 +3712,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     # ── Full Branch Appendix ──
     _heading(doc, f"Appendix — Full Branch Scoring ({len(branches)} branches)", space_before=0)
     at = doc.add_table(rows=1, cols=6)
-    at.style = "Light Grid Accent 1"
+    _apply_grid_borders(at)
     hdr = at.rows[0].cells
     for i, h in enumerate(["Branch", "City / State", "Deposits", "YoY", "Score", "Zone"]):
         hdr[i].text = h
