@@ -67,6 +67,7 @@ ALLOWED_TABLES = {
     "vw_branch_opportunity_cbsa":       "public",
     "vw_network_top_targets":           "public",
     "vw_prospecting_score":             "public",
+    "vw_zip_persona":                   "public",
     "uszips":                           "geo",
 }
 
