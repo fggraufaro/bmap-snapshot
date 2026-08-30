@@ -2156,6 +2156,20 @@ def _bullet_paragraph(doc):
     return p
 
 
+def _zero_cell_spacing(table):
+    """Zeroes w:tblCellSpacing ('allow spacing between cells' in Word's
+    table properties) -- a THIRD, separate source of gap between adjacent
+    cells beyond borders and margins, both of which were already zeroed
+    elsewhere. Word inserts this spacing by default on some tables, which
+    shows up as a persistent thin white seam between cells even with
+    borders removed and margins/colors matched exactly."""
+    tblPr = table._tbl.tblPr
+    spacing = OxmlElement("w:tblCellSpacing")
+    spacing.set(qn("w:w"), "0")
+    spacing.set(qn("w:type"), "dxa")
+    tblPr.append(spacing)
+
+
 def _zero_cell_margins(cell):
     """Word table cells carry default internal padding (w:tcMar) on all
     four sides unless explicitly zeroed -- easy to miss since it doesn't
@@ -2493,36 +2507,65 @@ def setup_branded_header_footer(doc, bank_name):
     logo_path = Path(__file__).parent / "verlocity_header_logo.png"
     band_path = Path(__file__).parent / "verlocity_footer_band.png"
 
-    # ── Header: bank context on the left, real logo right-aligned via a
-    # right tab stop landing at the printable width's right edge. ──
+    # ── Header: bank context on the left, real logo right-aligned in its
+    # own cell of a 2-column table -- NOT a right tab stop. A tab stop was
+    # tried first and looked right in isolation, but Word's built-in
+    # "Header" paragraph style (which header.paragraphs[0] uses) carries
+    # its OWN default tab stops (a center tab at 4680 twips, a right tab
+    # at 9360). A paragraph's local tab stops don't replace inherited
+    # style tabs, they're merged with them, and a tab character resolves
+    # to the FIRST stop past the cursor -- the inherited CENTER tab, not
+    # the custom right one -- so the logo landed near the middle of the
+    # page instead of the right edge. Explicitly clearing the inherited
+    # positions didn't fix it either (still resolved to center in
+    # testing). A table has no such inheritance to fight.
     header = section.header
     hp = header.paragraphs[0]
     hp.text = ""
-    r_logo = hp.add_run("VERLOCITY")
+    logo_w = Inches(0.95)
+    text_w = printable_width - logo_w
+    ht = header.add_table(rows=1, cols=2, width=printable_width)
+    ht.autofit = False
+    _remove_table_borders(ht)
+    text_cell, logo_cell = ht.rows[0].cells
+    text_cell.width = text_w
+    logo_cell.width = logo_w
+    _zero_cell_margins(text_cell)
+    _zero_cell_margins(logo_cell)
+    # Zero inter-cell spacing -- same gap-between-cells trap as the footer
+    # band, independent of margins/borders (see _zero_cell_spacing).
+    _zero_cell_spacing(ht)
+
+    text_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+    tp = text_cell.paragraphs[0]
+    r_logo = tp.add_run("VERLOCITY")
     r_logo.bold = True
     r_logo.font.size = Pt(10)
     r_logo.font.color.rgb = NAVY
     r_logo.font.name = FONT_HEAD
-    r_sep = hp.add_run(f"   |   {bank_name}")
+    r_sep = tp.add_run(f"   |   {bank_name}")
     r_sep.font.size = Pt(10)
     r_sep.font.color.rgb = GRAY3
     r_sep.font.name = FONT_HEAD
+
     if logo_path.exists():
-        hp.paragraph_format.tab_stops.add_tab_stop(printable_width, WD_TAB_ALIGNMENT.RIGHT)
-        r_tab = hp.add_run("\t")
-        r_img = hp.add_run()
-        r_img.add_picture(str(logo_path), height=Pt(30))
-    hp.paragraph_format.space_after = Pt(4)
-    # thin rule under the header
-    pPr = hp._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
+        logo_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
+        lp = logo_cell.paragraphs[0]
+        lp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        lp.add_run().add_picture(str(logo_path), height=Pt(30))
+
+    hp.paragraph_format.space_after = Pt(0)
+    # thin rule under the header, on the table itself so it spans the
+    # full width under both cells
+    tblPr = ht._tbl.tblPr
+    borders = OxmlElement("w:tblBorders")
     bottom = OxmlElement("w:bottom")
     bottom.set(qn("w:val"), "single")
     bottom.set(qn("w:sz"), "4")
     bottom.set(qn("w:space"), "4")
     bottom.set(qn("w:color"), "02A7C2")
-    pBdr.append(bottom)
-    pPr.append(pBdr)
+    borders.append(bottom)
+    tblPr.append(borders)
 
     # ── Footer: Brandon's teal-to-navy gradient band. The band image
     # itself is pre-extended (verlocity_footer_band.png now includes ~35%
@@ -2549,6 +2592,7 @@ def setup_branded_header_footer(doc, bank_name):
         ft = footer.add_table(rows=1, cols=2, width=page_w)
         ft.autofit = False
         _remove_table_borders(ft)
+        _zero_cell_spacing(ft)
         # Full-bleed: a table in a header/footer is positioned starting at
         # the left margin by default, same as body content -- that inset
         # is exactly what left a visible margin on the left AND right (the
