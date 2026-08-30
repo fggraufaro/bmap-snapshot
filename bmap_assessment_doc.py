@@ -564,6 +564,13 @@ def _draw_polygon(ax, geom, **kwargs):
 
 
 MAPBOX_TOKEN = os.environ.get("MAPBOX_TOKEN", "")
+# light-v11 is a deliberately minimal, near-white grayscale basemap (barely-
+# visible roads, no color distinction between parks/water/land) -- reads as
+# blank and uninformative next to something like Google Maps. streets-v12 is
+# Mapbox's standard colorful style (visible roads, green parks, blue water,
+# clear place labels) and is the actually-recognizable "map" look people
+# expect.
+MAPBOX_STYLE = "streets-v12"
 
 
 def _web_mercator_xy(lon, lat, zoom, tile_size=256):
@@ -640,7 +647,7 @@ def chart_branch_map_osm(branches_geo, path):
     classic_zoom = _fit_zoom(lons, lats, W * (1 - pad_frac), H * (1 - pad_frac))
     mapbox_zoom = max(classic_zoom - 1, 0)  # GL/512px convention offset — see docstring
 
-    url = (f"https://api.mapbox.com/styles/v1/mapbox/light-v11/static/"
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/{MAPBOX_STYLE}/static/"
            f"{lon_c},{lat_c},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
 
     resp = requests.get(url, timeout=10)
@@ -688,9 +695,9 @@ def chart_branch_map_osm(branches_geo, path):
                    edgecolors="white", linewidths=0.6, label=zone, zorder=3)
 
     # No custom city-label overlay here — unlike the fallback state-outline
-    # map, this basemap (light-v11) already renders place names natively
-    # with its own collision-avoidance. A confirmed real render showed our
-    # own labels duplicating and colliding with Mapbox's built-in ones (e.g.
+    # map, this basemap already renders place names natively with its own
+    # collision-avoidance. A confirmed real render showed our own labels
+    # duplicating and colliding with Mapbox's built-in ones (e.g.
     # "Bethlehem" drawn twice, a custom "Perkasie" label overlapping the
     # native "Dublin" label) — strictly worse than leaving it to the basemap.
 
@@ -933,7 +940,7 @@ def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, 
     classic_zoom = _fit_zoom(lons, lats, W, H)
     mapbox_zoom = max(classic_zoom - 1, 0)
 
-    url = (f"https://api.mapbox.com/styles/v1/mapbox/light-v11/static/"
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/{MAPBOX_STYLE}/static/"
            f"{branch_lon},{branch_lat},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
     resp = requests.get(url, timeout=10)
     if resp.status_code != 200:
