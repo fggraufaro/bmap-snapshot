@@ -177,23 +177,39 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
     """Short standalone document: intro framing -> the one branch's full deep
     dive (via bad.render_branch_deep_dive, identical to the paid Assessment)
     -> closing CTA. Uses the same brand styling as bmap_assessment_doc.py."""
-    doc = Document()
-    section = doc.sections[0]
-    section.page_width = Cm(21.59)
-    section.page_height = Cm(27.94)
-    section.left_margin = Cm(2.2)
-    section.right_margin = Cm(2.2)
+    cover_title = "BMAP Assessment — Branch Deep Dive Preview"
+    cover_subtitle = (f"This is one branch, shown at the exact depth and analytical rigor of the full "
+                       f"BMAP Assessment — the same competitive geocoding, adaptive-radius modeling, "
+                       f"and capture-dollar sizing your team would receive for every priority branch "
+                       f"in {bank_name}'s {total_branch_count}-branch network.")
 
-    # ── Cover + branded header/footer (brand guide-aligned, shared with
-    # the full Assessment via bmap_assessment_doc.py) ──
-    bad.build_branded_cover(
-        doc, bank_name, "BMAP Assessment — Branch Deep Dive Preview",
-        subtitle=(f"This is one branch, shown at the exact depth and analytical rigor of the full "
-                  f"BMAP Assessment — the same competitive geocoding, adaptive-radius modeling, "
-                  f"and capture-dollar sizing your team would receive for every priority branch "
-                  f"in {bank_name}'s {total_branch_count}-branch network."),
-    )
-    bad.setup_branded_header_footer(doc, bank_name)
+    # ── Cover + branded header/footer -- prefers Brandon's actual live
+    # template (verlocity_cover_template.docx), the SAME asset + mechanism
+    # bad.build_assessment_doc() already uses for the $10K Assessment via
+    # load_cover_template(). Previously this called bad.build_branded_cover()
+    # directly and never tried the template at all, despite the old comment
+    # here claiming parity with the Assessment flow -- so every Preview got
+    # the placeholder cover (a static flattened image with "Trustmark
+    # National Bank" and a fixed branch count baked into the pixels) even
+    # in a deploy where the real template was present and the Assessment
+    # doc sitting right next to it was already using it correctly. Brandon's
+    # template's own default content IS this Preview's own example
+    # (Jones Valley/Trustmark) -- load_cover_template() overwrites those
+    # runs' text with the real bank name/title/subtitle/date per run and
+    # brings the template's own real header/footer with it, so
+    # setup_branded_header_footer() is only needed on the fallback path.
+    doc = bad.load_cover_template(bank_name, doc_title=cover_title, subtitle=cover_subtitle)
+    if doc is not None:
+        section = doc.sections[0]
+    else:
+        doc = Document()
+        section = doc.sections[0]
+        section.page_width = Cm(21.59)
+        section.page_height = Cm(27.94)
+        section.left_margin = Cm(2.2)
+        section.right_margin = Cm(2.2)
+        bad.build_branded_cover(doc, bank_name, cover_title, subtitle=cover_subtitle)
+        bad.setup_branded_header_footer(doc, bank_name)
 
     # ── The one branch, full depth — identical code path to the paid Assessment ──
     bad.render_branch_deep_dive(
