@@ -34,6 +34,8 @@ from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_TAB_ALIGNMENT, WD_BREAK
 from docx.enum.table import WD_TABLE_ALIGNMENT, WD_ALIGN_VERTICAL, WD_ROW_HEIGHT_RULE
 from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
+from docx.oxml.ns import nsmap as _nsmap
+_nsmap["wps"] = "http://schemas.microsoft.com/office/word/2010/wordprocessingShape"
 
 try:
     import anthropic
@@ -2489,6 +2491,87 @@ def build_snapshot_intro_cover(doc, title_lines, subtitle=None, date_str=None):
     doc.add_page_break()
 
 
+def _make_picture_floating(run, x_emu, y_emu, behind_doc=True, z_index=1):
+    """Converts a run's just-added INLINE picture (wp:inline) into a
+    floating one (wp:anchor), positioned at an absolute (x_emu, y_emu)
+    from the page. Used to place the footer band as true full-bleed
+    artwork independent of paragraph flow/margins, and to layer the page
+    number on top of it without a table -- floating elements can overlap
+    by z-order; inline ones can't."""
+    drawing = run._r.find(qn("w:drawing"))
+    inline = drawing.find(qn("wp:inline"))
+    extent = inline.find(qn("wp:extent"))
+    cx, cy = int(extent.get("cx")), int(extent.get("cy"))
+    graphic = inline.find(qn("a:graphic"))
+    docPr = inline.find(qn("wp:docPr"))
+    cNvGraphicFramePr = inline.find(qn("wp:cNvGraphicFramePr"))
+
+    anchor = OxmlElement("wp:anchor")
+    anchor.set("distT", "0"); anchor.set("distB", "0")
+    anchor.set("distL", "0"); anchor.set("distR", "0")
+    anchor.set("simplePos", "0")
+    anchor.set("relativeHeight", str(z_index))
+    anchor.set("behindDoc", "1" if behind_doc else "0")
+    anchor.set("locked", "0")
+    anchor.set("layoutInCell", "1")
+    anchor.set("allowOverlap", "1")
+    simplePos = OxmlElement("wp:simplePos")
+    simplePos.set("x", "0"); simplePos.set("y", "0")
+    posH = OxmlElement("wp:positionH")
+    posH.set("relativeFrom", "page")
+    posOffH = OxmlElement("wp:posOffset")
+    posOffH.text = str(x_emu)
+    posH.append(posOffH)
+    posV = OxmlElement("wp:positionV")
+    posV.set("relativeFrom", "page")
+    posOffV = OxmlElement("wp:posOffset")
+    posOffV.text = str(y_emu)
+    posV.append(posOffV)
+    extentEl = OxmlElement("wp:extent")
+    extentEl.set("cx", str(cx)); extentEl.set("cy", str(cy))
+    effectExtent = OxmlElement("wp:effectExtent")
+    for a in ("l", "t", "r", "b"):
+        effectExtent.set(a, "0")
+    wrapNone = OxmlElement("wp:wrapNone")
+
+    anchor.append(simplePos)
+    anchor.append(posH)
+    anchor.append(posV)
+    anchor.append(extentEl)
+    anchor.append(effectExtent)
+    anchor.append(wrapNone)
+    anchor.append(docPr)
+    anchor.append(cNvGraphicFramePr)
+    anchor.append(graphic)
+    drawing.remove(inline)
+    drawing.append(anchor)
+    return cx, cy
+
+
+def _field_run(color_hex=None, bold=False, size_half_pt=None):
+    """Builds a <w:r> with the given rPr, ready to append a fldChar/
+    instrText/w:t child to. Every run making up a field (begin/instrText/
+    separate/result/end) needs the SAME explicit color -- LibreOffice (at
+    least) doesn't reliably render a computed field's white text if only
+    the visible result run carries the color; the begin/separate/end
+    runs need it too, even though they render no visible characters
+    themselves."""
+    r = OxmlElement("w:r")
+    rPr = OxmlElement("w:rPr")
+    if bold:
+        rPr.append(OxmlElement("w:b"))
+    if color_hex:
+        color = OxmlElement("w:color")
+        color.set(qn("w:val"), color_hex)
+        rPr.append(color)
+    if size_half_pt:
+        sz = OxmlElement("w:sz")
+        sz.set(qn("w:val"), str(size_half_pt))
+        rPr.append(sz)
+    r.append(rPr)
+    return r
+
+
 def setup_branded_header_footer(doc, bank_name):
     """Consistent header/footer for every page AFTER the cover -- the
     cover gets its own full-bleed treatment via build_branded_cover() and
@@ -2567,15 +2650,17 @@ def setup_branded_header_footer(doc, bank_name):
     borders.append(bottom)
     tblPr.append(borders)
 
-    # ── Footer: Brandon's teal-to-navy gradient band. The band image
-    # itself is pre-extended (verlocity_footer_band.png now includes ~35%
-    # extra navy built directly into the same PNG, repeated from its own
-    # rightmost columns -- not a separately color-matched table cell,
-    # which was the real bug: default cell padding (w:tcMar) creates a
-    # gap between adjacent cells even with borders removed and colors
-    # matched, independent of how precise the color match is. Zeroing
-    # cell margins on both cells closes that gap for the page-number
-    # cell that still sits at the very end. ──
+    # ── Footer: Brandon's teal-to-navy gradient band, table-free. A
+    # two-cell table (band image + solid-color page-number cell) was
+    # tried first and, even with every border/margin/spacing property
+    # zeroed, still showed a visible line in real Word -- Word's table
+    # rendering always has a cell boundary for something to draw, no
+    # matter how many properties say "invisible." Floating elements have
+    # no such boundary: the band is one continuous image floating behind
+    # the text, full page width, and the page number is a separate
+    # floating text box (no fill, no line) positioned directly on top of
+    # it. They overlap by z-order, not by adjacency, so there's nothing
+    # for any renderer to draw a seam between. ──
     footer = section.footer
     fp = footer.paragraphs[0]
     fp.text = ""
@@ -2586,52 +2671,117 @@ def setup_branded_header_footer(doc, bank_name):
     section.footer_distance = Pt(0)
 
     if band_path.exists():
-        page_w = section.page_width
-        num_w = Inches(0.7)
-        band_w = page_w - num_w
-        ft = footer.add_table(rows=1, cols=2, width=page_w)
-        ft.autofit = False
-        _remove_table_borders(ft)
-        _zero_cell_spacing(ft)
-        # Full-bleed: a table in a header/footer is positioned starting at
-        # the left margin by default, same as body content -- that inset
-        # is exactly what left a visible margin on the left AND right (the
-        # table's total width was only ever the printable width, not the
-        # page width). A negative left indent shifts it to the true page
-        # edge; combined with width = full page width above, both edges
-        # now reach the physical edges of the page rather than the margins.
-        tblPr = ft._tbl.tblPr
-        tblInd = OxmlElement("w:tblInd")
-        tblInd.set(qn("w:w"), str(-section.left_margin.twips))
-        tblInd.set(qn("w:type"), "dxa")
-        tblPr.append(tblInd)
-        img_cell, num_cell = ft.rows[0].cells
-        img_cell.width = band_w
-        num_cell.width = num_w
-        _zero_cell_margins(img_cell)
-        _zero_cell_margins(num_cell)
-        img_cell.text = ""
-        img_cell.paragraphs[0].paragraph_format.space_after = Pt(0)
-        img_cell.paragraphs[0].add_run().add_picture(str(band_path), width=band_w)
-        _set_cell_shading(num_cell, "083D5F")
-        num_cell.vertical_alignment = WD_ALIGN_VERTICAL.CENTER
-        np_ = num_cell.paragraphs[0]
-        np_.alignment = WD_ALIGN_PARAGRAPH.CENTER
-        run_field = np_.add_run()
-        fld_begin = OxmlElement("w:fldChar")
-        fld_begin.set(qn("w:fldCharType"), "begin")
+        page_w = int(section.page_width)
+        page_h = int(section.page_height)
+
+        band_run = fp.add_run()
+        band_run.add_picture(str(band_path), width=page_w)
+        band_extent = band_run._r.find(qn("w:drawing")).find(qn("wp:inline")).find(qn("wp:extent"))
+        band_cy = int(band_extent.get("cy"))
+        _make_picture_floating(
+            band_run, x_emu=0, y_emu=page_h - band_cy, behind_doc=True, z_index=1)
+
+        num_w = int(Inches(0.9))
+        num_x = page_w - num_w
+        num_y = page_h - band_cy
+
+        num_run = fp.add_run()
+        drawing = OxmlElement("w:drawing")
+        anchor = OxmlElement("wp:anchor")
+        anchor.set("distT", "0"); anchor.set("distB", "0")
+        anchor.set("distL", "0"); anchor.set("distR", "0")
+        anchor.set("simplePos", "0")
+        anchor.set("relativeHeight", "2")
+        anchor.set("behindDoc", "0")
+        anchor.set("locked", "0")
+        anchor.set("layoutInCell", "1")
+        anchor.set("allowOverlap", "1")
+        simplePos = OxmlElement("wp:simplePos")
+        simplePos.set("x", "0"); simplePos.set("y", "0")
+        posH = OxmlElement("wp:positionH")
+        posH.set("relativeFrom", "page")
+        posOffH = OxmlElement("wp:posOffset"); posOffH.text = str(num_x)
+        posH.append(posOffH)
+        posV = OxmlElement("wp:positionV")
+        posV.set("relativeFrom", "page")
+        posOffV = OxmlElement("wp:posOffset"); posOffV.text = str(num_y)
+        posV.append(posOffV)
+        extentEl = OxmlElement("wp:extent")
+        extentEl.set("cx", str(num_w)); extentEl.set("cy", str(band_cy))
+        effectExtent = OxmlElement("wp:effectExtent")
+        for a in ("l", "t", "r", "b"):
+            effectExtent.set(a, "0")
+        wrapNone = OxmlElement("wp:wrapNone")
+        docPr = OxmlElement("wp:docPr"); docPr.set("id", "900"); docPr.set("name", "FooterPageNum")
+        cNvGraphicFramePr = OxmlElement("wp:cNvGraphicFramePr")
+
+        graphic = OxmlElement("a:graphic")
+        graphicData = OxmlElement("a:graphicData")
+        graphicData.set("uri", "http://schemas.microsoft.com/office/word/2010/wordprocessingShape")
+        wsp = OxmlElement("wps:wsp")
+        wsp.append(OxmlElement("wps:cNvSpPr"))
+        spPr = OxmlElement("wps:spPr")
+        xfrm = OxmlElement("a:xfrm")
+        off = OxmlElement("a:off"); off.set("x", "0"); off.set("y", "0")
+        ext = OxmlElement("a:ext"); ext.set("cx", str(num_w)); ext.set("cy", str(band_cy))
+        xfrm.append(off); xfrm.append(ext)
+        prstGeom = OxmlElement("a:prstGeom"); prstGeom.set("prst", "rect")
+        prstGeom.append(OxmlElement("a:avLst"))
+        noFill = OxmlElement("a:noFill")
+        ln = OxmlElement("a:ln"); ln.append(OxmlElement("a:noFill"))
+        spPr.append(xfrm); spPr.append(prstGeom); spPr.append(noFill); spPr.append(ln)
+
+        txbx = OxmlElement("wps:txbx")
+        txbxContent = OxmlElement("w:txbxContent")
+        p_num = OxmlElement("w:p")
+        pPr_num = OxmlElement("w:pPr")
+        jc = OxmlElement("w:jc"); jc.set(qn("w:val"), "center")
+        rPr_mark = OxmlElement("w:rPr")
+        color_mark = OxmlElement("w:color"); color_mark.set(qn("w:val"), "FFFFFF")
+        rPr_mark.append(color_mark)
+        pPr_num.append(jc); pPr_num.append(rPr_mark)
+        p_num.append(pPr_num)
+
+        r_begin = _field_run("FFFFFF", bold=True, size_half_pt=20)
+        fld_begin = OxmlElement("w:fldChar"); fld_begin.set(qn("w:fldCharType"), "begin")
+        r_begin.append(fld_begin)
+        p_num.append(r_begin)
+
+        r_instr = _field_run("FFFFFF")
         instr = OxmlElement("w:instrText")
-        instr.set(qn("xml:space"), "preserve")
-        instr.text = "PAGE"
-        fld_end = OxmlElement("w:fldChar")
-        fld_end.set(qn("w:fldCharType"), "end")
-        run_field._r.append(fld_begin)
-        run_field._r.append(instr)
-        run_field._r.append(fld_end)
-        run_field.bold = True
-        run_field.font.size = Pt(10)
-        run_field.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        run_field.font.name = FONT_HEAD
+        instr.set(qn("xml:space"), "preserve"); instr.text = " PAGE "
+        r_instr.append(instr)
+        p_num.append(r_instr)
+
+        r_sep = _field_run("FFFFFF", bold=True, size_half_pt=20)
+        fld_sep = OxmlElement("w:fldChar"); fld_sep.set(qn("w:fldCharType"), "separate")
+        r_sep.append(fld_sep)
+        p_num.append(r_sep)
+
+        r_result = _field_run("FFFFFF", bold=True, size_half_pt=20)
+        t_result = OxmlElement("w:t"); t_result.text = "1"
+        r_result.append(t_result)
+        p_num.append(r_result)
+
+        r_end = _field_run("FFFFFF")
+        fld_end = OxmlElement("w:fldChar"); fld_end.set(qn("w:fldCharType"), "end")
+        r_end.append(fld_end)
+        p_num.append(r_end)
+
+        txbxContent.append(p_num)
+        txbx.append(txbxContent)
+        bodyPr = OxmlElement("wps:bodyPr")
+        bodyPr.set("anchor", "ctr")
+        for attr in ("lIns", "tIns", "rIns", "bIns"):
+            bodyPr.set(attr, "0")
+        wsp.append(spPr); wsp.append(txbx); wsp.append(bodyPr)
+        graphicData.append(wsp)
+        graphic.append(graphicData)
+        anchor.append(simplePos); anchor.append(posH); anchor.append(posV)
+        anchor.append(extentEl); anchor.append(effectExtent); anchor.append(wrapNone)
+        anchor.append(docPr); anchor.append(cNvGraphicFramePr); anchor.append(graphic)
+        drawing.append(anchor)
+        num_run._r.append(drawing)
         return
 
     fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
