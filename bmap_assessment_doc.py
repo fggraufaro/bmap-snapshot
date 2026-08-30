@@ -2272,37 +2272,26 @@ def load_cover_template(bank_name, doc_title=None, subtitle=None):
 
 
 def build_branded_cover(doc, bank_name, doc_title, subtitle=None):
-    """Cover page -- CURRENTLY STATIC, using Brandon's actual cover export
-    as-is (verlocity_cover_vertical.png), bank name and all baked in. This
-    is a deliberate, known, temporary state: his source has the bank name/
-    title/subtitle/date flattened directly into the image with no separate
-    text layer, so nothing here can vary per-bank right now -- every doc
-    shows "Trustmark National Bank" regardless of which bank was actually
-    generated. Fix in progress: Brandon is producing an updated export with
-    the text kept editable/separate so this can go back to compositing
-    bank name dynamically per document, the way the rest of this doc
-    already works for every other per-branch value.
+    """Cover page -- DYNAMIC TEXT COVER (navy box, real bank name/title/
+    subtitle/date composited per document).
 
-    bank_name/doc_title/subtitle params are intentionally unused for now --
-    kept in the signature so callers don't need to change when the dynamic
-    version comes back.
+    Brandon's photo-background export (verlocity_cover_vertical.png) is
+    deliberately NOT used here: that source has the bank name/title/
+    subtitle/date flattened directly into the image with no separate text
+    layer, so every doc using it showed "Trustmark National Bank" and a
+    fixed "166-branch network" regardless of which bank/branch-count was
+    actually generated. Disabled until Brandon delivers an editable export
+    (text kept as a separate layer) -- at that point this can go back to
+    compositing bank name dynamically over his artwork, the way every
+    other per-branch value in this doc already works. Until then, this
+    text-only cover is the correct behavior: it's always right, just
+    plainer than the final version will be.
 
-    Falls back to a plain navy text-only cover (WITH real dynamic text) if
-    the image asset isn't present, so a missing file doesn't break
-    generation -- it just means fewer bells and whistles."""
+    bank_name/doc_title/subtitle are real and used below."""
     section = doc.sections[0]
     printable_width = section.page_width - section.left_margin - section.right_margin
-    vertical_bg_path = Path(__file__).parent / "verlocity_cover_vertical.png"
 
-    if vertical_bg_path.exists():
-        p_img = doc.add_paragraph()
-        p_img.paragraph_format.space_before = Pt(0)
-        p_img.paragraph_format.space_after = Pt(0)
-        p_img.add_run().add_picture(str(vertical_bg_path), width=printable_width)
-        doc.add_page_break()
-        return
-
-    # ── Fallback: no image asset found -- plain navy cover, text only ──
+    # ── Plain navy cover, text only -- always dynamic ──
     printable_height = section.page_height - section.top_margin - section.bottom_margin
     cover = doc.add_table(rows=1, cols=1)
     cover.autofit = False
@@ -2420,25 +2409,29 @@ def setup_branded_header_footer(doc, bank_name):
     logo_path = Path(__file__).parent / "verlocity_header_logo.png"
     band_path = Path(__file__).parent / "verlocity_footer_band.png"
 
-    # ── Header: bank context on the left, real logo right-aligned via a
-    # right tab stop landing at the printable width's right edge ──
+    # ── Header: real logo left-aligned (page's left edge), bank context
+    # immediately after it -- previously the logo was pushed to the right
+    # via a right tab stop while a redundant bold "VERLOCITY" text label
+    # sat on the left, so the actual logo graphic never appeared on the
+    # left side of the page at all. Logo now leads on the left; the bold
+    # text wordmark is only used as a fallback when the image asset is
+    # missing, so there's never two competing marks on the same line. ──
     header = section.header
     hp = header.paragraphs[0]
     hp.text = ""
-    r_logo = hp.add_run("VERLOCITY")
-    r_logo.bold = True
-    r_logo.font.size = Pt(10)
-    r_logo.font.color.rgb = NAVY
-    r_logo.font.name = FONT_HEAD
+    if logo_path.exists():
+        r_img = hp.add_run()
+        r_img.add_picture(str(logo_path), height=Pt(30))
+    else:
+        r_logo = hp.add_run("VERLOCITY")
+        r_logo.bold = True
+        r_logo.font.size = Pt(10)
+        r_logo.font.color.rgb = NAVY
+        r_logo.font.name = FONT_HEAD
     r_sep = hp.add_run(f"   |   {bank_name}")
     r_sep.font.size = Pt(10)
     r_sep.font.color.rgb = GRAY3
     r_sep.font.name = FONT_HEAD
-    if logo_path.exists():
-        hp.paragraph_format.tab_stops.add_tab_stop(printable_width, WD_TAB_ALIGNMENT.RIGHT)
-        r_tab = hp.add_run("\t")
-        r_img = hp.add_run()
-        r_img.add_picture(str(logo_path), height=Pt(30))
     hp.paragraph_format.space_after = Pt(4)
     # thin rule under the header
     pPr = hp._p.get_or_add_pPr()
@@ -2463,13 +2456,31 @@ def setup_branded_header_footer(doc, bank_name):
     footer = section.footer
     fp = footer.paragraphs[0]
     fp.text = ""
+    fp.paragraph_format.space_after = Pt(0)
+    # Zero the gap below the band -- footer_distance is the space between
+    # the page's bottom edge and the footer area, so a nonzero value here
+    # is exactly what left a visible white margin under the band.
+    section.footer_distance = Pt(0)
 
     if band_path.exists():
-        band_w = printable_width - Inches(0.7)
-        num_w = printable_width - band_w
-        ft = footer.add_table(rows=1, cols=2, width=printable_width)
+        page_w = section.page_width
+        num_w = Inches(0.7)
+        band_w = page_w - num_w
+        ft = footer.add_table(rows=1, cols=2, width=page_w)
         ft.autofit = False
         _remove_table_borders(ft)
+        # Full-bleed: a table in a header/footer is positioned starting at
+        # the left margin by default, same as body content -- that inset
+        # is exactly what left a visible margin on the left AND right (the
+        # table's total width was only ever the printable width, not the
+        # page width). A negative left indent shifts it to the true page
+        # edge; combined with width = full page width above, both edges
+        # now reach the physical edges of the page rather than the margins.
+        tblPr = ft._tbl.tblPr
+        tblInd = OxmlElement("w:tblInd")
+        tblInd.set(qn("w:w"), str(-section.left_margin.twips))
+        tblInd.set(qn("w:type"), "dxa")
+        tblPr.append(tblInd)
         img_cell, num_cell = ft.rows[0].cells
         img_cell.width = band_w
         num_cell.width = num_w
