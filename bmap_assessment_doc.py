@@ -19,6 +19,7 @@ alone is not the $10K product; the session is. See closing section.
 """
 
 import os
+import re
 import sys
 import math
 import concurrent.futures
@@ -2192,24 +2193,61 @@ def _wrap_text_pil(draw, text, font, max_width):
     return lines
 
 
+def _clear_placeholder_highlight(run):
+    """Strips any leftover highlight/shading and forces white text on a
+    filled-in cover field, so it always matches the rest of the white-on-
+    navy-photo cover regardless of whatever formatting the template run
+    started with."""
+    run.font.highlight_color = None
+    rPr = run._r.find(qn("w:rPr"))
+    if rPr is not None:
+        for tag in ("w:highlight", "w:shd"):
+            el = rPr.find(qn(tag))
+            if el is not None:
+                rPr.remove(el)
+    run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+
+
 def load_cover_template(bank_name, doc_title=None, subtitle=None):
-    """Uses Brandon's ACTUAL edited docx (verlocity_cover_template.docx) as
-    a live template, rather than reconstructing his design in code. This
-    is a real step toward "just use a Word template" instead of hand-
-    building fonts/colors/positioning in Python -- his cover text (bank
-    name, title, subtitle, date) is genuine editable Word paragraphs
-    flowing over a floating, behindDoc="1" background image, not baked
-    into a flattened picture, so it can be edited here exactly like any
-    other Word content: find the run, change its .text, done. Every bit
-    of formatting (font, size, color, spacing, positioning) stays exactly
-    as Brandon built it, because it's never rebuilt -- only the text
-    content of specific runs changes.
+    """Uses Brandon's ACTUAL cover docx (verlocity_cover_template.docx) as
+    a live template. His cover text sits in genuine editable Word
+    paragraphs over a floating, behindDoc="1" background image, not
+    baked into a flattened picture -- editable exactly like any other
+    Word content. Every bit of formatting (font, size, color, spacing,
+    positioning) stays as Brandon built it; only run text changes.
+
+    IMPORTANT: verified directly against his actual template file --
+    it does NOT carry bracket placeholder text like "[Insert Bank Name]"
+    (an earlier version of this function assumed it did, based on a
+    design mockup screenshot, and was quietly writing into the wrong
+    runs as a result). The real file's bank-name/subtitle/date runs are
+    already correctly formatted (right font/size/color) but genuinely
+    EMPTY (just a trailing line-break, no text) -- Brandon built the
+    slots and left them blank rather than filling them with sample or
+    placeholder text. So this locates each slot by its structural
+    signature instead of by text content:
+      - bank name:  the bold run(s) immediately before the run that
+        carries the default doc-title text ("BMAP Assessment...") in
+        the same paragraph -- there are two such runs (a leftover black
+        one Word left behind when the original sample text was deleted,
+        and the real white one); the white one (last of the two) is the
+        real slot.
+      - subtitle:   the one paragraph with a right indent of 2160 twips
+        (the narrower text column Brandon set for wrapped body copy)
+        that still has a run in it -- several blank sibling paragraphs
+        share that same indent as reserved extra wrap lines, but only
+        one actually carries a run to write into.
+      - date:       the paragraph whose single run is colored AFD8E2
+        (the muted light-blue he used for the date line).
+    If Brandon ever edits the template, this keeps working as long as
+    those structural traits hold, even if paragraph indices shift --
+    unlike the old index-based version, which broke the moment a
+    paragraph was added or removed anywhere above the cover fields.
 
     Returns a Document already containing Brandon's cover + real header/
-    footer, with his own example content (Jones Valley/Trustmark, tables,
-    everything from index 8 onward) stripped out so the caller's existing
-    render_branch_deep_dive() etc. calls can append fresh content right
-    after the cover, same as they already do with a blank Document().
+    footer, with his own example content stripped out after the cover
+    block so the caller's existing render_branch_deep_dive() etc. calls
+    can append fresh content right after.
 
     Falls back to None if the template asset isn't present, so callers
     can fall back to the older build_branded_cover() + blank Document()
@@ -2219,53 +2257,99 @@ def load_cover_template(bank_name, doc_title=None, subtitle=None):
         return None
 
     doc = Document(str(template_path))
+    paragraphs = doc.paragraphs
+    DEFAULT_TITLE = "BMAP Assessment"
+    DEFAULT_TITLE_FULL = "BMAP Assessment — Branch Deep Dive Preview"
 
-    # Replace exactly the dynamic runs Brandon's cover carries -- indices
-    # verified directly against his file, not guessed. Formatting is
-    # untouched since only .text changes, never the run's rPr.
-    doc.paragraphs[3].runs[0].text = bank_name          # bank name
-    if doc_title:
-        doc.paragraphs[3].runs[2].text = doc_title       # title -- was being
-    # accepted as a parameter but never actually applied; every caller's
-    # title was silently staying as Brandon's original Preview-specific
-    # example text ("BMAP Assessment — Branch Deep Dive Preview") no
-    # matter what was passed in, which is flat wrong for the full
-    # Assessment ("BMAP Market Assessment", a different document).
-    if subtitle:
-        doc.paragraphs[4].runs[1].text = subtitle        # framing sentence
-    else:
-        # Brandon's own subtitle text is Preview-specific ("This is one
-        # branch..."); leaving it in place for a caller that didn't
-        # supply its own (the full Assessment, which previews nothing)
-        # would show text that's actively wrong, not just generic.
-        doc.paragraphs[4].runs[1].text = ""
-    doc.paragraphs[5].runs[0].text = f"\n{datetime.now().strftime('%B %Y')}"  # date
+    def _ind(p):
+        pPr = p._p.find(qn("w:pPr"))
+        ind = pPr.find(qn("w:ind")) if pPr is not None else None
+        left = ind.get(qn("w:left")) if ind is not None else None
+        right = ind.get(qn("w:right")) if ind is not None else None
+        return left, right
 
-    # Strip Brandon's own example content (his Jones Valley/Trustmark
-    # tables and text, paragraph index 8 onward) so fresh content can be
-    # appended after the cover -- keeping every paragraph/table intact
-    # would just duplicate his example alongside whatever gets generated.
-    # The final sectPr (page size, margins) must never be removed.
-    body = doc.element.body
-    boundary = doc.paragraphs[7]._p
-    removing = False
-    for child in list(body):
-        if removing:
-            if child.tag.endswith("}sectPr"):
-                continue
-            body.remove(child)
-        if child is boundary:
-            removing = True
+    # ── Bank name + doc title (same paragraph) ──
+    title_idx = next((i for i, p in enumerate(paragraphs)
+                       if DEFAULT_TITLE in "".join(r.text for r in p.runs)), None)
+    if title_idx is not None:
+        title_p = paragraphs[title_idx]
+        bold_empty_runs = [r for r in title_p.runs
+                            if r.font.bold and DEFAULT_TITLE not in r.text]
+        # Compare by underlying XML element, not the Run wrapper itself --
+        # paragraph.runs builds a NEW wrapper object every time it's
+        # called, so a plain `in`/`not in` against a list captured from an
+        # earlier .runs call always misses (Run doesn't define __eq__, so
+        # it falls back to object identity) and silently writes into the
+        # wrong run.
+        bold_empty_elements = {r._r for r in bold_empty_runs}
+        if bold_empty_runs:
+            bankname_run = bold_empty_runs[-1]
+            bankname_run.text = f"{bank_name}\n"
+            _clear_placeholder_highlight(bankname_run)
+        if doc_title and doc_title != DEFAULT_TITLE_FULL:
+            # Title spans two runs across two visual lines ("BMAP
+            # Assessment — " / "Branch Deep Dive Preview") -- put the new
+            # title in the first and blank the second so a single-line
+            # title (e.g. the Assessment's "BMAP Market Assessment")
+            # doesn't leave a dangling empty second line.
+            title_runs = [r for r in title_p.runs if r._r not in bold_empty_elements]
+            if title_runs:
+                title_runs[0].text = doc_title
+                for r in title_runs[1:]:
+                    r.text = ""
 
-    # Explicit page break -- whatever pushed Brandon's own content to page
-    # 2 in his original file wasn't a break character on paragraphs 6/7
-    # (checked; neither carries one), so it was almost certainly just the
-    # cumulative height of content that's no longer here to push against.
-    # Relying on that same guessed spacing to still add up to a full page
-    # is exactly the kind of thing that silently breaks the next time
-    # anything upstream changes -- a real page break guarantees fresh
-    # content starts on page 2 regardless of how much space paragraphs
-    # 0-7 actually consume.
+    # ── Subtitle: the one right-indented (2160 twips) paragraph that
+    # still has a run in it ──
+    subtitle_idx = next((i for i, p in enumerate(paragraphs)
+                          if _ind(p)[1] == "2160" and len(p.runs) > 0), None)
+    if subtitle_idx is not None:
+        run = paragraphs[subtitle_idx].runs[0]
+        run.text = subtitle or ""
+        _clear_placeholder_highlight(run)
+
+    # ── Date: the paragraph whose lone run is colored AFD8E2 ──
+    date_idx = None
+    for i, p in enumerate(paragraphs):
+        if len(p.runs) == 1:
+            r = p.runs[0]
+            if r.font.color and r.font.color.type is not None and r.font.color.rgb == RGBColor(0xAF, 0xD8, 0xE2):
+                date_idx = i
+                break
+    if date_idx is not None:
+        paragraphs[date_idx].runs[0].text = datetime.now().strftime("%B %Y")
+
+    # Brandon reserved several blank paragraphs after the subtitle (same
+    # 2160-twip right indent, but zero runs) as extra wrap-line headroom
+    # for a long subtitle. They add a FIXED amount of vertical space
+    # regardless of how long the actual subtitle text turns out to be --
+    # so a subtitle that wraps to as many lines as his reserved headroom
+    # anticipated still pushes the date (and the cover/content page
+    # boundary) down past the bottom of page 1 and onto page 2. Removing
+    # them keeps the cover's actual height tied to the real subtitle
+    # length instead of a fixed reservation.
+    if subtitle_idx is not None and date_idx is not None:
+        for p in paragraphs[subtitle_idx + 1:date_idx]:
+            if len(p.runs) == 0 and _ind(p)[1] == "2160":
+                p._p.getparent().remove(p._p)
+
+    # Strip Brandon's own example content -- everything after the last
+    # cover field actually matched above.
+    boundary_idx = max((i for i in (title_idx, subtitle_idx, date_idx) if i is not None),
+                        default=None)
+    if boundary_idx is not None:
+        boundary_p = paragraphs[boundary_idx]._p
+        body = doc.element.body
+        removing = False
+        for child in list(body):
+            if removing:
+                if child.tag.endswith("}sectPr"):
+                    continue
+                body.remove(child)
+            if child is boundary_p:
+                removing = True
+
+    # Explicit page break regardless -- guarantees fresh content starts
+    # on page 2 rather than depending on cumulative paragraph height.
     doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
 
     return doc
@@ -2409,29 +2493,25 @@ def setup_branded_header_footer(doc, bank_name):
     logo_path = Path(__file__).parent / "verlocity_header_logo.png"
     band_path = Path(__file__).parent / "verlocity_footer_band.png"
 
-    # ── Header: real logo left-aligned (page's left edge), bank context
-    # immediately after it -- previously the logo was pushed to the right
-    # via a right tab stop while a redundant bold "VERLOCITY" text label
-    # sat on the left, so the actual logo graphic never appeared on the
-    # left side of the page at all. Logo now leads on the left; the bold
-    # text wordmark is only used as a fallback when the image asset is
-    # missing, so there's never two competing marks on the same line. ──
+    # ── Header: bank context on the left, real logo right-aligned via a
+    # right tab stop landing at the printable width's right edge. ──
     header = section.header
     hp = header.paragraphs[0]
     hp.text = ""
-    if logo_path.exists():
-        r_img = hp.add_run()
-        r_img.add_picture(str(logo_path), height=Pt(30))
-    else:
-        r_logo = hp.add_run("VERLOCITY")
-        r_logo.bold = True
-        r_logo.font.size = Pt(10)
-        r_logo.font.color.rgb = NAVY
-        r_logo.font.name = FONT_HEAD
+    r_logo = hp.add_run("VERLOCITY")
+    r_logo.bold = True
+    r_logo.font.size = Pt(10)
+    r_logo.font.color.rgb = NAVY
+    r_logo.font.name = FONT_HEAD
     r_sep = hp.add_run(f"   |   {bank_name}")
     r_sep.font.size = Pt(10)
     r_sep.font.color.rgb = GRAY3
     r_sep.font.name = FONT_HEAD
+    if logo_path.exists():
+        hp.paragraph_format.tab_stops.add_tab_stop(printable_width, WD_TAB_ALIGNMENT.RIGHT)
+        r_tab = hp.add_run("\t")
+        r_img = hp.add_run()
+        r_img.add_picture(str(logo_path), height=Pt(30))
     hp.paragraph_format.space_after = Pt(4)
     # thin rule under the header
     pPr = hp._p.get_or_add_pPr()
