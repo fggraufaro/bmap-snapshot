@@ -69,6 +69,10 @@ ALLOWED_TABLES = {
     "vw_prospecting_score":             "public",
     "vw_zip_persona":                   "public",
     "uszips":                           "geo",
+    # Added for the Market Map's radius click feature (1/3/10mi competitor
+    # list + market share). Exhaustive spatial join, not size-filtered like
+    # branch_target_competitors — this is the same source Power BI uses.
+    "branch_competitors_10mi_v2":       "geo",
 }
 
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.
