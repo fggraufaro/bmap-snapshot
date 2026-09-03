@@ -1590,7 +1590,7 @@ DEEP_DIVE_THRESHOLD = 25  # <25 branches -> assess every branch. >=25 -> curate 
 # elsewhere in this file (see fetch_branch_competitive_strategy).
 
 
-def build_branch_deep_dives(branches, branch_strategy):
+def build_branch_deep_dives(branches, branch_strategy, vulnerability_targets=None):
     """Per-branch full assessment: zone, quadrant, play, priority tier, deposits,
     named competitor, and per-branch $ capture scenario.
 
@@ -1598,16 +1598,34 @@ def build_branch_deep_dives(branches, branch_strategy):
     >=20 branches: curated to the branches with the biggest actual $ capture
     opportunity -- ranked by their named competitor's deposits (the real
     contestable dollar figure), not just opportunity_score alone.
+
+    Capture pool must come from the SAME competitor the branch's narrative
+    names as the priority target -- i.e. vulnerability_targets[uninumbr][0]
+    (vulnerability-ranked, what render_branch_deep_dive shows as "Priority
+    target" and what the assigned play actually targets), not from
+    strat["top_competitor"] (the adaptive-radius, largest-nearby-deposit
+    competitor -- a completely different selection). Previously this used
+    top_competitor unconditionally, so the $ capture scenario could cite a
+    different bank than the one named as the play's target -- caught by
+    Marc Winkler on the Branch Preview, where the capture math ran against
+    Wells Fargo's deposits while the recommended play targeted United
+    Community Bank / Bryant Bank. Falls back to top_competitor only when
+    there's no vulnerability-ranked target at all, matching the same
+    fallback order used in the rendered "Named Competitors" table.
     """
     strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in branch_strategy}
+    vulnerability_targets = vulnerability_targets or {}
 
     enriched = []
     for b in branches:
         key = (b.get("namebr"), b.get("citybr"), b.get("stalpbr"))
         strat = strategy_by_name.get(key)
         play = get_play(b.get("opportunity_zone"), b.get("matrix_quadrant"))
+        vuln_list = sorted(vulnerability_targets.get(b.get("uninumbr"), []),
+                            key=lambda c: c.get("rank") or 99)
         top_comp = strat.get("top_competitor") if strat else None
-        capture_pool = _sf(top_comp.get("deposits")) if top_comp else 0.0
+        capture_target = vuln_list[0] if vuln_list else top_comp
+        capture_pool = _sf(capture_target.get("deposits")) if capture_target else 0.0
         enriched.append({
             "branch": b,
             "strategy": strat,
@@ -3283,7 +3301,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     # ── Capture Scenario ──
     capture_pool = e["capture_pool"]
     if capture_pool:
-        _heading(doc, "Projected Annual Capture", size=11, space_before=10, space_after=4)
+        _heading(doc, "Illustrative Capture Scenarios", size=11, space_before=10, space_after=4)
         cst = doc.add_table(rows=2, cols=3)
         _apply_grid_borders(cst)
         cst_hdr = cst.rows[0].cells
@@ -3905,7 +3923,8 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     # upstream (shared with get_narratives for the audience blurbs) rather
     # than recomputed here, so narrative keys and doc content stay in sync.
     if dives is None:
-        dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [])
+        dives, deep_mode = build_branch_deep_dives(branches, branch_strategy or [],
+                                                     vulnerability_targets=vulnerability_targets)
 
     branch_audiences = narr.get("branch_audiences") or {}
     branch_verdicts = narr.get("branch_verdicts") or {}
@@ -4072,7 +4091,8 @@ def run(ik, name_hint=None):
         )
     bank_name = name_hint or (d["branches"][0].get("namefull") if d["branches"] else None) or ik
     summary = summarize_network(d)
-    dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
+    dives, deep_mode = build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [],
+                                                vulnerability_targets=d.get("vulnerability_targets"))
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                            d.get("capped_yoy"), vulnerability_targets=d.get("vulnerability_targets"))
     persona_brief, market_offer_brief = None, None
