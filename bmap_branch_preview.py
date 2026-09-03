@@ -338,18 +338,27 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
     target_with_geo = {**target, "lat": target_geo.get("lat"), "lon": target_geo.get("lon")}
     strat = bad.fetch_single_branch_strategy(ik, target_with_geo)
     play = bad.get_play(target.get("opportunity_zone"), target.get("matrix_quadrant"))
+
+    # Capture pool must come from the SAME competitor named as the priority
+    # target in the narrative (vulnerability-ranked, what the assigned play
+    # actually targets) -- not strat["top_competitor"] (adaptive-radius,
+    # largest-nearby-deposit competitor, a different selection entirely).
+    # This was the Marc Winkler bug: capture math ran against Wells Fargo's
+    # deposits while the recommended play targeted United Community Bank /
+    # Bryant Bank. Falls back to top_competitor only when there's no
+    # vulnerability-ranked target, matching build_branch_deep_dives().
+    branch_vuln_list = sorted(
+        (vulnerability_targets or {}).get(target.get("uninumbr"), []),
+        key=lambda c: c.get("rank") or 99
+    )
     top_comp = strat.get("top_competitor") if strat else None
-    capture_pool = bad._sf(top_comp.get("deposits")) if top_comp else 0.0
+    capture_target = branch_vuln_list[0] if branch_vuln_list else top_comp
+    capture_pool = bad._sf(capture_target.get("deposits")) if capture_target else 0.0
     entry = {"branch": target, "strategy": strat, "play": play, "capture_pool": capture_pool}
 
     branch, strat, play = entry["branch"], entry["strategy"], entry["play"]
     branch_label = f"{branch.get('namebr')} ({branch.get('citybr')}, {branch.get('stalpbr')})"
     print(f"[branch-preview] previewing {branch_label}")
-
-    branch_vuln_list = sorted(
-        (vulnerability_targets or {}).get(branch.get("uninumbr"), []),
-        key=lambda c: c.get("rank") or 99
-    )
     narr = get_single_branch_narrative(bank_name, branch, strat, play, branch_vuln_list)
     doc = build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, narr,
                                     len(branches), geo_by_uid, tmpdir=tmpdir,
