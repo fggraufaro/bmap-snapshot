@@ -52,6 +52,25 @@ ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "https://fggraufaro.github.io"
 
 SESSION_TTL_SECONDS = 12 * 60 * 60  # 12 hours — re-login next day
 
+# Fail fast if these are missing rather than silently running with an empty
+# string. An empty SESSION_SECRET is worse than no auth at all: HMAC with a
+# known ("") key means anyone reading this open-source file can mint their
+# own valid session tokens and skip the password check entirely, with no
+# error or log line to reveal that's happening. An empty HUB_PASSWORD would
+# do the same via the login endpoint. Both used to default to "" silently.
+if not SESSION_SECRET:
+    raise RuntimeError(
+        "SESSION_SECRET env var is not set. Refusing to start: an empty "
+        "HMAC secret would let anyone forge valid session tokens. Generate "
+        "one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+    )
+if not HUB_PASSWORD:
+    raise RuntimeError(
+        "HUB_ACCESS_PASSWORD env var is not set. Refusing to start: with no "
+        "password configured, /auth/login would reject every login attempt "
+        "anyway, so this is almost certainly a missed deploy config step."
+    )
+
 # Only these tables/views are reachable through the proxy. Anything
 # else is refused, even with a valid session token. This mirrors
 # exactly what context-generator.html's SCHEMA_MAP + api() calls use,
@@ -73,6 +92,9 @@ ALLOWED_TABLES = {
     # list + market share). Exhaustive spatial join, not size-filtered like
     # branch_target_competitors — this is the same source Power BI uses.
     "branch_competitors_10mi_v2":       "geo",
+    # Rate Radar's latest-scrape-per-institution view — used by
+    # rate-radar.html and the Hub's Rate Radar panel.
+    "vw_rate_radar_latest":             "public",
 }
 
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.

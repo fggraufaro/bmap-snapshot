@@ -39,7 +39,7 @@ import bmap_snapshot as bm
 import bmap_board_brief as bb
 import bmap_assessment_doc as bad
 import bmap_branch_preview as bpv
-from secure_proxy import secure_proxy_bp
+from secure_proxy import secure_proxy_bp, require_session
 
 app = Flask(__name__)
 
@@ -59,6 +59,7 @@ def health():
 
 # ── Board Brief PDF ────────────────────────────────────────────
 @app.route("/generate-brief", methods=["POST"])
+@require_session
 def generate_brief():
     body      = request.get_json(force=True)
     ik        = (body.get("inst_key") or "").strip()
@@ -92,6 +93,7 @@ def generate_brief():
 
 # ── $10K Assessment Word doc — full network, no top-N slice ────
 @app.route("/generate-assessment", methods=["POST"])
+@require_session
 def generate_assessment():
     body      = request.get_json(force=True)
     ik        = (body.get("inst_key") or "").strip()
@@ -164,6 +166,7 @@ def generate_assessment():
 # job/polling pattern needed here, unlike /generate-assessment, since this is
 # deliberately fast (one branch's worth of AI + Mapbox calls, not the whole network).
 @app.route("/generate-branch-preview", methods=["POST"])
+@require_session
 def generate_branch_preview():
     body      = request.get_json(force=True)
     ik        = (body.get("inst_key") or "").strip()
@@ -318,6 +321,7 @@ def _run_assessment_job(job_id, ik, name_hint):
 
 
 @app.route("/generate-assessment-async", methods=["POST"])
+@require_session
 def generate_assessment_async():
     body = request.get_json(force=True)
     ik = (body.get("inst_key") or "").strip()
@@ -339,6 +343,7 @@ def generate_assessment_async():
 
 
 @app.route("/assessment-status/<job_id>", methods=["GET"])
+@require_session
 def assessment_status(job_id):
     row = _job_read(job_id)
     if not row:
@@ -347,6 +352,7 @@ def assessment_status(job_id):
 
 
 @app.route("/assessment-download/<job_id>", methods=["GET"])
+@require_session
 def assessment_download(job_id):
     row = _job_read(job_id, select="status,filename,docx_base64")
     if not row:
@@ -366,6 +372,7 @@ def assessment_download(job_id):
 
 # ── Single deck ────────────────────────────────────────────────
 @app.route("/generate", methods=["POST"])
+@require_session
 def generate():
     body = request.get_json(force=True)
     ik        = (body.get("inst_key") or "").strip()
@@ -416,6 +423,7 @@ def generate():
 
 # ── Batch decks → ZIP ──────────────────────────────────────────
 @app.route("/generate-batch", methods=["POST"])
+@require_session
 def generate_batch():
     body  = request.get_json(force=True)
     banks = body.get("banks", [])
