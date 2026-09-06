@@ -95,6 +95,10 @@ ALLOWED_TABLES = {
     # Rate Radar's latest-scrape-per-institution view — used by
     # rate-radar.html and the Hub's Rate Radar panel.
     "vw_rate_radar_latest":             "public",
+    # Rate Radar's per-run trend view — powers the Hub's CD-rate sparkline.
+    # Was missing entirely, so every sparkline request 403'd and silently
+    # rendered empty.
+    "vw_rate_radar_history":            "public",
 }
 
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.
