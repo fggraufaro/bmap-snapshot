@@ -253,15 +253,77 @@ def proxy_rpc(fn_name):
         return jsonify({"error": str(e)}), 500
 
 
-# Rate Radar's "mark verified" action — a human confirmed this specific rate
-# on the bank's own site. Narrowly scoped on purpose: unlike proxy_table,
-# this can only touch rate_observations.manually_verified/verified_by/
-# verified_at (never extraction_method/confidence, so the original automated
-# classification is never overwritten and unverify is a clean, lossless
-# toggle), and only for the one row identified by (bank_name, run_id,
-# product_type). Anyone with a valid Hub session can call this today — there
-# is no per-person role system, only the one shared Hub password.
+# Rate Radar's "mark verified" / "correct this value" actions. Narrowly
+# scoped on purpose: unlike proxy_table, these can only touch
+# rate_observations.apy/manually_verified/verified_by/verified_at (never
+# confidence directly) for the one row identified by (bank_name, run_id,
+# product_type). Anyone with a valid Hub session can call this today —
+# there is no per-person role system, only the one shared Hub password.
 VERIFY_PRODUCT_TYPES = {"checking", "savings", "high_yield_savings", "cd", "money_market"}
+VERIFY_MAX_AGE_DAYS = 7  # only recent runs can be verified/edited — a stale
+                         # row should get a fresh crawl, not a manual patch
+                         # that a real re-scrape would just overwrite anyway.
+
+def _run_age_days(run_id):
+    """Days since the run started, or None if the run can't be found."""
+    try:
+        r = requests.get(
+            f"{SUPA_URL}/rest/v1/rate_radar_runs?run_id=eq.{quote(run_id)}&select=started_at",
+            headers={"apikey": SUPA_SERVICE, "Authorization": f"Bearer {SUPA_SERVICE}"},
+            timeout=10,
+        )
+        rows = r.json()
+        if not rows or not rows[0].get("started_at"):
+            return None
+        started = datetime.fromisoformat(rows[0]["started_at"].replace("Z", "+00:00"))
+        return (datetime.now(timezone.utc) - started).days
+    except Exception:
+        return None
+
+
+def _check_verify_request(body):
+    """Shared validation for verify-rate and edit-rate. Returns
+    (bank_name, run_id, product_type, verified_by, error_response)."""
+    bank_name    = (body.get("bank_name") or "").strip()
+    run_id       = (body.get("run_id") or "").strip()
+    product_type = (body.get("product_type") or "").strip()
+    verified_by  = (body.get("verified_by") or "").strip()
+
+    if not bank_name or not run_id:
+        return None, None, None, None, (jsonify({"error": "bank_name and run_id are required"}), 400)
+    if product_type not in VERIFY_PRODUCT_TYPES:
+        return None, None, None, None, (jsonify({"error": f"product_type must be one of {sorted(VERIFY_PRODUCT_TYPES)}"}), 400)
+    if not verified_by:
+        return None, None, None, None, (jsonify({"error": "verified_by is required (who is marking this?)"}), 400)
+
+    age = _run_age_days(run_id)
+    if age is None:
+        return None, None, None, None, (jsonify({"error": "couldn't find that run — refresh the page and try again"}), 404)
+    if age > VERIFY_MAX_AGE_DAYS:
+        return None, None, None, None, (jsonify({
+            "error": f"this data is {age} days old — verifying/editing is only allowed within "
+                     f"{VERIFY_MAX_AGE_DAYS} days of the crawl. Trigger a fresh crawl instead."
+        }), 400)
+
+    return bank_name, run_id, product_type, verified_by, None
+
+
+def _patch_rate_observation(bank_name, run_id, product_type, row):
+    url = (f"{SUPA_URL}/rest/v1/rate_observations"
+           f"?bank_name=eq.{quote(bank_name)}&run_id=eq.{quote(run_id)}&product_type=eq.{quote(product_type)}")
+    r = requests.patch(
+        url,
+        headers={
+            "apikey": SUPA_SERVICE,
+            "Authorization": f"Bearer {SUPA_SERVICE}",
+            "Content-Type": "application/json",
+            "Prefer": "return=representation",
+        },
+        json=row,
+        timeout=20,
+    )
+    return r
+
 
 @secure_proxy_bp.route("/api/verify-rate", methods=["POST", "OPTIONS"])
 @require_session
@@ -270,39 +332,61 @@ def verify_rate():
         return _cors_headers(jsonify({}))
 
     body = request.get_json(force=True, silent=True) or {}
-    bank_name    = (body.get("bank_name") or "").strip()
-    run_id       = (body.get("run_id") or "").strip()
-    product_type = (body.get("product_type") or "").strip()
-    verified     = bool(body.get("verified"))
-    verified_by  = (body.get("verified_by") or "").strip()
-
-    if not bank_name or not run_id:
-        return jsonify({"error": "bank_name and run_id are required"}), 400
-    if product_type not in VERIFY_PRODUCT_TYPES:
-        return jsonify({"error": f"product_type must be one of {sorted(VERIFY_PRODUCT_TYPES)}"}), 400
-    if not verified_by:
-        return jsonify({"error": "verified_by is required (who is marking this?)"}), 400
+    bank_name, run_id, product_type, verified_by, err = _check_verify_request(body)
+    if err:
+        return err
+    verified = bool(body.get("verified"))
 
     row = {
         "manually_verified": verified,
         "verified_by": verified_by,
         "verified_at": datetime.now(timezone.utc).isoformat(),
     }
-    url = (f"{SUPA_URL}/rest/v1/rate_observations"
-           f"?bank_name=eq.{quote(bank_name)}&run_id=eq.{quote(run_id)}&product_type=eq.{quote(product_type)}")
+    try:
+        r = _patch_rate_observation(bank_name, run_id, product_type, row)
+        if r.status_code not in (200, 204):
+            return jsonify({"error": r.text[:300]}), r.status_code
+        updated = r.json() if r.text else []
+        if not updated:
+            return jsonify({"error": "no matching rate_observations row — check bank_name/run_id/product_type"}), 404
+        return jsonify({"ok": True, "updated": len(updated)})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# "Correct this value" — unlike a plain verify (confirming the crawler's
+# number was already right), this overwrites apy with what a human typed in,
+# so it's honestly labeled extraction_method='manual' rather than keeping
+# whatever the automated crawl originally guessed for a value that's since
+# been overwritten. Always implies manually_verified=true.
+@secure_proxy_bp.route("/api/edit-rate", methods=["POST", "OPTIONS"])
+@require_session
+def edit_rate():
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+
+    body = request.get_json(force=True, silent=True) or {}
+    bank_name, run_id, product_type, verified_by, err = _check_verify_request(body)
+    if err:
+        return err
 
     try:
-        r = requests.patch(
-            url,
-            headers={
-                "apikey": SUPA_SERVICE,
-                "Authorization": f"Bearer {SUPA_SERVICE}",
-                "Content-Type": "application/json",
-                "Prefer": "return=representation",
-            },
-            json=row,
-            timeout=20,
-        )
+        apy = float(body.get("apy"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "apy must be a number"}), 400
+    if not (0 <= apy <= 15):
+        return jsonify({"error": "apy must be between 0 and 15"}), 400
+
+    row = {
+        "apy": apy,
+        "extraction_method": "manual",
+        "confidence": "high",
+        "manually_verified": True,
+        "verified_by": verified_by,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        r = _patch_rate_observation(bank_name, run_id, product_type, row)
         if r.status_code not in (200, 204):
             return jsonify({"error": r.text[:300]}), r.status_code
         updated = r.json() if r.text else []
