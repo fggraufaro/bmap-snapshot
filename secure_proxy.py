@@ -35,7 +35,9 @@ import hmac
 import hashlib
 import base64
 import json
+from datetime import datetime, timezone
 from functools import wraps
+from urllib.parse import quote
 
 import requests
 from flask import Blueprint, request, jsonify
@@ -247,5 +249,65 @@ def proxy_rpc(fn_name):
             timeout=20,
         )
         return jsonify(r.json()), r.status_code
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+# Rate Radar's "mark verified" action — a human confirmed this specific rate
+# on the bank's own site. Narrowly scoped on purpose: unlike proxy_table,
+# this can only touch rate_observations.manually_verified/verified_by/
+# verified_at (never extraction_method/confidence, so the original automated
+# classification is never overwritten and unverify is a clean, lossless
+# toggle), and only for the one row identified by (bank_name, run_id,
+# product_type). Anyone with a valid Hub session can call this today — there
+# is no per-person role system, only the one shared Hub password.
+VERIFY_PRODUCT_TYPES = {"checking", "savings", "high_yield_savings", "cd", "money_market"}
+
+@secure_proxy_bp.route("/api/verify-rate", methods=["POST", "OPTIONS"])
+@require_session
+def verify_rate():
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+
+    body = request.get_json(force=True, silent=True) or {}
+    bank_name    = (body.get("bank_name") or "").strip()
+    run_id       = (body.get("run_id") or "").strip()
+    product_type = (body.get("product_type") or "").strip()
+    verified     = bool(body.get("verified"))
+    verified_by  = (body.get("verified_by") or "").strip()
+
+    if not bank_name or not run_id:
+        return jsonify({"error": "bank_name and run_id are required"}), 400
+    if product_type not in VERIFY_PRODUCT_TYPES:
+        return jsonify({"error": f"product_type must be one of {sorted(VERIFY_PRODUCT_TYPES)}"}), 400
+    if not verified_by:
+        return jsonify({"error": "verified_by is required (who is marking this?)"}), 400
+
+    row = {
+        "manually_verified": verified,
+        "verified_by": verified_by,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+    }
+    url = (f"{SUPA_URL}/rest/v1/rate_observations"
+           f"?bank_name=eq.{quote(bank_name)}&run_id=eq.{quote(run_id)}&product_type=eq.{quote(product_type)}")
+
+    try:
+        r = requests.patch(
+            url,
+            headers={
+                "apikey": SUPA_SERVICE,
+                "Authorization": f"Bearer {SUPA_SERVICE}",
+                "Content-Type": "application/json",
+                "Prefer": "return=representation",
+            },
+            json=row,
+            timeout=20,
+        )
+        if r.status_code not in (200, 204):
+            return jsonify({"error": r.text[:300]}), r.status_code
+        updated = r.json() if r.text else []
+        if not updated:
+            return jsonify({"error": "no matching rate_observations row — check bank_name/run_id/product_type"}), 404
+        return jsonify({"ok": True, "updated": len(updated)})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
