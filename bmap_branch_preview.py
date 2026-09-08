@@ -336,7 +336,8 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
 
     target_geo = geo_by_uid.get(target.get("uninumbr")) or {}
     target_with_geo = {**target, "lat": target_geo.get("lat"), "lon": target_geo.get("lon")}
-    strat = bad.fetch_single_branch_strategy(ik, target_with_geo)
+    bank_total_deposits = summary["total_deposits_B"] * 1e9
+    strat = bad.fetch_single_branch_strategy(ik, target_with_geo, bank_total_deposits)
     play = bad.get_play(target.get("opportunity_zone"), target.get("matrix_quadrant"))
 
     # Capture pool must come from the SAME competitors named in the narrative

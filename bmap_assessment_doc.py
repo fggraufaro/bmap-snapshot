@@ -1404,7 +1404,8 @@ def get_play(zone, matrix_quadrant):
     return PLAY_MATRIX.get((zone, q))
 
 
-def determine_adaptive_radius(density_1mi_count, branch_deposits):
+def determine_adaptive_radius(density_1mi_count, branch_deposits,
+                               deposits_1mi=None, bank_total_deposits=None):
     """
     Density + deposit-size adaptive radius rule (per user directive):
     - Rural OR low-deposit branch -> widen the search. This is the safe
@@ -1413,10 +1414,23 @@ def determine_adaptive_radius(density_1mi_count, branch_deposits):
     - Crowded AND high-deposit -> can tighten to 0.5mi. Only be this
       aggressive when BOTH signals confirm it's a real, contestable,
       valuable market -- not on density or deposits alone.
+    - Bank-scale override: if the deposits sitting within 1mi alone are
+      already >=5x the WHOLE BANK's total deposits, tighten to 1mi
+      regardless of branch count. Branch-count density misses markets
+      like Cattlemens/Addison -- $2.7B within 1mi held by just 8 branches,
+      under the count-based "dense" threshold (needs 15+), but >6x
+      Cattlemens' entire ~$435M balance sheet. A market that already
+      dwarfs the whole bank is plenty of opportunity on its own; no need
+      to widen out to 3mi and dilute against a $10B, 49-competitor pool
+      just because the branch-count threshold wasn't hit.
     Real validation: Camden (dense, $113M branch) -> 20 competitors within
     1mi alone. Millersburg (rural, $534M branch -- the HQ) -> 0 competitors
     even at 1mi. Same fixed radius cannot serve both.
     """
+    if bank_total_deposits and deposits_1mi is not None and bank_total_deposits > 0:
+        if deposits_1mi >= bank_total_deposits * 5:
+            return 1.0
+
     is_rural    = density_1mi_count < 3
     is_low_dep  = branch_deposits < 30_000_000
     is_dense    = density_1mi_count >= 15
@@ -1458,13 +1472,16 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
     for c in all_candidates:
         candidates_by_branch.setdefault(c["my_uninumbr"], []).append(c)
 
+    bank_total_deposits = sum(_sf(b.get("latest_dep")) for b in branches)
+
     results = []
     for b in branches:
         candidates = candidates_by_branch.get(b["uninumbr"], [])
 
         density_1mi = sum(1 for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
+        deposits_1mi = sum(_sf(c.get("deposits")) for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
         deposits = _sf(b.get("latest_dep"))
-        radius = determine_adaptive_radius(density_1mi, deposits)
+        radius = determine_adaptive_radius(density_1mi, deposits, deposits_1mi, bank_total_deposits)
         # Same size filter as branch_target_competitors (Methodology Part 2):
         # competitor deposits between 0.10x and 5x the client branch's own
         # deposits. Without this, giant national-bank hub branches (Wells
@@ -1505,7 +1522,7 @@ def fetch_branch_competitive_strategy(ik, branches, branches_geo):
     return results
 
 
-def fetch_single_branch_strategy(ik, target_branch):
+def fetch_single_branch_strategy(ik, target_branch, bank_total_deposits=None):
     """Lightweight equivalent of fetch_branch_competitive_strategy() for
     exactly ONE branch -- built for the standalone Preview flow, which needs
     to stay fast enough to run live in a pitch meeting. The full-network
@@ -1542,8 +1559,9 @@ def fetch_single_branch_strategy(ik, target_branch):
         candidates = []
 
     density_1mi = sum(1 for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
+    deposits_1mi = sum(_sf(c.get("deposits")) for c in candidates if _sf(c.get("distance_miles")) <= 1.0)
     deposits = _sf(target_branch.get("latest_dep"))
-    radius = determine_adaptive_radius(density_1mi, deposits)
+    radius = determine_adaptive_radius(density_1mi, deposits, deposits_1mi, bank_total_deposits)
     min_dep, max_dep = deposits * 0.10, deposits * 5.0
     filtered = sorted(
         (c for c in candidates
