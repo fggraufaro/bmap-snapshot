@@ -1599,19 +1599,26 @@ def build_branch_deep_dives(branches, branch_strategy, vulnerability_targets=Non
     opportunity -- ranked by their named competitor's deposits (the real
     contestable dollar figure), not just opportunity_score alone.
 
-    Capture pool must come from the SAME competitor the branch's narrative
-    names as the priority target -- i.e. vulnerability_targets[uninumbr][0]
-    (vulnerability-ranked, what render_branch_deep_dive shows as "Priority
-    target" and what the assigned play actually targets), not from
-    strat["top_competitor"] (the adaptive-radius, largest-nearby-deposit
-    competitor -- a completely different selection). Previously this used
-    top_competitor unconditionally, so the $ capture scenario could cite a
-    different bank than the one named as the play's target -- caught by
-    Marc Winkler on the Branch Preview, where the capture math ran against
-    Wells Fargo's deposits while the recommended play targeted United
-    Community Bank / Bryant Bank. Falls back to top_competitor only when
-    there's no vulnerability-ranked target at all, matching the same
-    fallback order used in the rendered "Named Competitors" table.
+    Capture pool must come from the SAME competitors the branch's narrative
+    names -- i.e. vulnerability_targets[uninumbr][:3] (vulnerability-ranked,
+    what render_branch_deep_dive shows as "Priority target" + "Where you
+    have the edge") -- not from strat["top_competitor"] (the adaptive-radius,
+    largest-nearby-deposit competitor -- a completely different selection).
+    Previously this used top_competitor unconditionally, so the $ capture
+    scenario could cite a different bank than the one named as the play's
+    target -- caught by Marc Winkler on the Branch Preview, where the capture
+    math ran against Wells Fargo's deposits while the recommended play
+    targeted United Community Bank / Bryant Bank.
+
+    Sums the top 3 vulnerability-ranked targets rather than just #1: "Where
+    you have the edge" already names up to 3 declining competitors as live
+    targets, but the capture math was only ever sized off rank 1's deposits
+    -- e.g. Cattlemens/Addison named Texas Regional + Centennial + SouthState
+    as targets but the scenario table was sized off Texas Regional's $48M
+    alone ($0.48M/$1.44M/$3.36M) instead of their combined $914.8M
+    ($9.1M/$27.4M/$64.0M). Falls back to top_competitor only when there's no
+    vulnerability-ranked target at all, matching the same fallback order used
+    in the rendered "Named Competitors" table.
     """
     strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in branch_strategy}
     vulnerability_targets = vulnerability_targets or {}
@@ -1624,8 +1631,10 @@ def build_branch_deep_dives(branches, branch_strategy, vulnerability_targets=Non
         vuln_list = sorted(vulnerability_targets.get(b.get("uninumbr"), []),
                             key=lambda c: c.get("rank") or 99)
         top_comp = strat.get("top_competitor") if strat else None
-        capture_target = vuln_list[0] if vuln_list else top_comp
-        capture_pool = _sf(capture_target.get("deposits")) if capture_target else 0.0
+        if vuln_list:
+            capture_pool = sum(_sf(c.get("deposits")) for c in vuln_list[:3])
+        else:
+            capture_pool = _sf(top_comp.get("deposits")) if top_comp else 0.0
         enriched.append({
             "branch": b,
             "strategy": strat,

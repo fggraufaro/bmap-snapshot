@@ -339,21 +339,28 @@ def generate_preview(ik, name_hint=None, branch_name=None, tmpdir="."):
     strat = bad.fetch_single_branch_strategy(ik, target_with_geo)
     play = bad.get_play(target.get("opportunity_zone"), target.get("matrix_quadrant"))
 
-    # Capture pool must come from the SAME competitor named as the priority
-    # target in the narrative (vulnerability-ranked, what the assigned play
-    # actually targets) -- not strat["top_competitor"] (adaptive-radius,
-    # largest-nearby-deposit competitor, a different selection entirely).
-    # This was the Marc Winkler bug: capture math ran against Wells Fargo's
-    # deposits while the recommended play targeted United Community Bank /
-    # Bryant Bank. Falls back to top_competitor only when there's no
-    # vulnerability-ranked target, matching build_branch_deep_dives().
+    # Capture pool must come from the SAME competitors named in the narrative
+    # (vulnerability-ranked, what the assigned play actually targets) -- not
+    # strat["top_competitor"] (adaptive-radius, largest-nearby-deposit
+    # competitor, a different selection entirely). This was the Marc Winkler
+    # bug: capture math ran against Wells Fargo's deposits while the
+    # recommended play targeted United Community Bank / Bryant Bank.
+    #
+    # Sums the top 3 vulnerability-ranked targets rather than just #1: "Where
+    # you have the edge" names up to 3 declining competitors as live targets,
+    # so the capture math should reflect all of them, not just the single
+    # Priority target's deposits -- matching build_branch_deep_dives().
+    # Falls back to top_competitor only when there's no vulnerability-ranked
+    # target, matching build_branch_deep_dives().
     branch_vuln_list = sorted(
         (vulnerability_targets or {}).get(target.get("uninumbr"), []),
         key=lambda c: c.get("rank") or 99
     )
     top_comp = strat.get("top_competitor") if strat else None
-    capture_target = branch_vuln_list[0] if branch_vuln_list else top_comp
-    capture_pool = bad._sf(capture_target.get("deposits")) if capture_target else 0.0
+    if branch_vuln_list:
+        capture_pool = sum(bad._sf(c.get("deposits")) for c in branch_vuln_list[:3])
+    else:
+        capture_pool = bad._sf(top_comp.get("deposits")) if top_comp else 0.0
     entry = {"branch": target, "strategy": strat, "play": play, "capture_pool": capture_pool}
 
     branch, strat, play = entry["branch"], entry["strategy"], entry["play"]
