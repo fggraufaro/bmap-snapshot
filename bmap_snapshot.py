@@ -7226,7 +7226,6 @@ def build_deck(data, logo_bytes):
     top_br   = sorted(br, key=lambda b: sf(b.get("opportunity_score")), reverse=True)
     just_top = sorted([b for b in br if b.get("opportunity_zone")=="Justify"],
                       key=lambda b: sf(b.get("latest_dep")), reverse=True)
-    tier1    = [b for b in br if b.get("campaign") in ["Aggressive Acquisition","Urgent Competitive Push","Capitalize","Turnaround","Grow Share","Competitive Defense"]][:2]
 
     narr = get_narratives(data)
 
