@@ -53,3 +53,15 @@ def upsert(table, rows, on_conflict, schema="public", batch_size=5000):
         r.raise_for_status()
         sent += len(batch)
     return sent
+
+
+def call_rpc(fn, schema="public", timeout=600):
+    """POST to /rest/v1/rpc/<fn> with no args - for the refresh_* stored
+    procedures (refresh_bmap_after_upload, refresh_branch_opportunity_base,
+    refresh_bmap_scores, ...) that ingestion scripts trigger after a load."""
+    url = f"{SUPA_URL}/rest/v1/rpc/{fn}"
+    headers = _headers(schema, write=True)
+    headers["Content-Type"] = "application/json"
+    r = requests.post(url, headers=headers, json={}, timeout=timeout)
+    r.raise_for_status()
+    return r.json() if r.content else None
