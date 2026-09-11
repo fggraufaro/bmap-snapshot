@@ -3815,8 +3815,19 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             doc.add_picture(map_path, width=Inches(6.3))
 
     # ── Network Opportunity Overview ──
+    # a10 finding: this section previously had no fallback -- if narrative
+    # generation is skipped (no ANTHROPIC_API_KEY) or fails, the heading
+    # still rendered with a blank paragraph under it. Mirrors the
+    # fallback_headline pattern above: computed from real network data,
+    # never fabricated.
+    fallback_network_narrative = (
+        f"Across {summary['branch_count']} branches, {summary['zones']['Invest']} sit in the Invest zone "
+        f"and {summary['zones']['Defend'] + summary['zones']['Justify']} in Defend/Justify, against a "
+        f"network average opportunity score of {summary['avg_score']:.0f}/100 and average deposit YoY of "
+        f"{summary['avg_yoy_pct']:+.1f}%."
+    )
     _heading(doc, "Network Opportunity Overview")
-    _body(doc, narr.get("network_narrative") or "")
+    _body(doc, narr.get("network_narrative") or fallback_network_narrative)
 
     if summary["top5"] and summary["bottom3"]:
         top_bottom_path = f"{tmpdir}/_chart_topbottom.png"
@@ -3830,8 +3841,19 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         doc.add_picture(top_bottom_path, width=Inches(6.3))
 
     # ── Competitive Overview ──
+    # a10 finding: same missing-fallback issue as Network Opportunity
+    # Overview above -- built from the real top target instead of a blank body.
+    if targets:
+        top_target = max(targets, key=lambda t: _sf(t.get("avg_vuln_score")))
+        fallback_competitive_narrative = (
+            f"{top_target.get('target_institution','The top network-level target')} shows the highest "
+            f"vulnerability across {top_target.get('branches_in_radius','—')} exposed branches, with "
+            f"deposit YoY of {_sf(top_target.get('avg_yoy_pct')):+.1f}%."
+        )
+    else:
+        fallback_competitive_narrative = "No qualifying network-level competitive target identified."
     _heading(doc, "Competitive Overview")
-    _body(doc, narr.get("competitive_narrative") or "")
+    _body(doc, narr.get("competitive_narrative") or fallback_competitive_narrative)
     if targets:
         ct = doc.add_table(rows=1, cols=4)
         _apply_grid_borders(ct)
@@ -3986,8 +4008,15 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                 doc.add_page_break()
 
     # ── Financial Health Benchmarking ──
+    # a10 finding: same missing-fallback issue, built from real fin data.
+    fallback_financial_narrative = (
+        f"ROA {_sf(fin.get('roa')):.2f}%, NIM {_sf(fin.get('nim')):.2f}%, efficiency ratio "
+        f"{_sf(fin.get('efficiency_ratio')):.1f}%, deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}%, "
+        f"cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}%, Tier 1 capital "
+        f"{_sf(fin.get('tier1_capital_pct')):.1f}%."
+    )
     _heading(doc, "Financial Health Benchmarking")
-    _body(doc, narr.get("financial_narrative") or "")
+    _body(doc, narr.get("financial_narrative") or fallback_financial_narrative)
 
     fin_chart_path = f"{tmpdir}/_chart_financial.png"
     chart_financial_benchmark(fin, bank_name, fin_chart_path)
