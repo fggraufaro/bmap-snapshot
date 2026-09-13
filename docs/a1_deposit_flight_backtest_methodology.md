@@ -399,9 +399,54 @@ treat it as informative-only pending a second transition, per 3.2.
 
 ---
 
+# Test 4 — Local market tailwind → branch deposit growth
+
+Third mechanism, distinct from competition (Test 1) and financial health (Test 2/3): does the
+branch's local market growing (income, population, home values) predict that branch's deposit
+growth. Checked data before drafting, same discipline as before:
+
+- `raw.raw_income` — ZCTA-level median household income, YEAR 2021-2024 (real annual panel).
+- `raw.raw_population` — ZCTA-level population (`total`), YEAR 2021-2024.
+- `raw.raw_zhvi` — ZIP-level home value index, monthly, 2023-01 to 2026-07.
+
+## 4.1 Claim
+
+A branch's local-market growth (income, population, or home-value growth, computed before the
+prediction period) predicts that branch's deposit growth over the following period, controlling
+for the branch's own market share (same confound as Test 1 — kept for consistency, same
+9-cell design).
+
+## 4.2 Data
+
+- **Geography join:** `raw_income`/`raw_population`'s `"Geographic Area Name"` is `"ZCTA5 <zip>"`
+  — extract the 5-digit ZIP and join to `raw.raw_sod`'s `ZIPBR`. `raw_zhvi.zip` joins directly.
+- **Income and population — two transitions, mirroring Test 1's:**
+
+  | | Transition A | Transition B |
+  |---|---|---|
+  | Predictor (income/pop growth) | 2021→2022 | 2022→2023 |
+  | Branch outcome (SOD) | 2023→2024 | 2024→2025 |
+
+  Predictor year precedes the branch outcome window by design (no look-ahead) — a 1-year gap in
+  both cases.
+- **ZHVI — single transition only, directional (same limitation class as Test 3):** ZHVI only
+  starts Jan 2023, so no ZHVI predictor exists before the 2023→2024 branch transition. Only
+  ZHVI growth Jan 2023→Jan 2024 → branch 2024→2025 outcome is possible, and even that predictor
+  window ends just months before the branch outcome period starts (same "not fully clean"
+  caveat as Test 3.2). **Directional only, no verdict**, same rule as Test 3 (3.3).
+- **Predictor/outcome/exclusions/stratification:** identical to Test 1 (1.2) — same floor,
+  closure exclusion, winsorization, and `own_share` × predictor-growth tercile grid.
+
+## 4.3 Bar
+
+Income and population: Test 1's bar exactly (1.3) — both transitions must independently pass.
+ZHVI: directional only, no verdict, per 4.2.
+
+---
+
 ## Phase 2 scope (not started)
 
-Run all three tests as specified above:
+Run all four tests as specified above:
 
 - **Test 1:** the query in 1.2 against `raw.raw_sod`, once for each of Transitions A and B,
   producing two 9-cell tercile tables (mean + median `yoy_growth`, n per cell), evaluated
@@ -413,8 +458,10 @@ Run all three tests as specified above:
   when summarizing across the four predictors.
 - **Test 3:** the query in 3.2, once per predictor (4 runs, single transition), reported as
   directional-only per 3.3 — no Supported/Not Supported verdict from this round.
+- **Test 4:** the query in 4.2 — income and population, once each × 2 transitions = 4 runs,
+  evaluated against 4.3 (Test 1's bar); ZHVI, single transition, directional-only per 4.2.
 
-Commit the queries and all result tables (2 for Test 1, 8 for Test 2, 4 for Test 3 — 14 total) for
-Phase 3 review. Report each test's outcome separately, and within Tests 2 and 3 report each
-predictor's outcome separately — none of this is combined into a single overall a1 verdict at this
-stage.
+Commit the queries and all result tables (2 for Test 1, 8 for Test 2, 4 for Test 3, 5 for Test 4 —
+19 total) for Phase 3 review. Report each test's outcome separately, and within Tests 2, 3 and 4
+report each predictor's outcome separately — none of this is combined into a single overall a1
+verdict at this stage.
