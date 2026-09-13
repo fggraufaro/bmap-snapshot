@@ -135,7 +135,8 @@ def generate_assessment():
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
                                             persona_brief=persona_brief, market_offer_brief=market_offer_brief,
-                                            vulnerability_targets=d.get("vulnerability_targets"))
+                                            vulnerability_targets=d.get("vulnerability_targets"),
+                                            deposit_opportunity=d.get("deposit_opportunity"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
@@ -300,7 +301,8 @@ def _run_assessment_job(job_id, ik, name_hint):
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
                                             persona_brief=persona_brief, market_offer_brief=market_offer_brief,
-                                            vulnerability_targets=d.get("vulnerability_targets"))
+                                            vulnerability_targets=d.get("vulnerability_targets"),
+                                            deposit_opportunity=d.get("deposit_opportunity"))
             buf = io.BytesIO()
             doc.save(buf)
             buf.seek(0)
