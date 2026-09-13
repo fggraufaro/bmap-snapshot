@@ -234,6 +234,11 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
     if capped_yoy:
         print(f"  ✓ {len(capped_yoy)} capped branch(es) resolved against raw_sod")
 
+    print(f"  Computing backtest-grounded deposit opportunity...")
+    deposit_opportunity = fetch_deposit_opportunity(ik, branches)
+    if deposit_opportunity:
+        print(f"  ✓ deposit opportunity computed for {len(deposit_opportunity)} branch(es)")
+
     return {
         "inst_key": ik,
         "branches": branches,
@@ -243,6 +248,7 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
         "branch_strategy": branch_strategy,
         "vulnerability_targets": vulnerability_targets,
         "capped_yoy": capped_yoy,
+        "deposit_opportunity": deposit_opportunity,
     }
 
 
@@ -1261,6 +1267,101 @@ def _relative_size_line(own_deposits, competitors):
         return None
     return f"${own_deposits/1e6:.1f}M in deposits — " + ", ".join(parts) + "."
 
+
+
+# ═══════════════════════════════════════════════════════════════
+# DEPOSIT OPPORTUNITY PROJECTION — a1's verified backtest, applied per-branch
+# ═══════════════════════════════════════════════════════════════
+
+# Tercile cutpoints and cell median growth rates from a1 Test 1's verified
+# backtest (2024 predictor -> 2025 outcome, Phase 3 independently verified
+# cell-for-cell) -- see docs/a1_test1_results.md, Transition B. Re-derive
+# only when a1 is re-run against fresher data; do not silently recompute
+# these against a different year, or the numbers stop matching what was
+# actually audited.
+SHARE_TERCILE_CUTS = (0.0032967062313609, 0.0222516827390941)   # own_share terciles
+COMP_TERCILE_CUTS = (32, 151)                                    # competitor_count terciles
+
+# (share_tercile, comp_tercile) -> median yoy_growth %, from a1_test1_results.md Transition B
+BACKTEST_GROWTH_PCT = {
+    (1, 1): 6.25, (1, 2): 4.73, (1, 3): 1.16,
+    (2, 1): 4.21, (2, 2): 1.36, (2, 3): -0.59,
+    (3, 1): 2.45, (3, 2): 0.95, (3, 3): 2.85,
+}
+
+
+def _tercile(value, cuts):
+    lo, hi = cuts
+    if value < lo:
+        return 1
+    if value < hi:
+        return 2
+    return 3
+
+
+def fetch_deposit_opportunity(ik, branches):
+    """Per-branch dollar deposit-opportunity projection, applying a1's
+    verified backtest directly rather than restating it as prose (per
+    Francisco's direction -- customers want results, not methodology).
+    For each branch: classify into the same (share tercile, competitor
+    tercile) cell the backtest used, look up that cell's real median
+    growth rate and the low-competition rate for the same share tier,
+    and project the gap onto the branch's actual current deposits
+    (latest_dep, already in real dollars, from branch_opportunity_base --
+    not the raw_sod classification year, so the dollar figure is current
+    even though the classification is pinned to the audited year).
+
+    Classification uses raw_sod YEAR=2024 specifically -- the exact
+    predictor year the backtest was run against -- not the current year,
+    so every branch's tercile here always matches the audited cutpoints
+    above. Framed to the reader as a historical pattern applied to their
+    branch, not a guarantee -- callers must keep that framing in the
+    rendered text, not just in this docstring."""
+    uninumbrs = ",".join(str(b["uninumbr"]) for b in branches if b.get("uninumbr"))
+    if not uninumbrs:
+        return {}
+
+    rows = supabase("raw_sod", f"UNINUMBR=in.({uninumbrs})&YEAR=eq.2024&select=UNINUMBR,STCNTYBR,DEPSUMBR")
+    rows = rows if isinstance(rows, list) else []
+    branch_by_id = {r["UNINUMBR"]: r for r in rows if r.get("DEPSUMBR") and r.get("STCNTYBR")}
+    if not branch_by_id:
+        return {}
+
+    counties = ",".join(sorted({str(r["STCNTYBR"]) for r in branch_by_id.values()}))
+    county_rows = supabase("raw_sod", f"STCNTYBR=in.({counties})&YEAR=eq.2024&select=STCNTYBR,DEPSUMBR")
+    county_rows = county_rows if isinstance(county_rows, list) else []
+    county_dep, county_n = {}, {}
+    for r in county_rows:
+        c = r.get("STCNTYBR")
+        if c is None:
+            continue
+        county_dep[c] = county_dep.get(c, 0) + _sf(r.get("DEPSUMBR"))
+        county_n[c] = county_n.get(c, 0) + 1
+
+    latest_dep_by_id = {b["uninumbr"]: _sf(b.get("latest_dep")) for b in branches}
+
+    out = {}
+    for uid, r in branch_by_id.items():
+        dep_2024 = _sf(r.get("DEPSUMBR"))
+        county = r.get("STCNTYBR")
+        cdep, cn = county_dep.get(county, 0), county_n.get(county, 0)
+        if dep_2024 < 1000 or cdep <= 0 or cn < 2:
+            continue
+        own_share = dep_2024 / cdep
+        competitor_count = cn - 1
+        share_t = _tercile(own_share, SHARE_TERCILE_CUTS)
+        comp_t = _tercile(competitor_count, COMP_TERCILE_CUTS)
+        own_rate = BACKTEST_GROWTH_PCT[(share_t, comp_t)]
+        best_rate = BACKTEST_GROWTH_PCT[(share_t, 1)]   # lowest-competition rate, same share tier
+        gap_pp = max(best_rate - own_rate, 0.0)
+        current_dep = latest_dep_by_id.get(uid, dep_2024 * 1000)
+        out[uid] = {
+            "share_tercile": share_t, "comp_tercile": comp_t,
+            "own_growth_pct": own_rate, "best_growth_pct": best_rate,
+            "gap_pp": gap_pp,
+            "dollar_opportunity": current_dep * (gap_pp / 100.0),
+        }
+    return out
 
 
 def fetch_branch_geo(ik):
@@ -3582,8 +3683,10 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
                           branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None,
-                          persona_brief=None, market_offer_brief=None, vulnerability_targets=None):
+                          persona_brief=None, market_offer_brief=None, vulnerability_targets=None,
+                          deposit_opportunity=None):
     capped_yoy = capped_yoy or {}
+    deposit_opportunity = deposit_opportunity or {}
     geo_by_uid = {g["uninumbr"]: g for g in (branches_geo or []) if g.get("uninumbr") is not None}
 
     # ── Cover + header/footer -- prefers Brandon's actual template (same
@@ -3696,6 +3799,53 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             r_why.font.size = Pt(9.5)
             r_why.font.name = FONT_HEAD
             r_why.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
+
+    # Deposit Opportunity — Backtested: a1's verified competitive-density
+    # backtest (docs/a1_test1_results.md) applied directly to this bank's
+    # own branches, in dollars -- not a restated methodology paragraph.
+    # Francisco's direction: customers want results, not a description of
+    # how the result was produced.
+    opp_rows = [
+        {"uninumbr": b["uninumbr"], "namebr": b.get("namebr"), "citybr": b.get("citybr"),
+         "stalpbr": b.get("stalpbr"), **deposit_opportunity[b["uninumbr"]]}
+        for b in branches
+        if b.get("uninumbr") in deposit_opportunity and deposit_opportunity[b["uninumbr"]]["gap_pp"] > 0
+    ]
+    opp_rows.sort(key=lambda r: -r["dollar_opportunity"])
+    if opp_rows:
+        total_opportunity = sum(r["dollar_opportunity"] for r in opp_rows)
+        _heading(doc, "Deposit Opportunity — Backtested", size=12, space_before=12, space_after=4)
+        _body(
+            doc,
+            f"{len(opp_rows)} branches currently sit in a competitive position where, historically "
+            f"(2024→2025, independently verified against real deposit outcomes across two separate "
+            f"years — see methodology note below), similar branches with lower local competition grew "
+            f"deposits faster. Applying that same historical gap to these branches' actual current "
+            f"balances: ${total_opportunity/1e6:,.1f}M in potential deposit growth, network-wide. This "
+            f"is a historical pattern applied to your branches, not a guarantee.",
+        )
+        ot = doc.add_table(rows=1, cols=4)
+        _apply_grid_borders(ot)
+        hdr = ot.rows[0].cells
+        for i, h in enumerate(["Branch", "Current Deposits", "Historical Gap", "Potential Opportunity"]):
+            hdr[i].text = h
+        for r in opp_rows[:10]:
+            row = ot.add_row().cells
+            row[0].text = f"{r.get('namebr') or '—'} ({r.get('citybr','—')}, {r.get('stalpbr','—')})"
+            row[1].text = f"${(r['dollar_opportunity']/(r['gap_pp']/100) if r['gap_pp'] else 0)/1e6:,.1f}M"
+            row[2].text = f"+{r['gap_pp']:.1f}pp"
+            row[3].text = f"${r['dollar_opportunity']/1e6:,.1f}M"
+        if len(opp_rows) > 10:
+            _body(doc, f"...and {len(opp_rows)-10} more branches with a positive backtested gap.", size=9)
+        _body(
+            doc,
+            "Methodology: each branch is classified by its own market share and local competitor "
+            "count (same grid a1's backtest used), then matched to that exact cell's real, "
+            "independently verified median deposit growth rate from 2024→2025. The gap shown is the "
+            "difference to the lowest-competition branches with the same market share — applied to "
+            "this branch's current deposits.",
+            size=8.5,
+        )
 
     # What This Means for the Next 12 Months — exactly 3 leadership-level
     # decisions, no tactics/channels/pricing per spec.
@@ -4170,7 +4320,8 @@ def run(ik, name_hint=None):
                                     d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                     capped_yoy=d.get("capped_yoy"),
                                     persona_brief=persona_brief, market_offer_brief=market_offer_brief,
-                                    vulnerability_targets=d.get("vulnerability_targets"))
+                                    vulnerability_targets=d.get("vulnerability_targets"),
+                                    deposit_opportunity=d.get("deposit_opportunity"))
         path = save_doc(doc, bank_name)
     print(f"\n  ✓ Saved: {path}\n")
     return path
