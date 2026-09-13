@@ -354,9 +354,54 @@ fact:
 
 ---
 
+# Test 3 — Parent-institution financial health → that specific branch's deposit growth
+
+Test 2 tested the easiest version of the financial-health claim: an institution's own health
+predicting its own aggregate growth. That can mask real branch-level heterogeneity (Sprint 6
+already found an 11-point score spread across just 4 branches at one institution). Test 3 tests
+the actual mechanism `vuln_score` uses in production: a competitor's institution-level financials
+predicting one specific branch's deposit growth.
+
+## 3.1 Claim
+
+Same 4 predictors and shared hypothesis direction as Test 2 (2.1), but the unit of analysis for
+the *outcome* is the branch, not the institution: a branch's parent-institution ROA/LDR/brokered
+%/NIM at time T predicts that specific branch's deposit growth over the following period, after
+controlling for the branch's own market share (Test 1's control, since branch-level growth still
+has the urbanicity confound Test 1 found — institution size alone doesn't cover it at this grain).
+
+## 3.2 Data
+
+- **Predictor:** `analytics.bank_financial_snapshot`, `institution_type='bank'`, joined to
+  `raw.raw_sod` via `RSSDID`.
+- **Outcome:** branch-level `yoy_growth`, same definition as Test 1 (1.2).
+- **Transition:** predictor quarter **2024-12-31** (earliest available in
+  `bank_financial_snapshot`) → outcome from Test 1's existing 2024→2025 branch panel.
+  **Known limitation, stated plainly:** 2024-12-31 falls ~6 months into that outcome window
+  (which starts at the June 2024 SOD snapshot), not fully before it — there is no Call Report
+  quarter earlier than Dec 2024 available yet. This is a partial look-ahead, not a clean
+  pre-registration in the strict sense Test 1/2 achieved. Only one transition is possible right
+  now for this reason — no second independent quarter exists far enough back. **Single-transition
+  results here are directional only, not eligible for a "Supported" verdict** until a second,
+  cleaner transition becomes available (either an earlier Call Report quarter gets loaded, or a
+  2026 SOD snapshot lands, giving a real post-2024-12-31 outcome window).
+- **Exclusions:** Test 1's branch-level floor/closure exclusions (1.2), plus Test 2's null-predictor
+  exclusion, applied together.
+- **Stratification:** terciles by branch `own_share` (Test 1's control) × terciles by the parent
+  institution's predictor value — 9 cells per predictor.
+
+## 3.3 Bar
+
+Same monotonicity + magnitude criteria as Test 1 (1.3: ≥2 of 3 share terciles, ≥3pp spread —
+branch-level, so Test 1's bar applies, not Test 2's quarterly-scaled one). **No pass/fail verdict
+is issued from this single transition** — report the pattern (direction, magnitude) honestly, and
+treat it as informative-only pending a second transition, per 3.2.
+
+---
+
 ## Phase 2 scope (not started)
 
-Run both tests as specified above:
+Run all three tests as specified above:
 
 - **Test 1:** the query in 1.2 against `raw.raw_sod`, once for each of Transitions A and B,
   producing two 9-cell tercile tables (mean + median `yoy_growth`, n per cell), evaluated
@@ -366,7 +411,10 @@ Run both tests as specified above:
   producing a 9-cell tercile table (mean + median `dep_growth`, n per cell), evaluated
   independently against 2.3, with the multiple-comparisons reporting discipline from 2.3 applied
   when summarizing across the four predictors.
+- **Test 3:** the query in 3.2, once per predictor (4 runs, single transition), reported as
+  directional-only per 3.3 — no Supported/Not Supported verdict from this round.
 
-Commit the queries and all result tables (2 for Test 1, 8 for Test 2 — 10 total) for Phase 3
-review. Report each test's outcome separately, and within Test 2 report each predictor's outcome
-separately — none of this is combined into a single overall a1 verdict at this stage.
+Commit the queries and all result tables (2 for Test 1, 8 for Test 2, 4 for Test 3 — 14 total) for
+Phase 3 review. Report each test's outcome separately, and within Tests 2 and 3 report each
+predictor's outcome separately — none of this is combined into a single overall a1 verdict at this
+stage.
