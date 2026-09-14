@@ -1253,6 +1253,30 @@ def fetch_vulnerability_targets(ik, branches):
             "lat": g.get("lat"),
             "lon": g.get("lon"),
         })
+
+    # Dedup same-institution rows -- branch_target_competitors is pre-capped
+    # at exactly 3 rows per branch upstream, and when one bank has more than
+    # one branch within radius, each branch counts as its own row with an
+    # identical name. Confirmed real case: Cattlemens' Altus branch got
+    # "Frazer Bank" at both rank 1 ($18.6M) and rank 2 ($167.7M) -- same
+    # institution, two branches -- which produced a literal duplicate
+    # sentence in "Where you have the edge" (_vulnerability_reasoning keys
+    # off bank_name + metrics that were near-identical for both rows).
+    # Keeping only the first (best-ranked, highest vuln_score) instance per
+    # name is more honest than showing the same institution twice -- this
+    # can legitimately leave a branch with 2 competitors instead of 3 rather
+    # than fabricate a 4th-ranked row the upstream table never computed.
+    for branch_id, comps in out.items():
+        seen = set()
+        deduped = []
+        for c in comps:
+            name = c.get("bank_name")
+            if name in seen:
+                continue
+            seen.add(name)
+            deduped.append(c)
+        out[branch_id] = deduped
+
     return out
 
 
