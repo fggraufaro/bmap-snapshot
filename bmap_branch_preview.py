@@ -117,6 +117,9 @@ def get_single_branch_narrative(bank_name, branch, strat, play, vuln_competitors
                   + "\n".join(vuln_lines)) if vuln_lines else \
                  "No vulnerability-ranked competitors available for this branch."
 
+    demo_clause = bad._demo_census_clause(branch).rstrip(", ")
+    demo_line = f", {demo_clause}" if demo_clause else ""
+
     ctx = (
         f"Bank: {bank_name}\n"
         f"Branch: {branch_label}\n"
@@ -129,7 +132,7 @@ def get_single_branch_narrative(bank_name, branch, strat, play, vuln_competitors
         f"Household income ${bad._sf(branch.get('household_income')):.0f} "
         f"({bad._sf(branch.get('yoy_income_growth'))*100:+.1f}% YoY), "
         f"population YoY {bad._sf(branch.get('yoy_pop_growth'))*100:+.1f}%, "
-        f"home value YoY {bad._sf(branch.get('zhvi_yoy_pct')):+.1f}%.\n"
+        f"home value YoY {bad._sf(branch.get('zhvi_yoy_pct')):+.1f}%{demo_line}.\n"
         f"Assigned play: {play or 'n/a'}."
     )
 
