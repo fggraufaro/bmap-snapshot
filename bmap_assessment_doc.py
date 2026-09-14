@@ -875,6 +875,200 @@ def _select_spread_labels(competitors, position_fn, max_labels=5, min_sep=0.35):
     return {id(c) for c in selected}
 
 
+def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path):
+    """FALLBACK: plain circle-plot version (no basemap). Used only if the
+    Mapbox version fails for any reason — same reasoning as
+    chart_branch_map_states relative to chart_branch_map_osm."""
+    if branch_lat is None or branch_lon is None:
+        return False
+
+    lat_rad = math.radians(branch_lat)
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = 69.0 * max(math.cos(lat_rad), 0.15)
+
+    def to_local_mi(lat, lon):
+        return (lon - branch_lon) * mi_per_deg_lon, (lat - branch_lat) * mi_per_deg_lat
+
+    fig, ax = plt.subplots(figsize=(3.4, 3.4), dpi=200)
+
+    theta = [i / 100 * 2 * math.pi for i in range(101)]
+    circ_x = [radius_mi * math.cos(t) for t in theta]
+    circ_y = [radius_mi * math.sin(t) for t in theta]
+    ax.plot(circ_x, circ_y, color="#083D5F", linewidth=1.0, linestyle="--", alpha=0.5, zorder=2)
+
+    labeled_ids = _select_spread_labels(
+        competitors,
+        position_fn=lambda c: to_local_mi(c["lat"], c["lon"]) if c.get("lat") is not None else None,
+        max_labels=5, min_sep=radius_mi * 0.12,
+    )
+    for c in competitors:
+        clat, clon = c.get("lat"), c.get("lon")
+        if clat is None or clon is None:
+            continue
+        cx, cy = to_local_mi(clat, clon)
+        r = max(_sf(c.get("deposits")) / 4e6, 40)
+        ax.scatter([cx], [cy], s=r, c="#A32D2D", marker="s", alpha=0.75,
+                   edgecolors="white", linewidths=0.6, zorder=3)
+        if id(c) in labeled_ids:
+            label = c.get("bank_name", "")[:18]
+            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (cx, cy),
+                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                        color="#334155", ha="center", va="top", zorder=4,
+                        bbox=dict(boxstyle="round,pad=0.12", facecolor="#FAFAF8",
+                                  edgecolor="none", alpha=0.8))
+
+    # The client's own branch, at the local origin, drawn last so it's on top.
+    # Circle marker (not a star) -- deliberately distinct from the competitor
+    # squares above so the shape alone, not just color, tells them apart.
+    ax.scatter([0], [0], s=140, c="#083D5F", marker="o",
+               edgecolors="white", linewidths=0.8, zorder=5)
+
+    pad = radius_mi * 1.35
+    ax.set_xlim(-pad, pad)
+    ax.set_ylim(-pad, pad)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_facecolor("#FAFAF8")
+    ax.set_aspect("equal", adjustable="box")
+    fig.tight_layout(pad=0.2)
+    fig.savefig(path, transparent=False, facecolor="#FAFAF8")
+    plt.close(fig)
+    return True
+
+
+def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
+    """PRIMARY per-branch competitor map — same real Mapbox basemap as the
+    main Geographic Distribution map, zoomed to the branch's adaptive radius.
+    Reuses _web_mercator_xy/_fit_zoom (already verified against all 59 real
+    Mid Penn branches on the main map) so the branch marker, radius circle,
+    and competitor markers all land pixel-correct on the fetched tile image.
+    Falls back to chart_branch_radius_map_local on any failure."""
+    if branch_lat is None or branch_lon is None or not MAPBOX_TOKEN:
+        return False
+
+    W, H = 700, 700
+    # Bounding box = branch +/- radius, converted to degrees locally (fine
+    # at this scale) purely to pick a zoom level that frames the radius
+    # circle with headroom — actual marker/circle placement below uses the
+    # exact same Mercator projection as the main map, not this approximation.
+    mi_per_deg_lat = 69.0
+    mi_per_deg_lon = 69.0 * max(math.cos(math.radians(branch_lat)), 0.15)
+    pad_mi = radius_mi * 1.35
+    lons = [branch_lon - pad_mi / mi_per_deg_lon, branch_lon + pad_mi / mi_per_deg_lon]
+    lats = [branch_lat - pad_mi / mi_per_deg_lat, branch_lat + pad_mi / mi_per_deg_lat]
+
+    classic_zoom = _fit_zoom(lons, lats, W, H)
+    mapbox_zoom = max(classic_zoom - 1, 0)
+
+    url = (f"https://api.mapbox.com/styles/v1/mapbox/{MAPBOX_STYLE}/static/"
+           f"{branch_lon},{branch_lat},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
+    resp = requests.get(url, timeout=10)
+    if resp.status_code != 200:
+        raise RuntimeError(f"Mapbox Static Images API {resp.status_code}: {resp.text[:200]}")
+
+    from PIL import Image, ImageDraw
+    from io import BytesIO
+    img = Image.open(BytesIO(resp.content)).convert("RGB")
+
+    draw = ImageDraw.Draw(img)
+    iw, ih = img.size
+    draw.rectangle([iw - 165, ih - 14, iw, ih], fill=(255, 255, 255, 210))
+    draw.text((iw - 160, ih - 12), "(c) Mapbox (c) OSM", fill=(60, 60, 60))
+
+    cx_world, cy_world = _web_mercator_xy(branch_lon, branch_lat, classic_zoom)
+
+    def to_px(lon, lat):
+        x, y = _web_mercator_xy(lon, lat, classic_zoom)
+        return (x - cx_world) + W / 2, (y - cy_world) + H / 2
+
+    fig, ax = plt.subplots(figsize=(W / 200, H / 200), dpi=200)
+    ax.imshow(img)
+
+    # Radius circle — generate in real lat/lon (not a flat local approximation)
+    # then project through the same Mercator math as everything else, so it
+    # lines up correctly with the real basemap underneath.
+    theta = [i / 100 * 2 * math.pi for i in range(101)]
+    circ_px, circ_py = [], []
+    for t in theta:
+        clat = branch_lat + (radius_mi / mi_per_deg_lat) * math.sin(t)
+        clon = branch_lon + (radius_mi / mi_per_deg_lon) * math.cos(t)
+        px, py = to_px(clon, clat)
+        circ_px.append(px)
+        circ_py.append(py)
+    ax.plot(circ_px, circ_py, color="#083D5F", linewidth=1.3, linestyle="--", alpha=0.7, zorder=2)
+
+    # Every competitor within the radius gets a marker (some markets have 20+,
+    # e.g. Camden at 1mi in validation testing, or Clinton Savings Bank's
+    # Clinton branch at 44) -- but labeling all of them would be unreadable
+    # on a small inset, so only up to 5 get a text label. Naively picking
+    # the top 5 by deposits produced a real, confirmed bug: 3 "Bank of
+    # America" branches clustered together all got labeled, stacking
+    # illegibly on top of each other while the actual #1 competitor's own
+    # label ended up buried underneath the pile. _select_spread_labels
+    # skips candidates too close (in pixels) to an already-picked label.
+    labeled_ids = _select_spread_labels(
+        competitors,
+        position_fn=lambda c: to_px(c["lon"], c["lat"]) if c.get("lat") is not None else None,
+        max_labels=5, min_sep=50,
+    )
+    for c in competitors:
+        clat, clon = c.get("lat"), c.get("lon")
+        if clat is None or clon is None:
+            continue
+        px, py = to_px(clon, clat)
+        r = max(_sf(c.get("deposits")) / 4e6, 40)
+        ax.scatter([px], [py], s=r, c="#A32D2D", marker="s", alpha=0.85,
+                   edgecolors="white", linewidths=0.6, zorder=3)
+        if id(c) in labeled_ids:
+            label = c.get("bank_name", "")[:18]
+            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (px, py),
+                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
+                        color="#1A1A1A", ha="center", va="top", zorder=4,
+                        bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
+                                  edgecolor="none", alpha=0.85))
+
+    # Branch = circle, deliberately distinct from the competitor squares above.
+    bx, by = to_px(branch_lon, branch_lat)
+    ax.scatter([bx], [by], s=150, c="#083D5F", marker="o",
+               edgecolors="white", linewidths=0.9, zorder=5)
+
+    ax.set_xlim(0, W)
+    ax.set_ylim(H, 0)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    fig.tight_layout(pad=0)
+    fig.savefig(path, dpi=200)
+    plt.close(fig)
+    return True
+
+
+def _distance_miles(lat1, lon1, lat2, lon2):
+    """Simple haversine — used only to backfill distance_miles for the
+    vuln_list map fallback below, which doesn't carry it natively."""
+    if None in (lat1, lon1, lat2, lon2):
+        return None
+    r = 3958.8
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return 2 * r * math.asin(math.sqrt(a))
+
+
+def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
+    """Dispatcher: real map tiles when available, local-plot fallback
+    otherwise. Same pattern as chart_branch_map/chart_branch_map_osm."""
+    try:
+        if chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
+            return True
+    except Exception as e:
+        print(f"  ⚠ OSM radius map failed ({e}) — falling back to local-plot version")
+    return chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path)
+
+
 def fetch_vulnerability_targets(ik, branches):
     """Pre-scored competitor vulnerability data from analytics.branch_target_competitors
     -- YoY trend, ROA, noncurrent-asset %, and a composite vuln_score, already
@@ -2783,6 +2977,78 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     top3 = (strat.get("top3_competitors") if strat else []) or []
     all_comp = (strat.get("all_competitors") if strat else []) or []
     vuln_list = sorted((vuln_targets or {}).get(b.get("uninumbr"), []), key=lambda c: c.get("rank") or 99)
+
+    # Diagnostic logging — the competitor map has gone missing from at least
+    # one real generation (Trustmark / Jones Valley) with no exception raised,
+    # which means it silently hit one of the conditions below rather than
+    # failing loudly. These prints turn that into a visible, one-line answer
+    # in the Railway logs on the next run instead of another round of
+    # static-code guessing.
+    if not all_comp:
+        print(f"  ⚠ [map] no all_competitors for {b.get('namebr')} — skipping radius map "
+              f"(strat={'present' if strat else 'MISSING'}, "
+              f"all_competitors_key={'present' if strat and 'all_competitors' in strat else 'MISSING'})")
+
+    own = geo_by_uid.get(b.get("uninumbr"))
+
+    # Map competitor source — prefer all_competitors entries that actually
+    # carry lat/lon (the full-network batch RPC includes it; the lightweight
+    # single-branch RPC used by the Preview flow does NOT), falling back to
+    # vuln_list (branch_target_competitors) otherwise. vuln_list has its own
+    # geo join in fetch_vulnerability_targets() and has rendered correctly
+    # in every real generation so far. Checking for usable geo specifically
+    # (not just non-empty) matters now that all_competitors can be non-empty
+    # but geo-less depending on which fetch path produced it.
+    map_competitors = [c for c in all_comp if c.get("lat") is not None and c.get("lon") is not None]
+    if not map_competitors and vuln_list:
+        own_lat = own.get("lat") if own else None
+        own_lon = own.get("lon") if own else None
+        map_competitors = [
+            {
+                "bank_name": c.get("bank_name"),
+                "deposits": c.get("deposits"),
+                "lat": c.get("lat"),
+                "lon": c.get("lon"),
+                "distance_miles": _distance_miles(own_lat, own_lon, c.get("lat"), c.get("lon")),
+            }
+            for c in vuln_list if c.get("lat") is not None and c.get("lon") is not None
+        ]
+        if map_competitors:
+            print(f"  ✓ [map] built from vuln_list fallback for {b.get('namebr')} "
+                  f"({len(map_competitors)} of {len(vuln_list)} vuln competitors had usable geo)")
+        elif vuln_list:
+            print(f"  ⚠ [map] vuln_list present ({len(vuln_list)} competitors) but none had "
+                  f"usable lat/lon — geo join in fetch_vulnerability_targets() likely missed "
+                  f"these target_uninumbr values in branches_master_v2")
+
+    if map_competitors:
+        if not own or own.get("lat") is None or own.get("lon") is None:
+            print(f"  ⚠ [map] no usable geo for {b.get('namebr')} (uninumbr={b.get('uninumbr')}) "
+                  f"in geo_by_uid ({len(geo_by_uid)} entries loaded) — skipping radius map")
+        if own and own.get("lat") is not None and own.get("lon") is not None:
+            radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
+            ok = chart_branch_radius_map(
+                own["lat"], own["lon"], map_competitors, radius_mi or 3.0, radius_img
+            )
+            if not ok:
+                print(f"  ⚠ [map] chart_branch_radius_map returned False for {b.get('namebr')} "
+                      f"— both Mapbox and local-plot fallback failed")
+            if ok:
+                p_img = doc.add_paragraph()
+                p_img.paragraph_format.space_before = Pt(4)
+                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p_img.add_run().add_picture(radius_img, width=Inches(3.6))
+                p_cap = doc.add_paragraph()
+                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                r_cap = p_cap.add_run(
+                    f"Branch (circle) vs. {len(map_competitors)} competitor"
+                    f"{'s' if len(map_competitors) != 1 else ''} (squares), sized by deposits — "
+                    f"full competitive density in this market."
+                )
+                r_cap.italic = True
+                r_cap.font.size = Pt(7.5)
+                r_cap.font.color.rgb = GRAY3
+                r_cap.font.name = FONT_HEAD
 
     if vuln_list:
         # This is the actual answer to "who do we go after" -- ranked by a
