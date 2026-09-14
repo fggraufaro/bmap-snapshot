@@ -122,6 +122,39 @@ SCHEMA_MAP = {
     "branch_target_competitors":      "analytics",
     "branches_master_v2":             "geo",
     "raw_sod":                        "raw",
+    "raw_population":                 "raw",
+    "raw_occupation":                 "raw",
+}
+
+# Census ACS age brackets (raw.raw_population) and occupation categories
+# (raw.raw_occupation) -- both ZCTA-level, joined to branches by zipbr. Age
+# and income/population/ZHVI were the only demographic signal reaching the
+# per-branch Audience Signal narrative; Francisco wants occupation and age
+# folded in too so the narrative is grounded in the full Census picture, not
+# just income/growth trend.
+AGE_BRACKETS = [
+    ("total_under_15", "Under 15"), ("total_15to25", "15-24"),
+    ("total_25to35", "25-34"), ("total_35to45", "35-44"),
+    ("total_45to65", "45-64"), ("total_over65", "65+"),
+]
+OCCUPATION_LABELS = {
+    "mgmt_business_financial": "Management, Business & Financial",
+    "computer_engineering_science": "Computer, Engineering & Science",
+    "education_legal_community_arts": "Education, Legal, Community & Arts",
+    "healthcare_practitioner": "Healthcare Practitioners",
+    "healthcare_support": "Healthcare Support",
+    "protective_service": "Protective Service",
+    "food_prep": "Food Preparation & Serving",
+    "building_grounds": "Building & Grounds Maintenance",
+    "personal_care": "Personal Care & Service",
+    "sales_related": "Sales",
+    "office_admin_support": "Office & Administrative Support",
+    "farming_fishing_forestry": "Farming, Fishing & Forestry",
+    "construction_extraction": "Construction & Extraction",
+    "installation_maintenance_repair": "Installation, Maintenance & Repair",
+    "production": "Production",
+    "transportation": "Transportation",
+    "material_moving": "Material Moving",
 }
 
 def supabase(table, params):
@@ -184,6 +217,94 @@ def supabase_rpc(fn_name, payload, timeout=20, paginate=False, page_size=1000):
     return all_rows
 
 
+def _acs_int(v):
+    """raw_occupation's category counts are stored as text -- ACS suppresses
+    small-population ZCTAs with blank/non-numeric placeholders rather than 0,
+    so this must tolerate junk instead of assuming a clean int string."""
+    if v is None:
+        return 0
+    try:
+        return int(str(v).replace(",", "").strip())
+    except (ValueError, TypeError):
+        return 0
+
+
+def fetch_branch_age_occupation(branches):
+    """Joins Census ACS age-bracket (raw.raw_population) and occupation-mix
+    (raw.raw_occupation) data onto each branch by zipbr, mutating branches
+    in place. Both tables key on a "860Z200US{zip}"-format ZCTA geo id
+    (confirmed identical prefix in both tables), so this is a plain exact-
+    match IN() filter -- no regexp/suffix matching needed, and no URL-length
+    risk the way the Mapbox marker-embedding approach had, since the filter
+    is just one geo id per unique branch zip.
+
+    Adds to each branch dict: age_bracket_label/age_bracket_pct (the single
+    largest age bracket, as a share of total ZCTA population) and
+    top_occupation_label/top_occupation_pct/occupation_top2 (largest 1-2
+    employed-occupation categories, as a share of the ZCTA's total employed
+    population across all 17 categories). Missing/unmatched branches are
+    left without these keys -- callers must .get() defensively, same as
+    every other demographic field here."""
+    zips = sorted({b["zipbr"] for b in branches if b.get("zipbr")})
+    if not zips:
+        return
+    geo_ids = [f"860Z200US{z}" for z in zips]
+    id_list = ",".join(geo_ids)
+
+    pop_rows = supabase(
+        "raw_population",
+        f"Geography=in.({id_list})&YEAR=eq.2024&select=Geography,total,"
+        + ",".join(col for col, _ in AGE_BRACKETS),
+    )
+    pop_rows = pop_rows if isinstance(pop_rows, list) else []
+    age_by_zip = {}
+    for r in pop_rows:
+        zip5 = str(r.get("Geography") or "")[-5:]
+        best_col, best_label = max(AGE_BRACKETS, key=lambda kv: _acs_int(r.get(kv[0])))
+        best_n = _acs_int(r.get(best_col))
+        total = _acs_int(r.get("total"))
+        if total > 0:
+            age_by_zip[zip5] = {"label": best_label, "pct": best_n / total * 100}
+
+    occ_cols = list(OCCUPATION_LABELS.keys())
+    occ_rows = supabase(
+        "raw_occupation",
+        f"geo_id=in.({id_list})&YEAR=eq.2024&select=geo_id," + ",".join(occ_cols),
+    )
+    occ_rows = occ_rows if isinstance(occ_rows, list) else []
+    occ_by_zip = {}
+    for r in occ_rows:
+        zip5 = str(r.get("geo_id") or "")[-5:]
+        counts = [(col, _acs_int(r.get(col))) for col in occ_cols]
+        total = sum(n for _, n in counts)
+        if total <= 0:
+            continue
+        counts.sort(key=lambda kv: -kv[1])
+        top2 = [{"label": OCCUPATION_LABELS[col], "pct": n / total * 100}
+                for col, n in counts[:2] if n > 0]
+        if top2:
+            occ_by_zip[zip5] = top2
+
+    matched = 0
+    for b in branches:
+        z = b.get("zipbr")
+        if not z:
+            continue
+        age = age_by_zip.get(z)
+        occ = occ_by_zip.get(z)
+        if age:
+            b["age_bracket_label"] = age["label"]
+            b["age_bracket_pct"] = age["pct"]
+        if occ:
+            b["top_occupation_label"] = occ[0]["label"]
+            b["top_occupation_pct"] = occ[0]["pct"]
+            b["occupation_top2"] = occ
+        if age or occ:
+            matched += 1
+    print(f"  ✓ age/occupation matched for {matched}/{len(branches)} branches "
+          f"({len(zips)} unique zips)")
+
+
 def fetch_full_network_data(ik, skip_competitive_strategy=False):
     """Pull FULL branch network — no limit=N slice. This is the structural
     difference vs. the free Snapshot.
@@ -202,9 +323,12 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
         "priority_tier,market_growth_normalized,rel_growth_norm,"
         "inv_density_norm_winsor,deposit_size_norm,namefull,"
         "household_income,yoy_income_growth,total_population,yoy_pop_growth,"
-        "zhvi_yoy_pct,smb_zone,smb_index,total_deposits_10mi&order=opportunity_score.desc",
+        "zhvi_yoy_pct,smb_zone,smb_index,total_deposits_10mi,zipbr&order=opportunity_score.desc",
     )
     print(f"  ✓ {len(branches)} branches (full network, uncapped)")
+
+    print(f"  Fetching age/occupation mix...")
+    fetch_branch_age_occupation(branches)
 
     print(f"  Fetching financial snapshot...")
     fin_arr = supabase(
@@ -357,6 +481,25 @@ def _score_driver_clause(b):
     if dominant[0] == weakest[0]:
         return ""
     return f"score driven primarily by {dominant[0]}, weakest on {weakest[0]}"
+
+
+def _demo_census_clause(b):
+    """Age-bracket + occupation-mix clause, from fetch_branch_age_occupation()'s
+    ZCTA-level Census ACS join. Shared by both the $10K Assessment's
+    get_narratives() and the standalone Preview's get_single_branch_narrative()
+    so the audience narrative is grounded in the full Census picture (income,
+    population, home value, age, occupation), not just the first three.
+    Returns "" if this branch's zip didn't match (e.g. suppressed small-ZCTA
+    data), same defensive-empty pattern as _score_driver_clause above."""
+    parts = []
+    if b.get("age_bracket_label"):
+        parts.append(f"dominant age bracket {b['age_bracket_label']} "
+                      f"({_sf(b.get('age_bracket_pct')):.0f}% of local population)")
+    top2 = b.get("occupation_top2") or []
+    if top2:
+        occ_str = ", ".join(f"{o['label']} ({o['pct']:.0f}%)" for o in top2)
+        parts.append(f"top occupations {occ_str}")
+    return (", ".join(parts) + ", ") if parts else ""
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -2013,6 +2156,7 @@ Named examples: {named_str}
                 f"({_sf(b.get('yoy_income_growth'))*100:+.1f}% YoY), "
                 f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
                 f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%, "
+                f"{_demo_census_clause(b)}"
                 f"assigned play {e['play'] or 'n/a'}"
                 f"{vuln_str}"
             )
@@ -2038,14 +2182,14 @@ Return ONLY valid JSON, no markdown fences:
   "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead. If a relative-size figure is given for a vulnerability-ranked competitor, use it as part of the resourcing argument (e.g. 'this branch is 2.8x the size of its weakest named competitor').", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above. If a vulnerability-ranked competitor shows real weakness (declining deposits, weak ROA, elevated noncurrent assets), name conquesting that competitor's depositors as part of the angle."}},
   "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. If vulnerability-ranked competitors are given, name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group -- this is the same data the reader sees highlighted in the competitor table, so the verdict must not read thinner than the table it introduces. Ground every claim in the specific numbers given -- no generic branch commentary.",
   "branch_audiences": {"Branch Name (City, ST)": {
-    "narrative": "2-3 sentences per branch, using the household income, income YoY, population YoY, home value YoY figures given, AND the competitive weakness data where present -- not demographics alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting.",
-    "persona_name": "A short archetype-style label for this branch's dominant audience segment, in the style of 'The Equity Plateau' or 'The Cash-Flow Balancer' -- an income/wealth-stage ARCHETYPE grounded in the actual numbers given. Never a specific named individual (e.g. 'Sarah, 34') -- Verlocity's persona layer names segments, not people.",
+    "narrative": "2-3 sentences per branch, using the household income, income YoY, population YoY, home value YoY, dominant age bracket, AND top occupation categories given, AND the competitive weakness data where present -- ground this in the full Census picture (income + growth + age + occupation together), not income/population alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospects from income/geo, Regression-Scored Lookalikes, Competitive Conquesting for switchers, Warm Retargeting) where the demographic signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting.",
+    "persona_name": "A short archetype-style label for this branch's dominant audience segment, in the style of 'The Equity Plateau' or 'The Cash-Flow Balancer' -- an income/wealth-stage ARCHETYPE grounded in the actual numbers given, including the age bracket and occupation mix when present. Never a specific named individual (e.g. 'Sarah, 34') -- Verlocity's persona layer names segments, not people.",
     "persona_tagline": "One short line under the persona name (5-10 words) capturing the segment's core motivation.",
-    "life_stage": "e.g. 'Mid-career to pre-retirement, 40s-60s' -- inferred from income level and market-maturity signals given, not invented biographical detail.",
+    "life_stage": "e.g. 'Mid-career to pre-retirement, 40s-60s' -- grounded directly in the dominant age bracket given when present, not just inferred from income level.",
     "wealth_signal": "Income range + home value context, grounded directly in the numbers given for this branch.",
-    "primary_need": "The banking product or need this segment most likely prioritizes, grounded in the income/growth profile given.",
+    "primary_need": "The banking product or need this segment most likely prioritizes, grounded in the income/growth profile AND occupation mix given (e.g. a sales/office-heavy workforce reads differently than a farming/production-heavy one).",
     "switch_driver": "What would actually move this segment to switch banks or deepen a relationship here -- grounded in the competitive weakness data given, when present.",
-    "strong_signals": ["1-2 short (under 15 words) bullets naming concrete reasons this branch's audience opportunity is real. Every bullet needs a number from the data given."],
+    "strong_signals": ["1-2 short (under 15 words) bullets naming concrete reasons this branch's audience opportunity is real. Every bullet needs a number from the data given -- age bracket and occupation share are fair game alongside income/population/home value."],
     "validate_before_activating": ["1 short (under 20 words) honest caveat on what this read can't confirm from the data alone -- this is what makes the read credible rather than just optimistic. Do not skip it."]
   }}
 }
@@ -3282,6 +3426,10 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             (f"{inc_yoy:+.1f}%", "Income YoY"),
             (f"{pop_yoy:+.1f}%", "Population YoY"),
         ]
+        if b.get("age_bracket_label"):
+            stats.append((b["age_bracket_label"], "Dominant Age Bracket"))
+        if b.get("top_occupation_label"):
+            stats.append((b["top_occupation_label"], "Top Occupation"))
         if smb_zone:
             stats.append((str(smb_zone), "SMB Zone"))
         stat_tbl = card_cell.add_table(rows=2, cols=len(stats))
@@ -3291,7 +3439,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             vcell.paragraphs[0].text = ""
             vr = vcell.paragraphs[0].add_run(val)
             vr.bold = True
-            vr.font.size = Pt(17 if len(stats) > 3 else 19)
+            vr.font.size = Pt(11 if len(stats) > 4 else (17 if len(stats) > 3 else 19))
             vr.font.color.rgb = TEAL
             vr.font.name = FONT_HEAD
             vcell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -3322,8 +3470,16 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
                 wealth_note = " Rising home values add a supporting tailwind for CD/HYSA acquisition."
             elif zhvi_yoy < -2:
                 wealth_note = " Softening home values warrant caution on aggressive acquisition spend."
+            demo_note = ""
+            if b.get("age_bracket_label") or b.get("top_occupation_label"):
+                demo_bits = []
+                if b.get("age_bracket_label"):
+                    demo_bits.append(f"{b['age_bracket_label']} is the largest local age bracket")
+                if b.get("top_occupation_label"):
+                    demo_bits.append(f"{b['top_occupation_label']} is the dominant local occupation")
+                demo_note = " " + " and ".join(demo_bits).capitalize() + "."
             r_narr = p_narr.add_run(
-                f"Home values {zhvi_yoy:+.1f}% YoY. This profile {segment_read}.{wealth_note}"
+                f"Home values {zhvi_yoy:+.1f}% YoY. This profile {segment_read}.{wealth_note}{demo_note}"
             )
         r_narr.font.size = Pt(9.5)
         r_narr.font.name = FONT_HEAD
