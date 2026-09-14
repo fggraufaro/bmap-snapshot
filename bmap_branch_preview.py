@@ -73,20 +73,20 @@ def get_single_branch_narrative(bank_name, branch, strat, play, vuln_competitors
     the full get_narratives() network-wide schema (exec_headline, priority_focus,
     next_12_months, etc. would be wasted tokens/latency for a single-branch
     preview meant to be fast enough to run live in a pitch meeting). Returns
-    the same {"branch_verdicts": ..., "branch_plays": ...} shape
-    render_branch_deep_dive() already expects, so no changes needed there.
+    the same {"branch_verdicts": ..., "branch_plays": ..., "branch_audiences": ...}
+    shape render_branch_deep_dive() already expects, so no changes needed there.
 
     vuln_competitors: the top-3 vulnerability-ranked competitors (ROA,
     noncurrent %, YoY, vuln_score) for this branch -- i.e. vuln_targets[uninumbr]
     from fetch_vulnerability_targets(). Previously NOT passed here at all: this
     call only ever saw strat['top_competitor'] (name/distance/deposits from the
-    adaptive-radius lookup), so the verdict/play text had no visibility
+    adaptive-radius lookup), so the verdict/play/audience text had no visibility
     into which competitors were actually weak, or how this branch's own deposit
     size compares to any of them. That gap -- not the prompt wording -- was the
     main reason the narrative read as thin: it was reasoning from a fraction of
     the data the rendered doc itself displays in the competitor table."""
     branch_label = f"{branch.get('namebr')} ({branch.get('citybr')}, {branch.get('stalpbr')})"
-    empty = {"branch_verdicts": {}, "branch_plays": {}}
+    empty = {"branch_verdicts": {}, "branch_plays": {}, "branch_audiences": {}}
 
     if not bad.ANTH_KEY or not bad.anthropic:
         return empty
@@ -139,10 +139,21 @@ paid Assessment: confident, commercial, decisive, grounded in the specific numbe
 Every claim needs a number. Return ONLY valid JSON, no markdown fences:
 {
   "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences synthesizing score, zone, the named competitive threat (or its absence), and deposit trajectory into a clear verdict -- the 'why' behind the assigned play. If a score-driver sentence is given (what's actually driving the score up or down), use it explicitly -- naming the real driver (e.g. 'capped by a shrinking local market, not competition' or 'reflects deposit scale, not underlying growth') is exactly the insight a prospect is paying to see, not a restatement of the number. If vulnerability-ranked competitors are given, the verdict must name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group."},
-  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in this branch's specific numbers -- not a generic play-name restatement. If no named competitor exists within the adaptive radius, do NOT write language implying one does. If a relative-size figure is given, use it -- 'this branch is 2.8x the size of its weakest named competitor' is a stronger resourcing argument than restating deposit totals separately.", "media_brief": "One to two sentences, naming the actual target audience and product implied by this branch's specific data. If a specific competitor weakness is given (e.g. a named bank losing deposits or showing balance-sheet stress), the media brief should name conquesting that competitor's depositors as part of the angle, not just describe the branch's own demographics in isolation."}}
+  "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in this branch's specific numbers -- not a generic play-name restatement. If no named competitor exists within the adaptive radius, do NOT write language implying one does. If a relative-size figure is given, use it -- 'this branch is 2.8x the size of its weakest named competitor' is a stronger resourcing argument than restating deposit totals separately.", "media_brief": "One to two sentences, naming the actual target audience and product implied by this branch's specific data. If a specific competitor weakness is given (e.g. a named bank losing deposits or showing balance-sheet stress), the media brief should name conquesting that competitor's depositors as part of the angle, not just describe the branch's own demographics in isolation."}},
+  "branch_audiences": {"Branch Name (City, ST)": {
+    "narrative": "2-3 sentences using the household income, income YoY, population YoY, home value YoY, AND the competitive weakness data given -- not demographics alone. Frame through Verlocity's AudienceFinder segments (High-Quality Local Prospect, Regression-Scored Lookalike, Competitive Conquesting, Warm Retargeting) where the signal supports it. If a named competitor is losing deposits, Competitive Conquesting targeting THEIR depositor base specifically is a stronger, more concrete angle than generic new-household prospecting.",
+    "persona_name": "A short archetype-style label for this branch's dominant audience segment, in the style of 'The Equity Plateau' or 'The Cash-Flow Balancer' -- an income/wealth-stage ARCHETYPE grounded in the actual numbers given. Never a specific named individual (no 'Sarah, 34') -- Verlocity's persona layer names segments, not people.",
+    "persona_tagline": "One short line under the persona name (5-10 words) capturing the segment's core motivation.",
+    "life_stage": "e.g. 'Mid-career to pre-retirement, 40s-60s' -- inferred from income level and market-maturity signals given, not invented biographical detail.",
+    "wealth_signal": "Income range + home value context, grounded directly in the numbers given for this branch.",
+    "primary_need": "The banking product or need this segment most likely prioritizes, grounded in the income/growth profile given.",
+    "switch_driver": "What would actually move this segment to switch banks or deepen a relationship here -- grounded in the competitive weakness data given, when present.",
+    "strong_signals": ["1-2 short (under 15 words) bullets naming concrete reasons this branch's audience opportunity is real -- population growth + timing, income tier + rate sensitivity, flat home appreciation shifting focus to deposit yield. Every bullet needs a number from the data given."],
+    "validate_before_activating": ["1 short (under 20 words) honest caveat on what this read can't confirm from the data alone -- e.g. no visibility into existing customer deposit balances or share-of-wallet, or a demographic trend that needs a real-world reason before acting on it. This is what makes the read credible rather than just optimistic -- do not skip it."]
+  }}
 }
 
-Every weak competitor named in the vulnerability data must be usable material -- do not just describe the #1-ranked competitor and ignore the rest; the verdict and play sections should collectively reflect that more than one competitor is winnable, when more than one shows real weakness."""
+Every weak competitor named in the vulnerability data must be usable material -- do not just describe the #1-ranked competitor and ignore the rest; the verdict, play, or audience sections should collectively reflect that more than one competitor is winnable, when more than one shows real weakness."""
 
     try:
         client = bad.anthropic.Anthropic(api_key=bad.ANTH_KEY)
@@ -204,7 +215,7 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
     bad.render_branch_deep_dive(
         doc, branch, strat, play, entry, capped_yoy,
         narr.get("branch_verdicts") or {}, narr.get("branch_plays") or {},
-        geo_by_uid,
+        narr.get("branch_audiences") or {}, geo_by_uid,
         tmpdir, heading_space_before=0, vuln_targets=vuln_targets,
     )
 
@@ -258,6 +269,7 @@ def build_branch_preview_doc(bank_name, branch, strat, play, entry, capped_yoy, 
         "Verdict + assigned play, per branch",
         "Competitive radius map — all competitors, sized by deposits",
         "Capture-dollar modeling (low / medium / aggressive)",
+        "Audience signal, per branch",
         "Network-wide executive synthesis",
         "Live market intelligence + financial benchmarking",
     ]
