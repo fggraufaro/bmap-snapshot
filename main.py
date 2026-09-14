@@ -26,7 +26,6 @@ import io
 import json
 import os
 import threading
-import concurrent.futures
 import zipfile
 from datetime import datetime
 
@@ -116,25 +115,12 @@ def generate_assessment():
         dives, deep_mode = bad.build_branch_deep_dives(d["branches"], d.get("branch_strategy") or [])
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                                    d.get("capped_yoy"))
-        persona_brief, market_offer_brief = None, None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            fut_persona = pool.submit(bad.get_persona_signal_brief, bank_name, dives)
-            fut_market = pool.submit(bad.get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
-            try:
-                persona_brief = fut_persona.result(timeout=90)
-            except Exception as ex:
-                print(f"[generate-assessment] persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
-            try:
-                market_offer_brief = fut_market.result(timeout=90)
-            except Exception as ex:
-                print(f"[generate-assessment] market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
             doc = bad.build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
-                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief,
                                             vulnerability_targets=d.get("vulnerability_targets"),
                                             deposit_opportunity=d.get("deposit_opportunity"))
             buf = io.BytesIO()
@@ -274,25 +260,6 @@ def _run_assessment_job(job_id, ik, name_hint):
         narr = bad.get_narratives(bank_name, summary, d["fin"], d["targets"],
                                    d.get("branch_strategy"), dives, d.get("capped_yoy"))
 
-        _job_write(job_id, stage="Researching persona, demographic & market signal (live web search)...")
-        # Run concurrently, not sequentially -- these are independent calls
-        # (different prompts, no shared state) and each can take 20-60+
-        # seconds with multiple search rounds. Sequential execution was the
-        # likely cause of jobs still running when a polling client expected
-        # them done -- this alone can save 20-60+ seconds of real wall time.
-        persona_brief, market_offer_brief = None, None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-            fut_persona = pool.submit(bad.get_persona_signal_brief, bank_name, dives)
-            fut_market = pool.submit(bad.get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
-            try:
-                persona_brief = fut_persona.result(timeout=90)
-            except Exception as ex:
-                print(f"[assessment-job] persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
-            try:
-                market_offer_brief = fut_market.result(timeout=90)
-            except Exception as ex:
-                print(f"[assessment-job] market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
-
         _job_write(job_id, stage="Building document (charts, branch deep dives)...")
         import tempfile
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -300,7 +267,6 @@ def _run_assessment_job(job_id, ik, name_hint):
                                             d["branches"], d.get("branches_geo"),
                                             d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                             capped_yoy=d.get("capped_yoy"),
-                                            persona_brief=persona_brief, market_offer_brief=market_offer_brief,
                                             vulnerability_targets=d.get("vulnerability_targets"),
                                             deposit_opportunity=d.get("deposit_opportunity"))
             buf = io.BytesIO()
