@@ -22,7 +22,6 @@ import os
 import re
 import sys
 import math
-import concurrent.futures
 import argparse
 import requests
 from datetime import datetime
@@ -88,6 +87,16 @@ ZONE_LIGHT = {
 ZONE_HEX_MPL = {  # matplotlib wants '#rrggbb'
     z: f"#{h}" for z, h in ZONE_COLOR.items()
 }
+
+# Priority-tier colors — same brand palette as ZONE_COLOR, remapped to the
+# "Act now / Next up / Worth watching / Not flagged" vocabulary the Hub's
+# own "Where Your Opportunity Is" map uses, since the network map below is
+# meant to read the same way that view does.
+PRIORITY_COLOR = {
+    "Act now": "CDD61A", "Next up": "66CC99", "Worth watching": "02A7C2", "Not flagged": "778899",
+}
+PRIORITY_HEX_MPL = {t: f"#{h}" for t, h in PRIORITY_COLOR.items()}
+PRIORITY_ORDER = ["Not flagged", "Worth watching", "Next up", "Act now"]  # draw most-urgent last (on top)
 FONT_HEAD = "Segoe UI"   # Word-native text (headings, tables, body) references
                           # a font by NAME only -- python-docx can't embed a font
                           # the way the cover image bakes Inter directly into its
@@ -685,10 +694,13 @@ def chart_branch_map_osm(branches_geo, path):
     fig, ax = plt.subplots(figsize=(iw / 200, ih / 200), dpi=200)
     ax.imshow(img)
 
-    # Every branch, every zone — no truncation, unlike the URL-embedded
-    # overlay approach this replaced.
-    for zone in ["Justify", "Defend", "Analyze", "Invest"]:
-        pts = [b for b in branches_geo if b.get("opportunity_zone") == zone]
+    # Every branch, grouped by priority tier — same "Act now / Next up /
+    # Worth watching / Not flagged" vocabulary as the Hub's own "Where Your
+    # Opportunity Is" map, drawn most-urgent-on-top. Bubble size is deposits,
+    # scaled up from the old zone-colored version so it reads as the
+    # dominant signal on the page, the way it does in the Hub view.
+    for tier in PRIORITY_ORDER:
+        pts = [b for b in branches_geo if (b.get("priority_tier") or "Not flagged") == tier]
         if not pts:
             continue
         pxs, pys, sizes = [], [], []
@@ -696,9 +708,9 @@ def chart_branch_map_osm(branches_geo, path):
             px, py = to_px(b["lon"], b["lat"])
             pxs.append(px)
             pys.append(py)
-            sizes.append(max(_sf(b.get("latest_dep")) / 3e6, 18))
-        ax.scatter(pxs, pys, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.9,
-                   edgecolors="white", linewidths=0.6, label=zone, zorder=3)
+            sizes.append(max(_sf(b.get("latest_dep")) / 1.5e6, 30))
+        ax.scatter(pxs, pys, s=sizes, c=PRIORITY_HEX_MPL[tier], alpha=0.9,
+                   edgecolors="white", linewidths=0.6, label=tier, zorder=3)
 
     # No custom city-label overlay here — unlike the fallback state-outline
     # map, this basemap already renders place names natively with its own
@@ -709,10 +721,11 @@ def chart_branch_map_osm(branches_geo, path):
 
     from matplotlib.lines import Line2D
     handles = [Line2D([0], [0], marker="o", linestyle="", markersize=7,
-                       markerfacecolor=ZONE_HEX_MPL[z], markeredgecolor="white", label=z)
-               for z in ["Justify", "Defend", "Analyze", "Invest"]]
+                       markerfacecolor=PRIORITY_HEX_MPL[t], markeredgecolor="white", label=t)
+               for t in ["Act now", "Next up", "Worth watching", "Not flagged"]]
     ax.legend(handles=handles, frameon=True, framealpha=0.9, fontsize=9,
-              loc="lower left", edgecolor="none")
+              loc="lower left", edgecolor="none",
+              title="Branch Priority · circle size = deposits", title_fontsize=7.5)
 
     ax.set_xlim(0, iw)
     ax.set_ylim(ih, 0)  # image y-axis is top-down
@@ -765,15 +778,15 @@ def chart_branch_map_states(branches_geo, path):
             continue
         _draw_polygon(ax, geom, facecolor="#F2F2EE", edgecolor="#C7C7BF", linewidth=0.8, zorder=1)
 
-    for zone in ["Justify", "Defend", "Analyze", "Invest"]:  # draw Invest last (on top)
-        pts = [b for b in branches_geo if b.get("opportunity_zone") == zone]
+    for tier in PRIORITY_ORDER:  # draw Act now last (on top)
+        pts = [b for b in branches_geo if (b.get("priority_tier") or "Not flagged") == tier]
         if not pts:
             continue
         lons = [b["lon"] for b in pts]
         lats = [b["lat"] for b in pts]
-        sizes = [max(_sf(b.get("latest_dep")) / 3e6, 18) for b in pts]
-        ax.scatter(lons, lats, s=sizes, c=ZONE_HEX_MPL[zone], alpha=0.85,
-                   edgecolors="white", linewidths=0.5, label=zone, zorder=3)
+        sizes = [max(_sf(b.get("latest_dep")) / 1.5e6, 30) for b in pts]
+        ax.scatter(lons, lats, s=sizes, c=PRIORITY_HEX_MPL[tier], alpha=0.85,
+                   edgecolors="white", linewidths=0.5, label=tier, zorder=3)
 
     # Label the largest state clusters directly on the map (avg position, branch count)
     by_state = {}
@@ -787,7 +800,7 @@ def chart_branch_map_states(branches_geo, path):
             continue
         clx = sum(p["lon"] for p in pts) / len(pts)
         cly = sum(p["lat"] for p in pts) / len(pts)
-        max_r = max(max(_sf(p.get("latest_dep")) / 3e6, 18) for p in pts)
+        max_r = max(max(_sf(p.get("latest_dep")) / 1.5e6, 30) for p in pts)
         offset_pts = 14 + (max_r ** 0.5)  # clear large bubbles near the centroid
         ax.annotate(f"{st} · {len(pts)}", (clx, cly), xytext=(0, offset_pts),
                     textcoords="offset points", fontsize=8.5, fontweight="bold",
@@ -808,7 +821,7 @@ def chart_branch_map_states(branches_geo, path):
     top_cities = sorted(by_city.items(), key=lambda kv: -len(kv[1]))[:8]
     for city, pts in top_cities:
         anchor = max(pts, key=lambda p: _sf(p.get("latest_dep")))
-        r = max(_sf(anchor.get("latest_dep")) / 3e6, 18)
+        r = max(_sf(anchor.get("latest_dep")) / 1.5e6, 30)
         offset_pts = 9 + (r ** 0.5) * 0.7
         ax.annotate(city, (anchor["lon"], anchor["lat"]), xytext=(0, -offset_pts),
                     textcoords="offset points", fontsize=6.5, color="#5B6472",
@@ -823,7 +836,8 @@ def chart_branch_map_states(branches_geo, path):
     for spine in ax.spines.values():
         spine.set_visible(False)
     ax.set_facecolor("#FAFAF8")
-    ax.legend(frameon=False, fontsize=10, loc="lower left", markerscale=0.6)
+    ax.legend(frameon=False, fontsize=10, loc="lower left", markerscale=0.6,
+              title="Branch Priority · circle size = deposits", title_fontsize=8)
     ax.set_aspect("equal", adjustable="datalim")
     fig.tight_layout(pad=0.3)
     fig.savefig(path, transparent=False, facecolor="#FAFAF8")
@@ -859,197 +873,6 @@ def _select_spread_labels(competitors, position_fn, max_labels=5, min_sep=0.35):
             selected.append(c)
             positions.append(pos)
     return {id(c) for c in selected}
-
-
-def chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path):
-    """FALLBACK: plain circle-plot version (no basemap). Used only if the
-    Mapbox version fails for any reason — same reasoning as
-    chart_branch_map_states relative to chart_branch_map_osm."""
-    if branch_lat is None or branch_lon is None:
-        return False
-
-    lat_rad = math.radians(branch_lat)
-    mi_per_deg_lat = 69.0
-    mi_per_deg_lon = 69.0 * max(math.cos(lat_rad), 0.15)
-
-    def to_local_mi(lat, lon):
-        return (lon - branch_lon) * mi_per_deg_lon, (lat - branch_lat) * mi_per_deg_lat
-
-    fig, ax = plt.subplots(figsize=(3.4, 3.4), dpi=200)
-
-    theta = [i / 100 * 2 * math.pi for i in range(101)]
-    circ_x = [radius_mi * math.cos(t) for t in theta]
-    circ_y = [radius_mi * math.sin(t) for t in theta]
-    ax.plot(circ_x, circ_y, color="#083D5F", linewidth=1.0, linestyle="--", alpha=0.5, zorder=2)
-
-    labeled_ids = _select_spread_labels(
-        competitors,
-        position_fn=lambda c: to_local_mi(c["lat"], c["lon"]) if c.get("lat") is not None else None,
-        max_labels=5, min_sep=radius_mi * 0.12,
-    )
-    for c in competitors:
-        clat, clon = c.get("lat"), c.get("lon")
-        if clat is None or clon is None:
-            continue
-        cx, cy = to_local_mi(clat, clon)
-        r = max(_sf(c.get("deposits")) / 4e6, 40)
-        ax.scatter([cx], [cy], s=r, c="#A32D2D", alpha=0.75,
-                   edgecolors="white", linewidths=0.6, zorder=3)
-        if id(c) in labeled_ids:
-            label = c.get("bank_name", "")[:18]
-            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (cx, cy),
-                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
-                        color="#334155", ha="center", va="top", zorder=4,
-                        bbox=dict(boxstyle="round,pad=0.12", facecolor="#FAFAF8",
-                                  edgecolor="none", alpha=0.8))
-
-    # The client's own branch, at the local origin, drawn last so it's on top
-    ax.scatter([0], [0], s=140, c="#083D5F", marker="*",
-               edgecolors="white", linewidths=0.8, zorder=5)
-
-    pad = radius_mi * 1.35
-    ax.set_xlim(-pad, pad)
-    ax.set_ylim(-pad, pad)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    ax.set_facecolor("#FAFAF8")
-    ax.set_aspect("equal", adjustable="box")
-    fig.tight_layout(pad=0.2)
-    fig.savefig(path, transparent=False, facecolor="#FAFAF8")
-    plt.close(fig)
-    return True
-
-
-def chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
-    """PRIMARY per-branch competitor map — same real Mapbox basemap as the
-    main Geographic Distribution map, zoomed to the branch's adaptive radius.
-    Reuses _web_mercator_xy/_fit_zoom (already verified against all 59 real
-    Mid Penn branches on the main map) so the branch star, radius circle,
-    and competitor markers all land pixel-correct on the fetched tile image.
-    Falls back to chart_branch_radius_map_local on any failure."""
-    if branch_lat is None or branch_lon is None or not MAPBOX_TOKEN:
-        return False
-
-    W, H = 700, 700
-    # Bounding box = branch +/- radius, converted to degrees locally (fine
-    # at this scale) purely to pick a zoom level that frames the radius
-    # circle with headroom — actual marker/circle placement below uses the
-    # exact same Mercator projection as the main map, not this approximation.
-    mi_per_deg_lat = 69.0
-    mi_per_deg_lon = 69.0 * max(math.cos(math.radians(branch_lat)), 0.15)
-    pad_mi = radius_mi * 1.35
-    lons = [branch_lon - pad_mi / mi_per_deg_lon, branch_lon + pad_mi / mi_per_deg_lon]
-    lats = [branch_lat - pad_mi / mi_per_deg_lat, branch_lat + pad_mi / mi_per_deg_lat]
-
-    classic_zoom = _fit_zoom(lons, lats, W, H)
-    mapbox_zoom = max(classic_zoom - 1, 0)
-
-    url = (f"https://api.mapbox.com/styles/v1/mapbox/{MAPBOX_STYLE}/static/"
-           f"{branch_lon},{branch_lat},{mapbox_zoom}/{W}x{H}?access_token={MAPBOX_TOKEN}")
-    resp = requests.get(url, timeout=10)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Mapbox Static Images API {resp.status_code}: {resp.text[:200]}")
-
-    from PIL import Image, ImageDraw
-    from io import BytesIO
-    img = Image.open(BytesIO(resp.content)).convert("RGB")
-
-    draw = ImageDraw.Draw(img)
-    iw, ih = img.size
-    draw.rectangle([iw - 165, ih - 14, iw, ih], fill=(255, 255, 255, 210))
-    draw.text((iw - 160, ih - 12), "(c) Mapbox (c) OSM", fill=(60, 60, 60))
-
-    cx_world, cy_world = _web_mercator_xy(branch_lon, branch_lat, classic_zoom)
-
-    def to_px(lon, lat):
-        x, y = _web_mercator_xy(lon, lat, classic_zoom)
-        return (x - cx_world) + W / 2, (y - cy_world) + H / 2
-
-    fig, ax = plt.subplots(figsize=(W / 200, H / 200), dpi=200)
-    ax.imshow(img)
-
-    # Radius circle — generate in real lat/lon (not a flat local approximation)
-    # then project through the same Mercator math as everything else, so it
-    # lines up correctly with the real basemap underneath.
-    theta = [i / 100 * 2 * math.pi for i in range(101)]
-    circ_px, circ_py = [], []
-    for t in theta:
-        clat = branch_lat + (radius_mi / mi_per_deg_lat) * math.sin(t)
-        clon = branch_lon + (radius_mi / mi_per_deg_lon) * math.cos(t)
-        px, py = to_px(clon, clat)
-        circ_px.append(px)
-        circ_py.append(py)
-    ax.plot(circ_px, circ_py, color="#083D5F", linewidth=1.3, linestyle="--", alpha=0.7, zorder=2)
-
-    # Every competitor within the radius gets a dot (some markets have 20+,
-    # e.g. Camden at 1mi in validation testing, or Clinton Savings Bank's
-    # Clinton branch at 44) -- but labeling all of them would be unreadable
-    # on a small inset, so only up to 5 get a text label. Naively picking
-    # the top 5 by deposits produced a real, confirmed bug: 3 "Bank of
-    # America" branches clustered together all got labeled, stacking
-    # illegibly on top of each other while the actual #1 competitor's own
-    # label ended up buried underneath the pile. _select_spread_labels
-    # skips candidates too close (in pixels) to an already-picked label.
-    labeled_ids = _select_spread_labels(
-        competitors,
-        position_fn=lambda c: to_px(c["lon"], c["lat"]) if c.get("lat") is not None else None,
-        max_labels=5, min_sep=50,
-    )
-    for c in competitors:
-        clat, clon = c.get("lat"), c.get("lon")
-        if clat is None or clon is None:
-            continue
-        px, py = to_px(clon, clat)
-        r = max(_sf(c.get("deposits")) / 4e6, 40)
-        ax.scatter([px], [py], s=r, c="#A32D2D", alpha=0.85,
-                   edgecolors="white", linewidths=0.6, zorder=3)
-        if id(c) in labeled_ids:
-            label = c.get("bank_name", "")[:18]
-            ax.annotate(f"{label}\n{_sf(c.get('distance_miles')):.1f}mi", (px, py),
-                        xytext=(0, -9), textcoords="offset points", fontsize=5.5,
-                        color="#1A1A1A", ha="center", va="top", zorder=4,
-                        bbox=dict(boxstyle="round,pad=0.12", facecolor="white",
-                                  edgecolor="none", alpha=0.85))
-
-    bx, by = to_px(branch_lon, branch_lat)
-    ax.scatter([bx], [by], s=150, c="#083D5F", marker="*",
-               edgecolors="white", linewidths=0.9, zorder=5)
-
-    ax.set_xlim(0, W)
-    ax.set_ylim(H, 0)
-    ax.set_xticks([])
-    ax.set_yticks([])
-    for spine in ax.spines.values():
-        spine.set_visible(False)
-    fig.tight_layout(pad=0)
-    fig.savefig(path, dpi=200)
-    plt.close(fig)
-    return True
-
-
-def _distance_miles(lat1, lon1, lat2, lon2):
-    """Simple haversine — used only to backfill distance_miles for the
-    vuln_list map fallback below, which doesn't carry it natively."""
-    if None in (lat1, lon1, lat2, lon2):
-        return None
-    r = 3958.8
-    p1, p2 = math.radians(lat1), math.radians(lat2)
-    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
-    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
-    return 2 * r * math.asin(math.sqrt(a))
-
-
-def chart_branch_radius_map(branch_lat, branch_lon, competitors, radius_mi, path):
-    """Dispatcher: real map tiles when available, local-plot fallback
-    otherwise. Same pattern as chart_branch_map/chart_branch_map_osm."""
-    try:
-        if chart_branch_radius_map_osm(branch_lat, branch_lon, competitors, radius_mi, path):
-            return True
-    except Exception as e:
-        print(f"  ⚠ OSM radius map failed ({e}) — falling back to local-plot version")
-    return chart_branch_radius_map_local(branch_lat, branch_lon, competitors, radius_mi, path)
 
 
 def fetch_vulnerability_targets(ik, branches):
@@ -1372,7 +1195,7 @@ def fetch_branch_geo(ik):
     missing rather than erroring, which is how this went unnoticed."""
     rows = supabase(
         "branch_opportunity_base",
-        f"inst_key=eq.{ik}&select=uninumbr,opportunity_zone,latest_dep,stalpbr,citybr",
+        f"inst_key=eq.{ik}&select=uninumbr,opportunity_zone,priority_tier,latest_dep,stalpbr,citybr",
     )
     if not rows:
         return []
@@ -2013,7 +1836,6 @@ Return ONLY valid JSON, no markdown fences:
   "exec_headline": "3-4 sentences. State plainly whether this network's current footprint is positioned for GROWTH, DEFENSE, or OPTIMIZATION -- pick one framing and commit to it. Reference the overall opportunity score and the Invest/Analyze/Defend/Justify mix. Frame the core deposit-acquisition tension explicitly (e.g. concentrated upside vs. broad retention burden). If a FLAGSHIP RISK finding is present above, it must anchor this headline by name and city -- it drives the network total and outweighs a smaller branch's score even if that branch tops the ranking.",
   "strategic_positioning": "One short paragraph (3-4 sentences). Describe what kind of deposit competitor this bank is positioned to be over the next 12-24 months. Ground this in the demographic & audience signal given (name the strongest-tailwind branch/city or the network averages -- growth demographics = expansion case, decline = retention case) AND the competitive/rate exposure (name the top vulnerable target). Address how growth can be driven without relying on additional physical branches -- position digital-first, market-specific execution as the default lever, without naming specific channels, tactics, or products.",
   "priority_focus": [{"branch": "exact branch name", "city": "city", "state": "ST", "zone": "Invest/Analyze/Defend/Justify", "why_now": "one clause: momentum, competitive pressure, or market structure -- with a number", "role": "one short strategic-role phrase, e.g. 'deposit growth engine', 'selective digital capture', 'defend and retain balances'"}] , // 2-3 entries. If a FLAGSHIP RISK finding is present, it MUST be one of these entries (role should reflect its risk, e.g. 'stabilize and retain' or 'exit review'). Otherwise lead with the top opportunity-score branch.
-  "next_12_months": ["exactly 3 strings — each a leadership-level decision about WHERE to allocate attention, capital, or effort. No tactics, channels, offers, pricing, or products. No methodology."],
   "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position. (Used later in the doc, not the exec summary above -- can restate the zone framing in different words.)",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
@@ -2067,172 +1889,11 @@ Keys in branch_plays, branch_verdicts, and branch_audiences must exactly match t
         return _placeholder_narratives(dives)
 
 
-def _web_search_brief(system, ctx, max_tokens=3000):
-    """Shared helper for the two live-web-search-enabled signal briefs below.
-    Unlike get_narratives() (structured data only, no tools), these use
-    Anthropic's server-side web_search tool -- Claude may call it multiple
-    times within a single response, interleaving text/tool_use/tool_result
-    blocks, so the reply has to be reassembled from every text block, not
-    just the first one. Returns None on any failure so callers can skip
-    the section entirely rather than fabricate content."""
-    if not ANTH_KEY or not anthropic:
-        return None
-    client = anthropic.Anthropic(api_key=ANTH_KEY)
-    try:
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=max_tokens,
-            thinking={"type": "disabled"},
-            system=system,
-            tools=[{"type": "web_search_20250305", "name": "web_search"}],
-            messages=[{"role": "user", "content": ctx}],
-        )
-        text = "".join(block.text for block in msg.content if block.type == "text").strip()
-        return text or None
-    except Exception as e:
-        print(f"  ⚠ Web-search brief failed ({e})")
-        return None
-
-
-def get_persona_signal_brief(bank_name, dives):
-    """Persona & Demographic Signal Brief — adapted from Verlocity's Hub
-    'Audience Intelligence Brief' analyst prompt. Layers current, directional
-    persona/intent signal on top of BMAP's Census-based structural data via
-    live web search. Scoped to Invest-zone (and select Analyze-zone) priority
-    branches only, per the source prompt's explicit scope limit -- this is
-    signal enrichment, not a full-network rewrite."""
-    priority = [e for e in (dives or [])
-                if e["branch"].get("opportunity_zone") in ("Invest", "Analyze")]
-    if not priority:
-        return None
-
-    lines = []
-    for e in priority[:15]:  # cap for latency/cost -- same ceiling as deep dives
-        b = e["branch"]
-        lines.append(
-            f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
-            f"zone {b.get('opportunity_zone')}, score {_sf(b.get('opportunity_score')):.0f}/100, "
-            f"household income ${_sf(b.get('household_income')):.0f} "
-            f"({_sf(b.get('yoy_income_growth'))*100:+.1f}% YoY), "
-            f"population YoY {_sf(b.get('yoy_pop_growth'))*100:+.1f}%, "
-            f"home value YoY {_sf(b.get('zhvi_yoy_pct')):+.1f}%"
-        )
-    ctx = (f"BMAP Bank Context — {bank_name}\n\nPriority branches (Invest/select Analyze zones):\n"
-           + "\n".join(lines))
-
-    system = """You are the BMAP Persona & Demographic Signal Analyst.
-
-Your role is to enrich BMAP branch insights with CURRENT, directional persona, behavioral, and
-intent signals that are not fully captured by Census-based data. You do NOT replace BMAP, do NOT
-redefine strategy, do NOT produce marketing tactics. You exist to add fresh signal that sharpens
-strategic confidence.
-
-MODE: Web search enabled. Use current public signals, behavioral proxies, and local market context.
-Treat BMAP branch data (given below) as the structural truth layer. Directional insight only --
-never invent statistics, and never contradict the BMAP signals given.
-
-OUTPUT STRUCTURE -- follow exactly, plain text with these three headers:
-
-PERSONA SIGNAL OVERVIEW
-1-2 short paragraphs describing the dominant persona and intent signals across the priority markets
-given: lifecycle shifts (wealth accumulation, retirement, mobility), income/employment dynamics,
-and product intent (checking, CD, loans) implied by current local conditions.
-
-BRANCH-LEVEL PERSONA SIGNALS (PRIORITY ONLY)
-For each branch given, on its own line as "Branch Name (City, ST)": 1-2 dominant persona signals,
-combining the demographic baseline given with current behavioral/local context. Explain how this
-influences deposit growth potential, balance stability, switching likelihood, and digital vs.
-relationship preference. ALWAYS include branch name AND city together.
-
-STRATEGIC IMPLICATIONS (NON-TACTICAL)
-3-5 bullets on where persona signals should influence acquisition focus, timing advantage, and
-where competition is most vulnerable. NO tactics, NO campaigns, NO pricing, NO product
-recommendations, NO methodology explanation.
-
-Tone: analytical, confident, advisory, executive-ready."""
-
-    print("  Generating Persona & Demographic Signal Brief (web search)...")
-    result = _web_search_brief(system, ctx, max_tokens=3000)
-    if result:
-        print("  ✓ Persona signal brief generated")
-    else:
-        print("  ⚠ Persona signal brief unavailable — section will be omitted")
-    return result
-
-
-def get_market_offer_brief(bank_name, dives, branch_strategy):
-    """Market Offer & Competitive Signal Brief — adapted from Verlocity's
-    Hub competitive-intelligence analyst prompt. Live web search for current
-    peer deposit-rate/promotional pressure, explicitly excluding
-    money-center banks (Chase, Wells Fargo, BofA, Citi) since they rarely
-    reflect real community-bank competitive dynamics. Scoped to the same
-    priority branches as the deep dives."""
-    if not dives:
-        return None
-    strategy_by_name = {(r["namebr"], r["citybr"], r["stalpbr"]): r for r in (branch_strategy or [])}
-
-    lines = []
-    for e in dives[:15]:
-        b = e["branch"]
-        key = (b.get("namebr"), b.get("citybr"), b.get("stalpbr"))
-        strat = strategy_by_name.get(key)
-        top_comp = strat.get("top_competitor") if strat else None
-        comp_str = (f"named competitor {top_comp.get('bank_name')} "
-                    f"{_sf(top_comp.get('distance_miles')):.1f}mi away"
-                    if top_comp else "no named competitor within adaptive radius")
-        lines.append(f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): {comp_str}")
-    ctx = f"BMAP Bank Context — {bank_name}\n\nPriority branches:\n" + "\n".join(lines)
-
-    system = """You are the BMAP Market Offer & Competitive Signal Analyst.
-
-Your purpose is to enrich BMAP strategic decision-making with real-time, peer-level competitive
-deposit pressure: community banks, regional banks, and major credit unions operating in each local
-market, plus select digital banks only when they materially impact rate-sensitive deposits. You
-explicitly DEPRIORITIZE AND EXCLUDE money-center banks (Chase, Wells Fargo, Bank of America, Citi)
-and other national brands that do not meaningfully compete for community-bank deposit relationships.
-
-MODE: Web search enabled. Use current public information -- peer bank/credit union sites, local and
-regional financial news, rate aggregators with community-bank visibility. Prioritize signals from
-the last 30-60 days.
-
-OUTPUT STRUCTURE -- follow exactly, plain text with these three headers:
-
-MARKET OFFER SIGNAL OVERVIEW
-1-2 executive paragraphs on dominant peer-competitor dynamics across the priority markets given --
-whether pressure is driven by regional bank expansion, credit union rate aggression, local
-promotional battles, or digital siphoning of rate-sensitive balances, and whether offer intensity
-is escalating, stabilizing, or cooling. Name meaningful peer institutions where relevant.
-
-BRANCH-LEVEL MARKET PRESSURE (PRIORITY ONLY)
-For each branch given, on its own line as "Branch Name (City, ST)": meaningful peer competitors by
-name, deposit products driving pressure (HYSAs, CDs, promotional checking, bundled incentives),
-directional current rate ranges or promotional structures, and how this impacts acquisition
-difficulty, retention vulnerability, and deposit mix sensitivity. Avoid national banks unless no
-peers exist in that market.
-
-STRATEGIC IMPLICATIONS (NON-TACTICAL)
-3-5 executive bullets on where peer pressure justifies accelerated acquisition focus, where
-structural competition limits short-term upside, and where defending existing balances is
-strategically critical. NO tactics, NO pricing recommendations, NO campaign ideas.
-
-Tone: executive, local-market realistic, competitive-intelligence driven. Read like a peer-level
-competitive war-room brief for bank leadership."""
-
-    print("  Generating Market Offer & Competitive Signal Brief (web search)...")
-    result = _web_search_brief(system, ctx, max_tokens=3000)
-    if result:
-        print("  ✓ Market offer brief generated")
-    else:
-        print("  ⚠ Market offer brief unavailable — section will be omitted")
-    return result
-
-
 def _placeholder_narratives(dives=None):
     base = {k: "" for k in ["exec_headline", "strategic_positioning", "network_narrative",
                              "competitive_narrative", "financial_narrative",
                              "capture_strategy_narrative", "next_step"]}
     base["priority_focus"] = []
-    base["next_12_months"] = []
     base["branch_audiences"] = {}
     base["branch_verdicts"] = {}
     base["branch_plays"] = {}
@@ -2959,58 +2620,6 @@ def setup_branded_header_footer(doc, bank_name):
     run_field.font.name = FONT_HEAD
 
 
-def _render_signal_brief(doc, title, raw_text):
-    """Renders a web-search signal brief's structured plain-text output
-    (three ALL-CAPS headers per the analyst prompts) into formatted doc
-    content. Parses defensively -- if the model didn't follow the header
-    format exactly, falls back to a single body block rather than dropping
-    the content or crashing."""
-    _heading(doc, title)
-
-    known_headers = ["PERSONA SIGNAL OVERVIEW", "BRANCH-LEVEL PERSONA SIGNALS",
-                      "MARKET OFFER SIGNAL OVERVIEW", "BRANCH-LEVEL MARKET PRESSURE",
-                      "STRATEGIC IMPLICATIONS"]
-    lines = raw_text.split("\n")
-    sections = []  # list of (header_or_None, [body_lines])
-    current_header, current_body = None, []
-    for line in lines:
-        stripped = line.strip()
-        matched = next((h for h in known_headers if stripped.upper().startswith(h)), None)
-        if matched:
-            if current_header or current_body:
-                sections.append((current_header, current_body))
-            current_header, current_body = stripped, []
-        else:
-            current_body.append(line)
-    sections.append((current_header, current_body))
-
-    if len(sections) == 1 and sections[0][0] is None:
-        _body(doc, raw_text.strip(), size=9.5)
-        return
-
-    for header, body_lines in sections:
-        text = "\n".join(body_lines).strip()
-        if not text:
-            continue
-        if header:
-            _heading(doc, header.title(), size=11, space_before=10, space_after=4)
-        if "STRATEGIC" in (header or "").upper():
-            for bl in text.split("\n"):
-                bl = bl.strip().lstrip("•-*").strip()
-                if bl:
-                    p = _bullet_paragraph(doc)
-                    r = p.add_run(bl)
-                    r.font.size = Pt(9.5)
-                    r.font.name = FONT_HEAD
-        elif "BRANCH-LEVEL" in (header or "").upper():
-            for para in text.split("\n\n"):
-                para = para.strip()
-                if para:
-                    _body(doc, para, size=9.5)
-        else:
-            _body(doc, text, size=9.5)
-
-
 def _lookup_branch_narrative(narr_dict, b, default=None):
     """Looks up a branch's AI-generated narrative content by name+city+state,
     tolerant of minor formatting differences in how the AI reproduced the
@@ -3174,77 +2783,6 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
     top3 = (strat.get("top3_competitors") if strat else []) or []
     all_comp = (strat.get("all_competitors") if strat else []) or []
     vuln_list = sorted((vuln_targets or {}).get(b.get("uninumbr"), []), key=lambda c: c.get("rank") or 99)
-
-    # Diagnostic logging — the competitor map has gone missing from at least
-    # one real generation (Trustmark / Jones Valley) with no exception raised,
-    # which means it silently hit one of the conditions below rather than
-    # failing loudly. These prints turn that into a visible, one-line answer
-    # in the Railway logs on the next run instead of another round of
-    # static-code guessing.
-    if not all_comp:
-        print(f"  ⚠ [map] no all_competitors for {b.get('namebr')} — skipping radius map "
-              f"(strat={'present' if strat else 'MISSING'}, "
-              f"all_competitors_key={'present' if strat and 'all_competitors' in strat else 'MISSING'})")
-
-    own = geo_by_uid.get(b.get("uninumbr"))
-
-    # Map competitor source — prefer all_competitors entries that actually
-    # carry lat/lon (the full-network batch RPC includes it; the lightweight
-    # single-branch RPC used by the Preview flow does NOT), falling back to
-    # vuln_list (branch_target_competitors) otherwise. vuln_list has its own
-    # geo join in fetch_vulnerability_targets() and has rendered correctly
-    # in every real generation so far. Checking for usable geo specifically
-    # (not just non-empty) matters now that all_competitors can be non-empty
-    # but geo-less depending on which fetch path produced it.
-    map_competitors = [c for c in all_comp if c.get("lat") is not None and c.get("lon") is not None]
-    if not map_competitors and vuln_list:
-        own_lat = own.get("lat") if own else None
-        own_lon = own.get("lon") if own else None
-        map_competitors = [
-            {
-                "bank_name": c.get("bank_name"),
-                "deposits": c.get("deposits"),
-                "lat": c.get("lat"),
-                "lon": c.get("lon"),
-                "distance_miles": _distance_miles(own_lat, own_lon, c.get("lat"), c.get("lon")),
-            }
-            for c in vuln_list if c.get("lat") is not None and c.get("lon") is not None
-        ]
-        if map_competitors:
-            print(f"  ✓ [map] built from vuln_list fallback for {b.get('namebr')} "
-                  f"({len(map_competitors)} of {len(vuln_list)} vuln competitors had usable geo)")
-        elif vuln_list:
-            print(f"  ⚠ [map] vuln_list present ({len(vuln_list)} competitors) but none had "
-                  f"usable lat/lon — geo join in fetch_vulnerability_targets() likely missed "
-                  f"these target_uninumbr values in branches_master_v2")
-
-    if map_competitors:
-        if not own or own.get("lat") is None or own.get("lon") is None:
-            print(f"  ⚠ [map] no usable geo for {b.get('namebr')} (uninumbr={b.get('uninumbr')}) "
-                  f"in geo_by_uid ({len(geo_by_uid)} entries loaded) — skipping radius map")
-        if own and own.get("lat") is not None and own.get("lon") is not None:
-            radius_img = os.path.join(tmpdir, f"radius_{b.get('uninumbr')}.png")
-            ok = chart_branch_radius_map(
-                own["lat"], own["lon"], map_competitors, radius_mi or 3.0, radius_img
-            )
-            if not ok:
-                print(f"  ⚠ [map] chart_branch_radius_map returned False for {b.get('namebr')} "
-                      f"— both Mapbox and local-plot fallback failed")
-            if ok:
-                p_img = doc.add_paragraph()
-                p_img.paragraph_format.space_before = Pt(4)
-                p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p_img.add_run().add_picture(radius_img, width=Inches(3.6))
-                p_cap = doc.add_paragraph()
-                p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                r_cap = p_cap.add_run(
-                    f"{len(map_competitors)} competitor{'s' if len(map_competitors) != 1 else ''} "
-                    f"shown, sized by deposits — full competitive density in this market."
-                )
-                r_cap.italic = True
-                r_cap.font.size = Pt(7.5)
-                r_cap.font.color.rgb = GRAY3
-                r_cap.font.name = FONT_HEAD
 
     if vuln_list:
         # This is the actual answer to "who do we go after" -- ranked by a
@@ -3683,7 +3221,7 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
 
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
                           branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None,
-                          persona_brief=None, market_offer_brief=None, vulnerability_targets=None,
+                          vulnerability_targets=None,
                           deposit_opportunity=None):
     capped_yoy = capped_yoy or {}
     deposit_opportunity = deposit_opportunity or {}
@@ -3847,27 +3385,6 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             size=8.5,
         )
 
-    # What This Means for the Next 12 Months — exactly 3 leadership-level
-    # decisions, no tactics/channels/pricing per spec.
-    next_12 = narr.get("next_12_months") or []
-    if not next_12:
-        next_12 = [
-            f"Allocate capital toward the {summary['zones']['Invest']} Invest-zone branches before "
-            f"broad-based network spend.",
-            f"Apply retention discipline across the {summary['zones']['Defend'] + summary['zones']['Justify']} "
-            f"Defend/Justify branches rather than treating them as growth targets.",
-            "Fund digital-first, market-specific execution as the primary lever for deposit growth "
-            "beyond the existing physical footprint.",
-        ]
-    if next_12:
-        _heading(doc, "What This Means for the Next 12 Months", size=12, space_before=12, space_after=4)
-        for bullet in next_12:
-            p_b = _bullet_paragraph(doc)
-            r_b = p_b.add_run(bullet)
-            r_b.font.size = Pt(10)
-            r_b.font.name = FONT_HEAD
-            r_b.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
-
     # Flagship-risk alert — guaranteed regardless of AI narrative compliance.
     # The pull-quote above is the top opportunity-score branch, which can be
     # a small branch; if the network's largest branch by deposits is
@@ -3925,10 +3442,10 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                                "industry-informed planning range, not this bank's own historical "
                                "conversion data. Replace with actual account-opening history once "
                                "available for a sharper estimate."),
-        ("Winsorized growth values", "Any branch whose year-over-year growth would otherwise show an "
-                                      "uninformative flat +100% is resolved directly against source "
-                                      "deposit history and shown as its real computed growth rate, or "
-                                      "as \u201CNew branch\u201D where no prior-year figure exists."),
+        ("Growth outliers", "Any branch whose year-over-year growth would otherwise show an "
+                             "uninformative flat +100% is resolved directly against source "
+                             "deposit history and shown as its real computed growth rate, or "
+                             "as \u201CNew branch\u201D where no prior-year figure exists."),
     ]
     for title, desc in method_items:
         p_m = doc.add_paragraph()
@@ -4016,17 +3533,6 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
             row[1].text = str(t.get("branches_in_radius", "—"))
             row[2].text = _vuln_tier(t.get("avg_vuln_score"))
             row[3].text = f"{_sf(t.get('avg_yoy_pct')):+.1f}%"
-
-    # ── Persona & Demographic Signal Brief / Market Offer & Competitive
-    # Signal Brief — both live-web-search enrichment layers, adapted from
-    # Verlocity's Hub analyst prompts. Rendered only if the call succeeded;
-    # a failed web-search call skips the section rather than showing
-    # placeholder text, since fabricating "current market intelligence"
-    # would be worse than omitting it. ──
-    if persona_brief:
-        _render_signal_brief(doc, "Persona & Demographic Signal Brief", persona_brief)
-    if market_offer_brief:
-        _render_signal_brief(doc, "Market Offer & Competitive Signal Brief", market_offer_brief)
 
     # ── Deposit Capture Strategy (adaptive-radius, branch + bank-wide) ──
     if branch_strategy:
@@ -4301,25 +3807,12 @@ def run(ik, name_hint=None):
                                                 vulnerability_targets=d.get("vulnerability_targets"))
     narr = get_narratives(bank_name, summary, d["fin"], d["targets"], d.get("branch_strategy"), dives,
                            d.get("capped_yoy"), vulnerability_targets=d.get("vulnerability_targets"))
-    persona_brief, market_offer_brief = None, None
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        fut_persona = pool.submit(get_persona_signal_brief, bank_name, dives)
-        fut_market = pool.submit(get_market_offer_brief, bank_name, dives, d.get("branch_strategy"))
-        try:
-            persona_brief = fut_persona.result(timeout=90)
-        except Exception as ex:
-            print(f"  ⚠ persona brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
-        try:
-            market_offer_brief = fut_market.result(timeout=90)
-        except Exception as ex:
-            print(f"  ⚠ market offer brief failed/timed out: {type(ex).__name__}: {str(ex) if str(ex) else '(no message -- likely a timeout)'}")
     import tempfile
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = build_assessment_doc(bank_name, summary, d["fin"], d["targets"], narr,
                                     d["branches"], d.get("branches_geo"),
                                     d.get("branch_strategy"), dives, deep_mode, tmpdir=tmpdir,
                                     capped_yoy=d.get("capped_yoy"),
-                                    persona_brief=persona_brief, market_offer_brief=market_offer_brief,
                                     vulnerability_targets=d.get("vulnerability_targets"),
                                     deposit_opportunity=d.get("deposit_opportunity"))
         path = save_doc(doc, bank_name)
