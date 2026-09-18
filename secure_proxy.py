@@ -101,6 +101,10 @@ ALLOWED_TABLES = {
     # Was missing entirely, so every sparkline request 403'd and silently
     # rendered empty.
     "vw_rate_radar_history":            "public",
+    # a62: Growth Map's new-signal sandbox — CFPB week-over-week complaint
+    # trend per institution, first signal tested here before any polished
+    # Opportunity View build.
+    "vw_cfpb_complaints_wow":           "public",
 }
 
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.
