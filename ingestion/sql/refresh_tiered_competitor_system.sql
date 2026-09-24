@@ -4,7 +4,9 @@
 -- migration. Query pg_get_functiondef('analytics.refresh_branch_competitors_tiered_v1'::regproc)
 -- (etc.) any time to confirm what's actually live.
 --
--- Applied via Supabase migration "add_refresh_procedures_for_tiered_system" (2026-09-24).
+-- Applied via Supabase migrations "add_refresh_procedures_for_tiered_system",
+-- "fix_tiered_competitor_batch_perf", and "fix_radius_stats_tiered_batching_and_add_finish_step"
+-- (all 2026-09-24).
 --
 -- Two fixes vs. the existing analytics.rebuild_tiered_radius_batch() (left in
 -- place, unused going forward -- not dropped in case anything still calls it):
@@ -24,9 +26,20 @@
 --      time a brand-new year's data lands before branch_opportunity_base has been
 --      recomputed for it.
 --
--- Same batching-with-COMMIT pattern as refresh_old_10mi_competitor_system.sql
--- (procedure, not function, so mid-run COMMIT is legal) -- avoids the same
--- statement-timeout issue a single unbatched pass would hit.
+-- A third fix landed after the first live run: the institution-total fallback
+-- (fix #2 above) was first written as a correlated subquery re-scanning
+-- branch_opportunity_base once per distinct institution in each batch -- this
+-- caused a genuine server-side statement timeout even at a 2,000-branch batch
+-- (down from the 5,000 the simpler 10mi system handles fine). Fixed to a single
+-- pre-aggregated CTE (bob_totals) computed once per batch, matching the original
+-- proven script's pattern. geo.rebuild_radius_stats_tiered_batch() had the same
+-- issue at table-wide scale (the whole ~94k-branch universe in one unbatched
+-- statement) and got the same batching treatment.
+--
+-- Both procedures batch with a COMMIT between each chunk (procedure, not
+-- function, so mid-run COMMIT is legal) -- necessary because a single unbatched
+-- pass over the full branch universe hits a real Postgres statement_timeout,
+-- not just a client-side one.
 --
 -- Usage:
 --   CALL public.refresh_tiered_competitor_system();   -- does both tables, in order
@@ -34,9 +47,18 @@
 --   CALL analytics.refresh_branch_competitors_tiered_v1();
 --   CALL geo.refresh_branch_radius_stats_tiered_v1();
 --
--- Sanity-tested this session on a 200-branch sample before being handed off:
--- 2,091 competitor rows, 189/200 branches got at least one row (the other 11
--- plausibly isolated/rural with zero nearby competitors), zero NULL tier radii.
+-- First real run (2026-09-24, 2025->2026 branches_master_v2 refresh): completed
+-- via manual batch-by-batch execution rather than the wrapped CALL, because the
+-- Supabase Studio SQL editor's own browser-side request timeout cut the
+-- connection before the multi-minute run finished (the query kept running
+-- server-side after the client gave up -- confirmed via pg_stat_activity -- but
+-- with nothing left listening for the result, the session eventually ended
+-- without reaching the swap step). Real fixes (the perf fix above) came out of
+-- diagnosing that run. Result: 3,923,975 competitor pairs / 92,994 branches,
+-- 94,076/94,076 branches in radius stats (exact match with the branch universe).
+-- Long term this argues for running these from something other than the
+-- browser SQL editor (a16 Railway scheduling, or psql) rather than working
+-- around it by hand each time.
 
 CREATE OR REPLACE FUNCTION analytics.rebuild_tiered_competitors_batch(p_offset integer, p_limit integer)
 RETURNS integer LANGUAGE plpgsql AS $$
@@ -63,16 +85,23 @@ BEGIN
     ORDER BY g.branch_id
     OFFSET p_offset LIMIT p_limit
   ),
+  bob_totals AS (
+    -- Single pre-aggregated pass over the whole table (matches the original
+    -- proven script), not a per-institution correlated subquery.
+    SELECT inst_key, SUM(latest_dep::numeric) AS total
+    FROM analytics.branch_opportunity_base
+    GROUP BY inst_key
+  ),
   bank_totals AS (
     SELECT mb.inst_key,
-      COALESCE(
-        (SELECT SUM(latest_dep::numeric) FROM analytics.branch_opportunity_base WHERE inst_key = mb.inst_key),
+      COALESCE(bt.total,
         CASE WHEN mb.institution_type = 'cu' THEN mb.branch_dep_max ELSE mb.branch_dep_sum END
       ) AS total
     FROM (
       SELECT inst_key, institution_type, SUM(branch_dep) AS branch_dep_sum, MAX(branch_dep) AS branch_dep_max
       FROM my_batch GROUP BY inst_key, institution_type
     ) mb
+    LEFT JOIN bob_totals bt ON bt.inst_key = mb.inst_key
   ),
   candidates AS (
     SELECT mb.my_branch_id, mb.bank_id, mb.institution_type, mb.inst_key,
@@ -172,18 +201,13 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE PROCEDURE geo.refresh_branch_radius_stats_tiered_v1()
-LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION geo.rebuild_radius_stats_tiered_batch(p_offset integer, p_limit integer)
+RETURNS integer LANGUAGE plpgsql AS $$
 DECLARE
+  v_count integer;
   v_year integer;
-  v_total_branches integer;
-  v_inserted bigint;
 BEGIN
   SELECT MAX(year) INTO v_year FROM geo.branches_master_v2;
-  SELECT COUNT(*) INTO v_total_branches FROM geo.branches_master_v2 WHERE year = v_year;
-
-  DROP TABLE IF EXISTS geo.branch_radius_stats_tiered_v1_new;
-  CREATE TABLE geo.branch_radius_stats_tiered_v1_new (LIKE geo.branch_radius_stats_tiered_v1 INCLUDING DEFAULTS);
 
   WITH cu_branch_counts AS (
     SELECT bank_id, COUNT(*) AS n_branches
@@ -200,17 +224,24 @@ BEGIN
     FROM geo.branches_master_v2 g
     LEFT JOIN analytics.branch_opportunity_base ob ON ob.uninumbr = g.branch_id
     WHERE g.year = v_year
+    ORDER BY g.branch_id
+    OFFSET p_offset LIMIT p_limit
+  ),
+  bob_totals AS (
+    SELECT inst_key, SUM(latest_dep::numeric) AS total
+    FROM analytics.branch_opportunity_base
+    GROUP BY inst_key
   ),
   bank_totals AS (
     SELECT mb.inst_key,
-      COALESCE(
-        (SELECT SUM(latest_dep::numeric) FROM analytics.branch_opportunity_base WHERE inst_key = mb.inst_key),
+      COALESCE(bt.total,
         CASE WHEN mb.institution_type = 'cu' THEN mb.branch_dep_max ELSE mb.branch_dep_sum END
       ) AS total
     FROM (
       SELECT inst_key, institution_type, SUM(branch_dep) AS branch_dep_sum, MAX(branch_dep) AS branch_dep_max
       FROM my_branches GROUP BY inst_key, institution_type
     ) mb
+    LEFT JOIN bob_totals bt ON bt.inst_key = mb.inst_key
   ),
   candidates_1mi AS (
     SELECT mb.my_branch_id,
@@ -295,8 +326,36 @@ BEGIN
   FROM radius_calc rc
   LEFT JOIN agg a ON a.my_branch_id = rc.my_branch_id;
 
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END;
+$$;
+
+CREATE OR REPLACE PROCEDURE geo.refresh_branch_radius_stats_tiered_v1()
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_year integer;
+  v_total_branches integer;
+  v_batch_size integer := 5000;
+  v_offset integer := 0;
+  v_inserted bigint;
+BEGIN
+  SELECT MAX(year) INTO v_year FROM geo.branches_master_v2;
+  SELECT COUNT(*) INTO v_total_branches FROM geo.branches_master_v2 WHERE year = v_year;
+
+  DROP TABLE IF EXISTS geo.branch_radius_stats_tiered_v1_new;
+  CREATE TABLE geo.branch_radius_stats_tiered_v1_new (LIKE geo.branch_radius_stats_tiered_v1 INCLUDING DEFAULTS);
+  COMMIT;
+
+  WHILE v_offset < v_total_branches LOOP
+    PERFORM geo.rebuild_radius_stats_tiered_batch(v_offset, v_batch_size);
+    v_offset := v_offset + v_batch_size;
+    COMMIT;
+  END LOOP;
+
   CREATE UNIQUE INDEX ON geo.branch_radius_stats_tiered_v1_new (my_branch_id);
   ANALYZE geo.branch_radius_stats_tiered_v1_new;
+  COMMIT;
 
   SELECT COUNT(*) INTO v_inserted FROM geo.branch_radius_stats_tiered_v1_new;
   IF v_inserted < v_total_branches * 0.95 THEN
@@ -312,6 +371,7 @@ BEGIN
   GRANT SELECT ON geo.branch_radius_stats_tiered_v1 TO anon, authenticated, service_role;
 
   DROP TABLE geo.branch_radius_stats_tiered_v1_new;
+  COMMIT;
 
   RAISE NOTICE 'geo.branch_radius_stats_tiered_v1 refreshed: % branches (year %)', v_inserted, v_year;
 END;
