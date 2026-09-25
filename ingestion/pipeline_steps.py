@@ -85,6 +85,8 @@ STEPS = [
      "kind": "rpc", "fn": lambda: call_procedure("CALL public.refresh_old_10mi_competitor_system()")},
     {"id": "rebuild_opportunity_base", "label": "Rebuild branch_opportunity_base",
      "kind": "rpc", "fn": lambda: call_procedure("CALL public.refresh_branch_opportunity_base_with_backup()")},
+    {"id": "rebuild_target_competitors", "label": "Rebuild target-competitor engine (Hub drill-downs)",
+     "kind": "rpc", "fn": lambda: call_procedure("CALL analytics.refresh_branch_target_competitors()")},
     {"id": "archive_year", "label": "Archive current year to history",
      "kind": "rpc", "fn": _archive_year},
 ]
