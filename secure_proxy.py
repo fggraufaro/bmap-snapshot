@@ -105,6 +105,11 @@ ALLOWED_TABLES = {
     # trend per institution, first signal tested here before any polished
     # Opportunity View build.
     "vw_cfpb_complaints_wow":           "public",
+    # Growth Map's YoY delta overlay — 2026 vs 2025 opportunity_score per
+    # branch, computed server-side (joins the current table against the
+    # 2025 archive) so the browser never has to fetch and diff two years
+    # of data itself.
+    "vw_branch_opportunity_yoy_delta":  "public",
 }
 
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.
