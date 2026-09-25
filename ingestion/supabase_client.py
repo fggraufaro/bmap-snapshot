@@ -55,13 +55,22 @@ def upsert(table, rows, on_conflict, schema="public", batch_size=5000):
     return sent
 
 
-def call_rpc(fn, schema="public", timeout=600):
-    """POST to /rest/v1/rpc/<fn> with no args - for the refresh_* stored
+def call_rpc(fn, args=None, schema="public", timeout=1800):
+    """POST to /rest/v1/rpc/<fn> - for the refresh_*/archive_* stored
     procedures (refresh_bmap_after_upload, refresh_branch_opportunity_base,
-    refresh_bmap_scores, ...) that ingestion scripts trigger after a load."""
+    refresh_bmap_scores, refresh_branches_master_v2, archive_bmap_year_snapshot,
+    ...) that ingestion scripts and the pipeline command center trigger.
+
+    `args` is a dict of the function's named parameters (e.g. {"p_year": 2026})
+    -- PostgREST maps these directly to the Postgres function's argument names.
+    Default timeout is 30 minutes: these can be genuine multi-minute rebuilds
+    (the tiered/10mi competitor systems took 10+ minutes end to end), and the
+    call is expected to run from a background job, not an interactive request,
+    so there's no reason to cut it short the way a page-load request would need
+    to be."""
     url = f"{SUPA_URL}/rest/v1/rpc/{fn}"
     headers = _headers(schema, write=True)
     headers["Content-Type"] = "application/json"
-    r = requests.post(url, headers=headers, json={}, timeout=timeout)
+    r = requests.post(url, headers=headers, json=(args or {}), timeout=timeout)
     r.raise_for_status()
     return r.json() if r.content else None

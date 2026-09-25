@@ -1,90 +1,69 @@
-"""Scheduling entrypoint for a16 — runs every bulk ingestion script, then
-refreshes the scored views once.
+"""Scheduling entrypoint for a16 -- runs the full pipeline in dependency
+order: ingest sources, then rebuild branches_master_v2, then the tiered and
+10mi competitor systems, then branch_opportunity_base, then archive the
+current year to history.
 
-Design: each ingestion script (zhvi_ingest, ncua_fs220_ingest,
-fdic_sod_ingest, census_acs_ingest) is already idempotent and
-self-limiting (auto-detects the latest available period/vintage and
-no-ops or re-upserts unchanged data if nothing's new), so it's safe to
-run this daily via a Railway cron-scheduled service rather than wiring
-four separate schedules for four different real-world cadences
-(monthly/quarterly/quarterly/annual). One run, one log, one place to
-look when something breaks.
+Steps are defined once in ingestion/pipeline_steps.py -- this script and the
+command-center API both drive off that same registry, so there's exactly one
+place that defines what the pipeline is and what order it runs in.
 
-The refresh (analytics.refresh_branch_opportunity_base — confirmed via
-information_schema.routines as the current one: the tiered-adaptive-
-radius, 16-play-matrix version referenced in this repo's recent commits,
-not the older public.refresh_branch_opportunity_base) runs ONCE at the
-end regardless of which sources actually had new data, not after each
-script individually — it's a full ~93k-branch rebuild, so doing it once
-per run instead of up to 4x saves real time and load.
+Stops at the first failure rather than continuing past it: every rebuild
+step reads from what the previous one just wrote, so running e.g. the tiered
+system rebuild after branches_master_v2 failed would silently rebuild
+against stale data.
 
-NOT wired into an actual Railway cron schedule yet — see a16 in
-SESSION_COORDINATION.md. This script is what that schedule should run.
+GDELT news monitoring is a separate, standalone step (not run here -- see
+pipeline_steps.py's docstring) since it can take hours at GDELT's own rate
+limit and isn't part of the core ingest-then-rebuild chain.
 
 Usage:
-  python -m ingestion.run_all              # run everything, then refresh
-  python -m ingestion.run_all --no-refresh # skip the refresh step (for testing ingestion alone)
+  python -m ingestion.run_all              # run the full pipeline in order
+  python -m ingestion.run_all --only STEP_ID   # run a single step
 """
 
 import argparse
 import sys
 import traceback
 
-from contextlib import contextmanager
-
-from ingestion import census_acs_ingest, fdic_sod_ingest, ncua_fs220_ingest, zhvi_ingest
-from ingestion.supabase_client import call_rpc
-
-JOBS = [
-    ("zhvi", zhvi_ingest.main),
-    ("ncua_fs220", ncua_fs220_ingest.main),
-    ("fdic_sod", fdic_sod_ingest.main),
-    ("census_acs", census_acs_ingest.main),
-]
+from ingestion.pipeline_steps import RUN_ALL_ORDER, STEP_BY_ID
 
 
-@contextmanager
-def _bare_argv():
-    """Each job's own main() runs argparse.parse_args() against sys.argv,
-    which would otherwise see run_all's own flags (e.g. --no-refresh) and
-    reject them as unrecognized. Jobs are always run with their defaults
-    here, so just hide argv for the duration of the call."""
-    saved = sys.argv
-    sys.argv = [saved[0]]
-    try:
-        yield
-    finally:
-        sys.argv = saved
+def _run_step(step_id):
+    step = STEP_BY_ID[step_id]
+    print(f"\n{'=' * 60}\n{step['label']} ({step_id})\n{'=' * 60}")
+    step["fn"]()
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--no-refresh", action="store_true", help="skip analytics.refresh_branch_opportunity_base at the end")
+    ap.add_argument("--only", type=str, default=None,
+                     help=f"run a single step by id (one of {', '.join(RUN_ALL_ORDER)})")
     args, _ = ap.parse_known_args()
 
+    if args.only:
+        if args.only not in STEP_BY_ID:
+            print(f"Unknown step '{args.only}'. Valid: {', '.join(RUN_ALL_ORDER)}")
+            return 1
+        _run_step(args.only)
+        print(f"\n{args.only}: ok")
+        return 0
+
     results = {}
-    for name, job in JOBS:
-        print(f"\n{'=' * 60}\n{name}\n{'=' * 60}")
+    for step_id in RUN_ALL_ORDER:
         try:
-            with _bare_argv():
-                job()
-            results[name] = "ok"
+            _run_step(step_id)
+            results[step_id] = "ok"
         except Exception as e:
-            print(f"FAILED: {name}: {e}")
+            print(f"FAILED: {step_id}: {e}")
             traceback.print_exc()
-            results[name] = f"failed: {e}"
+            results[step_id] = f"failed: {e}"
+            break  # later steps depend on this one -- don't cascade into stale data
 
     print(f"\n{'=' * 60}\nSummary\n{'=' * 60}")
-    for name, status in results.items():
-        print(f"  {name}: {status}")
+    for step_id in RUN_ALL_ORDER:
+        print(f"  {step_id}: {results.get(step_id, 'skipped (stopped after earlier failure)')}")
 
-    if args.no_refresh:
-        print("\n--no-refresh set, skipping analytics.refresh_branch_opportunity_base.")
-        return
-
-    print("\nRefreshing analytics.refresh_branch_opportunity_base()...")
-    call_rpc("refresh_branch_opportunity_base", schema="analytics")
-    print("Refresh complete.")
+    return 0 if all(v == "ok" for v in results.values()) else 1
 
 
 if __name__ == "__main__":
