@@ -28,6 +28,17 @@ Endpoints:
   GET  /jobs               Bearer token  -> last 50 pipeline_jobs rows
   GET  /health             -> { status: ok }
 
+  Hub user/bank assignment (Phase 1 admin tooling lives here, not in the
+  Hub itself -- same separate-password rationale as the rest of this file:
+  this panel can already do more sensitive things than the team Hub login
+  is meant to gate):
+  GET  /admin/profiles               Bearer token -> [{ email, role, inst_key, institution_name, created_at }]
+  GET  /admin/institutions?q=<text>  Bearer token -> [{ inst_key, institution_name, state_hq, city_hq }]
+  POST /admin/invite-user  { email, role, inst_key }  Bearer token -> { ok, id }
+       Invites via Supabase Auth (service role) and writes the matching
+       public.profiles row in one call -- role is "admin" or "bank_user";
+       inst_key required iff role is "bank_user".
+
 Required Railway env vars:
   SUPABASE_SERVICE_KEY     -- same one the ingestion scripts already use
   PIPELINE_ADMIN_PASSWORD  -- separate from the Hub's HUB_ACCESS_PASSWORD
@@ -47,6 +58,7 @@ import time
 import traceback
 from datetime import datetime, timezone
 from functools import wraps
+from urllib.parse import quote
 
 import requests as http
 from flask import Flask, jsonify, request
@@ -302,6 +314,118 @@ def jobs():
     url = f"{SUPA_URL}/rest/v1/pipeline_jobs?select=*&order=started_at.desc&limit=50"
     r = http.get(url, headers=_jobs_headers(), timeout=15)
     return jsonify(r.json()), r.status_code
+
+
+# ── Hub user / bank assignment ──────────────────────────────────────
+# Lives here rather than in the Hub itself -- same separation-of-concerns
+# reason the rest of this file is already built on: this login is already
+# trusted for more sensitive actions than the team Hub login is meant to
+# gate, so it's the natural home for "who gets access to which bank".
+def _ref_headers():
+    return {"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}", "Accept-Profile": "ref"}
+
+
+@app.route("/admin/institutions", methods=["GET", "OPTIONS"])
+@require_session
+def admin_institutions():
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+    q = (request.args.get("q") or "").strip()
+    if len(q) < 2:
+        return jsonify([])
+    url = (f"{SUPA_URL}/rest/v1/dim_institutions"
+           f"?institution_name=ilike.*{quote(q)}*"
+           f"&select=inst_key,institution_name,state_hq,city_hq&limit=8")
+    r = http.get(url, headers=_ref_headers(), timeout=15)
+    if not r.ok:
+        return jsonify({"error": "could not search institutions"}), 502
+    return jsonify(r.json())
+
+
+@app.route("/admin/profiles", methods=["GET", "OPTIONS"])
+@require_session
+def admin_list_profiles():
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+    url = f"{SUPA_URL}/rest/v1/profiles?select=id,email,role,inst_key,created_at,last_login_at&order=created_at.desc"
+    r = http.get(url, headers=_jobs_headers(), timeout=15)
+    if not r.ok:
+        return jsonify({"error": "could not load users"}), 502
+    profiles = r.json()
+
+    inst_keys = sorted({p["inst_key"] for p in profiles if p.get("inst_key")})
+    names = {}
+    if inst_keys:
+        keys_filter = ",".join(inst_keys)
+        inst_r = http.get(
+            f"{SUPA_URL}/rest/v1/dim_institutions?inst_key=in.({keys_filter})&select=inst_key,institution_name",
+            headers=_ref_headers(), timeout=15,
+        )
+        if inst_r.ok:
+            names = {row["inst_key"]: row["institution_name"] for row in inst_r.json()}
+
+    for p in profiles:
+        p["institution_name"] = names.get(p.get("inst_key"))
+    return jsonify(profiles)
+
+
+@app.route("/admin/invite-user", methods=["POST", "OPTIONS"])
+@require_session
+def admin_invite_user():
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+
+    body = request.get_json(force=True, silent=True) or {}
+    email = (body.get("email") or "").strip().lower()
+    role = (body.get("role") or "").strip()
+    inst_key = (body.get("inst_key") or "").strip()
+
+    if not email or "@" not in email:
+        return jsonify({"error": "a valid email is required"}), 400
+    if role not in ("admin", "bank_user"):
+        return jsonify({"error": "role must be admin or bank_user"}), 400
+    if role == "bank_user" and not inst_key:
+        return jsonify({"error": "institution is required for a bank_user"}), 400
+
+    try:
+        invite_r = http.post(
+            f"{SUPA_URL}/auth/v1/invite",
+            headers={"apikey": SUPA_KEY, "Authorization": f"Bearer {SUPA_KEY}", "Content-Type": "application/json"},
+            json={"email": email},
+            timeout=15,
+        )
+    except Exception:
+        return jsonify({"error": "invite service unavailable"}), 503
+
+    invite_data = invite_r.json() if invite_r.content else {}
+    if invite_r.status_code not in (200, 201):
+        # Surface Supabase's own error (e.g. "User already registered", or
+        # a sender-restriction rejection) instead of masking it -- this is
+        # exactly the kind of thing that needs to be visible to whoever's
+        # inviting, not swallowed into a generic failure.
+        msg = invite_data.get("msg") or invite_data.get("message") or invite_data.get("error_description") or "could not send invite"
+        return jsonify({"error": msg}), invite_r.status_code
+
+    user_id = invite_data.get("id")
+    if not user_id:
+        return jsonify({"error": "invite sent but no user id returned -- check Supabase Auth users list"}), 502
+
+    prof_headers = _jobs_headers()
+    prof_headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+    try:
+        prof_r = http.post(
+            f"{SUPA_URL}/rest/v1/profiles",
+            headers=prof_headers,
+            json={"id": user_id, "email": email, "role": role, "inst_key": inst_key or None},
+            timeout=15,
+        )
+    except Exception:
+        return jsonify({"error": "invite sent, but saving the profile failed -- set it manually"}), 503
+
+    if not prof_r.ok:
+        return jsonify({"error": "invite sent, but saving the profile failed -- set it manually"}), 502
+
+    return jsonify({"ok": True, "id": user_id, "email": email, "role": role, "inst_key": inst_key})
 
 
 if __name__ == "__main__":
