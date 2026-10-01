@@ -25,6 +25,15 @@ Required Railway env vars (Settings → Variables):
     SESSION_SECRET         — any long random string, used to sign session tokens
     ALLOWED_ORIGIN         — https://fggraufaro.github.io (locks CORS down from '*')
 
+Optional (Phase 1 per-account auth, migrating off the shared passcode):
+    SUPABASE_ANON_KEY      — Settings → API → anon/publishable key (safe server-
+                              side; it's Supabase Auth's project identifier, not
+                              a secret). Without it, /auth/login's email+password
+                              path returns 503 but the shared passcode keeps
+                              working unaffected — this is additive, not a
+                              replacement, until every current user has a real
+                              account.
+
 Generate a SESSION_SECRET quickly with:
     python -c "import secrets; print(secrets.token_hex(32))"
 """
@@ -47,6 +56,14 @@ secure_proxy_bp = Blueprint("secure_proxy", __name__)
 # ── Config ──────────────────────────────────────────────────────
 SUPA_URL      = "https://tuiiywphoynbmkxpoyps.supabase.co"
 SUPA_SERVICE  = os.environ.get("SUPABASE_SERVICE_KEY", "")
+# Phase 1 per-account auth (email+password via Supabase Auth, alongside the
+# existing shared passcode -- both work during the migration, see login()).
+# The anon/publishable key is safe to hold server-side; it's the project
+# identifier Supabase Auth's own token endpoint requires, not a secret.
+# Optional, not fail-fast like SESSION_SECRET/HUB_PASSWORD below: missing
+# it should only break the new email-login path, not take down the
+# passcode login everyone currently depends on.
+SUPA_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "")
 ANTH_KEY      = os.environ.get("ANTHROPIC_API_KEY", "")
 HUB_PASSWORD  = os.environ.get("HUB_ACCESS_PASSWORD", "")
 SESSION_SECRET = os.environ.get("SESSION_SECRET", "")
@@ -191,11 +208,65 @@ def login():
         return jsonify({"error": "too many attempts — try again later"}), 429
 
     body = request.get_json(force=True, silent=True) or {}
+    email = (body.get("email") or "").strip()
     password = (body.get("password") or "").strip()
 
     attempts.append(now)
     _login_attempts[ip] = attempts
 
+    # Per-account path: email present means this is a real Supabase Auth
+    # login, not the shared passcode. Runs entirely server-side -- the
+    # browser never receives or holds a Supabase key, same property the
+    # rest of this file maintains for the Anthropic key and the service
+    # role. Both this and the shared-passcode path below stay live at the
+    # same time during the migration; see Phase 1 notes in the roadmap.
+    if email:
+        if not SUPA_ANON_KEY:
+            return jsonify({"error": "email login not configured yet"}), 503
+        try:
+            r = requests.post(
+                f"{SUPA_URL}/auth/v1/token?grant_type=password",
+                headers={"apikey": SUPA_ANON_KEY, "Content-Type": "application/json"},
+                json={"email": email, "password": password},
+                timeout=10,
+            )
+        except Exception:
+            return jsonify({"error": "login service unavailable"}), 503
+        if r.status_code != 200:
+            return jsonify({"error": "incorrect email or password"}), 401
+        user_id = (r.json().get("user") or {}).get("id")
+        if not user_id:
+            return jsonify({"error": "incorrect email or password"}), 401
+
+        # Look up role/inst_key -- service role, bypasses RLS. This lookup
+        # *is* the trust boundary (same pattern as every other Supabase
+        # call in this file): a valid Supabase session alone doesn't grant
+        # Hub access, a matching profiles row does.
+        try:
+            prof_r = requests.get(
+                f"{SUPA_URL}/rest/v1/profiles?id=eq.{user_id}&select=role,inst_key,email",
+                headers={"apikey": SUPA_SERVICE, "Authorization": f"Bearer {SUPA_SERVICE}"},
+                timeout=10,
+            )
+            profiles = prof_r.json() if prof_r.ok else []
+        except Exception:
+            profiles = []
+        if not profiles:
+            return jsonify({"error": "no profile configured for this account — contact an admin"}), 403
+
+        profile = profiles[0]
+        _login_attempts[ip] = []  # reset on success
+        token = _make_token(subject=user_id)
+        return jsonify({
+            "token": token,
+            "expires_in": SESSION_TTL_SECONDS,
+            "role": profile.get("role"),
+            "inst_key": profile.get("inst_key"),
+            "email": profile.get("email"),
+        })
+
+    # Existing path: the shared passcode. Unchanged -- stays working for
+    # anyone not yet migrated to a real account.
     if not HUB_PASSWORD or not hmac.compare_digest(password, HUB_PASSWORD):
         return jsonify({"error": "incorrect password"}), 401
 
