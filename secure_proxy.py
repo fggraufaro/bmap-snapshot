@@ -49,7 +49,7 @@ from functools import wraps
 from urllib.parse import quote
 
 import requests
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, g
 
 secure_proxy_bp = Blueprint("secure_proxy", __name__)
 
@@ -129,6 +129,41 @@ ALLOWED_TABLES = {
     "vw_branch_opportunity_yoy_delta":  "public",
 }
 
+# Phase 2: per-table scoping for role=bank_user. Verified against the real
+# schema (not assumed) -- the institution-key space is NOT consistent across
+# these tables, same landmine CLAUDE.md already documents elsewhere
+# (RSSDID vs CERT, CITYBR vs CITY). Confirmed live: inst_key == 'bank_' +
+# rssdid (e.g. 'bank_1000052' / 1000052), so tables keyed on a raw RSSD
+# integer are reachable from a profile's inst_key by stripping the prefix.
+#   "direct" -- column holds inst_key text directly, equality filter.
+#   "rssd"   -- column holds the raw RSSD integer/text, derived from inst_key.
+# "my_inst_key" tables (branch_target_competitors, vw_network_top_targets)
+# are competitive-intelligence views: scoping by the *_inst_key_ side is
+# correct because the point of those views is showing a bank's own
+# branches against surrounding competitors -- the competitor/target side
+# legitimately contains other institutions by design.
+TABLE_SCOPE = {
+    "dim_institutions":                ("inst_key", "direct"),
+    "bank_financial_snapshot_latest":  ("inst_key", "direct"),
+    "branch_opportunity_base":         ("inst_key", "direct"),
+    "vw_branch_opportunity_cbsa":      ("inst_key", "direct"),
+    "vw_branch_opportunity_yoy_delta": ("inst_key", "direct"),
+    "vw_cfpb_complaints_wow":          ("inst_key", "direct"),
+    "vw_prospecting_score":            ("inst_key", "direct"),
+    "branch_target_competitors":       ("my_inst_key", "direct"),
+    "vw_network_top_targets":          ("my_inst_key", "direct"),
+    "branch_competitors_10mi_v2":      ("my_bank_id", "rssd"),
+    "vw_rate_radar_latest":            ("rssdid", "rssd"),
+    "vw_rate_radar_history":           ("rssdid", "rssd"),
+    "bank_website":                    ("FED_RSSD", "rssd"),
+}
+# Tables with no institution dimension at all (verified: no inst_key/rssd/
+# cert/bank_id column exists) -- geography/demographic reference data,
+# identical for every role. Anything in ALLOWED_TABLES that is in neither
+# this set nor TABLE_SCOPE is blocked for bank_user (fail closed), so a
+# newly added table can't go unscoped just because no one classified it yet.
+GLOBAL_TABLES = {"uszips", "vw_zip_persona"}
+
 # Postgres functions the Hub calls via rpc(). All four live in 'public'.
 ALLOWED_RPCS = {
     "branches_within_radius",
@@ -145,27 +180,32 @@ LOGIN_WINDOW_SECONDS = 5 * 60
 
 
 # ── Session token: HMAC-signed, not a JWT library dependency ──────
-def _make_token(subject: str = "hub") -> str:
+# role/inst_key are baked into the signed payload (not re-looked-up per
+# request) so proxy_table/proxy_rpc can trust g.role/g.inst_key the same
+# way the rest of this file trusts a verified signature -- tampering with
+# either field invalidates the signature. Passcode logins (no email) get
+# role="admin" with no inst_key, matching their historical full access.
+def _make_token(subject: str = "hub", role: str = "admin", inst_key: str = "") -> str:
     exp = int(time.time()) + SESSION_TTL_SECONDS
-    payload = f"{subject}:{exp}"
+    payload = f"{subject}:{role}:{inst_key}:{exp}"
     sig = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
     raw = f"{payload}:{sig}"
     return base64.urlsafe_b64encode(raw.encode()).decode()
 
 
-def _verify_token(token: str) -> bool:
+def _decode_token(token: str):
     try:
         raw = base64.urlsafe_b64decode(token.encode()).decode()
-        subject, exp, sig = raw.split(":")
-        payload = f"{subject}:{exp}"
+        subject, role, inst_key, exp, sig = raw.split(":")
+        payload = f"{subject}:{role}:{inst_key}:{exp}"
         expected = hmac.new(SESSION_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
-            return False
+            return None
         if int(exp) < time.time():
-            return False
-        return True
+            return None
+        return {"subject": subject, "role": role, "inst_key": inst_key}
     except Exception:
-        return False
+        return None
 
 
 def require_session(fn):
@@ -178,8 +218,11 @@ def require_session(fn):
             return fn(*args, **kwargs)
         auth = request.headers.get("Authorization", "")
         token = auth.replace("Bearer ", "").strip()
-        if not token or not _verify_token(token):
+        identity = _decode_token(token) if token else None
+        if not identity:
             return jsonify({"error": "unauthorized"}), 401
+        g.role = identity["role"]
+        g.inst_key = identity["inst_key"]
         return fn(*args, **kwargs)
     return wrapper
 
@@ -255,13 +298,18 @@ def login():
             return jsonify({"error": "no profile configured for this account — contact an admin"}), 403
 
         profile = profiles[0]
+        role = profile.get("role") or "bank_user"
+        inst_key = profile.get("inst_key") or ""
+        if role == "bank_user" and not inst_key:
+            return jsonify({"error": "account has no institution assigned — contact an admin"}), 403
+
         _login_attempts[ip] = []  # reset on success
-        token = _make_token(subject=user_id)
+        token = _make_token(subject=user_id, role=role, inst_key=inst_key)
         return jsonify({
             "token": token,
             "expires_in": SESSION_TTL_SECONDS,
-            "role": profile.get("role"),
-            "inst_key": profile.get("inst_key"),
+            "role": role,
+            "inst_key": inst_key,
             "email": profile.get("email"),
         })
 
@@ -326,8 +374,31 @@ def proxy_table(table):
         return jsonify({"error": f"table '{table}' is not exposed via the proxy"}), 403
 
     # Forward the querystring as-is (select=, filters, order, limit —
-    # these are the same params the Hub already builds client-side).
+    # these are the same params the Hub already builds client-side) —
+    # then, for a scoped bank_user, append a server-side institution
+    # filter PostgREST ANDs against it. The client's own querystring is
+    # never trusted for the security boundary, only for the forced filter
+    # we add here, so a bank_user can't widen their own access by
+    # omitting or editing filters client-side.
     qs = request.query_string.decode()
+
+    if g.role != "admin":
+        if table in GLOBAL_TABLES:
+            pass  # no institution dimension — same for every role
+        elif table in TABLE_SCOPE:
+            column, mode = TABLE_SCOPE[table]
+            if not g.inst_key:
+                return jsonify({"error": "no institution assigned to this account"}), 403
+            if mode == "rssd":
+                value = g.inst_key.split("bank_", 1)[-1]
+            else:
+                value = g.inst_key
+            qs = f"{qs}&{column}=eq.{quote(value)}" if qs else f"{column}=eq.{quote(value)}"
+        else:
+            # Not yet classified for scoping — fail closed rather than
+            # silently serving an unscoped table to a non-admin.
+            return jsonify({"error": f"table '{table}' is not yet available for this account type"}), 403
+
     url = f"{SUPA_URL}/rest/v1/{table}?{qs}"
 
     try:
@@ -353,6 +424,14 @@ def proxy_rpc(fn_name):
 
     if fn_name not in ALLOWED_RPCS:
         return jsonify({"error": f"function '{fn_name}' is not exposed via the proxy"}), 403
+
+    # These four are Growth Map's radius-click spatial queries, not yet
+    # reviewed for institution scoping and not yet rolled out to
+    # bank_user accounts anyway (Growth Map still only has the shared-
+    # passcode gate). Fail closed until that gate gets the same role
+    # check this file now has for /api/<table>.
+    if g.role != "admin":
+        return jsonify({"error": "not available for this account type"}), 403
 
     body = request.get_json(force=True, silent=True) or {}
     url = f"{SUPA_URL}/rest/v1/rpc/{fn_name}"
@@ -404,6 +483,12 @@ def _run_age_days(run_id):
 def _check_verify_request(body):
     """Shared validation for verify-rate and edit-rate. Returns
     (bank_name, run_id, product_type, verified_by, error_response)."""
+    # Rate Radar curation (marking/correcting scraped rates) touches shared
+    # reference data across every institution, not a per-bank self-service
+    # action -- admin only, same fail-closed default as proxy_table/proxy_rpc.
+    if g.role != "admin":
+        return None, None, None, None, (jsonify({"error": "not available for this account type"}), 403)
+
     bank_name    = (body.get("bank_name") or "").strip()
     run_id       = (body.get("run_id") or "").strip()
     product_type = (body.get("product_type") or "").strip()
