@@ -275,6 +275,46 @@ def login():
     return jsonify({"token": token, "expires_in": SESSION_TTL_SECONDS})
 
 
+@secure_proxy_bp.route("/auth/set-password", methods=["POST", "OPTIONS"])
+def set_password():
+    # Called right after someone clicks a real invite/recovery email link.
+    # Supabase already verified that click server-side and handed the
+    # browser a short-lived access_token in the URL -- this endpoint uses
+    # that token to actually set the password, still without the browser
+    # ever holding a Supabase key itself (same property as /auth/login).
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+
+    if not SUPA_ANON_KEY:
+        return jsonify({"error": "not configured yet"}), 503
+
+    body = request.get_json(force=True, silent=True) or {}
+    access_token = (body.get("access_token") or "").strip()
+    new_password = body.get("new_password") or ""
+
+    if not access_token or len(new_password) < 8:
+        return jsonify({"error": "invalid request"}), 400
+
+    try:
+        r = requests.put(
+            f"{SUPA_URL}/auth/v1/user",
+            headers={
+                "apikey": SUPA_ANON_KEY,
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"password": new_password},
+            timeout=10,
+        )
+    except Exception:
+        return jsonify({"error": "service unavailable"}), 503
+
+    if r.status_code != 200:
+        return jsonify({"error": "could not set password — the link may have expired, request a new one"}), 400
+
+    return jsonify({"ok": True})
+
+
 @secure_proxy_bp.route("/api/<table>", methods=["GET", "OPTIONS"])
 @require_session
 def proxy_table(table):
