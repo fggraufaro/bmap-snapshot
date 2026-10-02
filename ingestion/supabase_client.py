@@ -27,7 +27,7 @@ _RETRYABLE = (requests.exceptions.ConnectionError, requests.exceptions.ChunkedEn
               requests.exceptions.Timeout)
 
 
-def _post_with_retry(url, headers, json_body, timeout, max_attempts=4):
+def _post_with_retry(url, headers, json_body, timeout, max_attempts=8):
     for attempt in range(1, max_attempts + 1):
         try:
             r = requests.post(url, headers=headers, json=json_body, timeout=timeout)
@@ -36,7 +36,11 @@ def _post_with_retry(url, headers, json_body, timeout, max_attempts=4):
         except _RETRYABLE as e:
             if attempt == max_attempts:
                 raise
-            wait = 2 ** attempt  # 2, 4, 8s
+            # 2,4,8,16,32,60,60s -- seen DNS-resolution failures (local
+            # network hiccup, not Supabase) outlast a short few-second
+            # backoff window across 3 separate runs in one session;
+            # capped at 60s so this doesn't spin forever on a real outage.
+            wait = min(2 ** attempt, 60)
             print(f"  transient error ({e!r}), retrying in {wait}s (attempt {attempt}/{max_attempts})...")
             time.sleep(wait)
 

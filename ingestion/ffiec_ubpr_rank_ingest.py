@@ -26,11 +26,12 @@ import csv
 import io
 import sys
 
-from ingestion.ffiec_bulk_portal import fetch_zip as _portal_fetch_zip
+from ingestion.ffiec_bulk_portal import core_field_codes, fetch_zip as _portal_fetch_zip
 from ingestion.ffiec_bulk_portal import parse_period
 from ingestion.supabase_client import upsert
 
 PRODUCT_VALUE = "PerformanceReportingSeriesRank"  # "UBPR Rank -- Four Periods"
+WANTED_CODES = core_field_codes("UBPK")
 
 
 def fetch_zip(requested_year=None):
@@ -45,7 +46,9 @@ def parse_member(fname, raw_bytes):
         return [], []
 
     codes, long_names, descriptions = rows[0], rows[1], rows[2]
-    field_cols = list(range(3, len(codes)))
+    field_cols = [i for i in range(3, len(codes)) if codes[i].strip() in WANTED_CODES]
+    if not field_cols:
+        return [], []
 
     field_rows = []
     for i in field_cols:
