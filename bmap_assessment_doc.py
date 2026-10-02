@@ -1302,7 +1302,22 @@ def _vulnerability_reasoning(c):
     yoy = c.get("yoy_pct", 0)
     roa = c.get("roa", 0)
     noncurrent = c.get("noncurrent_pct", 0)
-    if yoy < -10:
+    # A decline this steep is statistically unusual for organic single-year
+    # deposit attrition at a going-concern bank -- real case that caught this:
+    # BMAP cited SouthState as "losing deposits at scale" off a reported
+    # decline that was actually SouthState's January 2025 acquisition of
+    # Independent Bank Group changing which charter the SOD deposits report
+    # under, not customers leaving (caught by Marc Winkler's review of a real
+    # Cattlemens engagement). BMAP has no merger/consolidation data source to
+    # detect this directly, so flag the magnitude itself as a reason to verify
+    # rather than asserting organic attrition.
+    if yoy < -20:
+        reasons.append(
+            f"shows an unusually steep deposit decline ({yoy:+.1f}% YoY) — a swing this large more "
+            f"often reflects a merger, branch consolidation, or reporting reclassification than organic "
+            f"customer attrition, so verify before citing this as a confirmed vulnerability"
+        )
+    elif yoy < -10:
         reasons.append(f"already losing deposits at scale ({yoy:+.1f}% YoY)")
     elif yoy < 0:
         reasons.append(f"declining deposits ({yoy:+.1f}% YoY)")
@@ -1334,6 +1349,12 @@ def _vulnerability_sentence(c, vuln_list):
     noncurrent = _sf(c.get("noncurrent_pct"))
     opp = c.get("opportunity_score")
 
+    if tag == "Steep decline — verify (possible M&A)":
+        return (
+            f"shows an unusually steep {yoy:+.1f}% YoY deposit decline — a swing this large more often "
+            f"reflects a merger, branch consolidation, or reporting reclassification than organic "
+            f"customer attrition, so this should be verified before being treated as a confirmed target"
+        )
     if tag == "Losing deposits fast":
         return f"already losing deposits at scale ({yoy:+.1f}% YoY)"
     if tag == "Highest credit stress of the three":
@@ -1386,7 +1407,9 @@ def _vulnerability_tags(vuln_list):
     for c in vuln_list:
         yoy = _sf(c.get("yoy_pct"))
         name = c.get("bank_name")
-        if yoy < -10:
+        if yoy < -20:
+            tags[name] = "Steep decline — verify (possible M&A)"
+        elif yoy < -10:
             tags[name] = "Losing deposits fast"
         elif name == worst_noncurrent and _sf(c.get("noncurrent_pct")) > 1:
             tags[name] = "Highest credit stress of the three"
@@ -2272,6 +2295,9 @@ Do not explain BMAP methodology, do not reference BMAP versions, do not ask foll
 do not introduce data beyond what's given below. No superlatives for their own sake — earn every claim with a number.
 When a percentage is given explicitly in the data below (e.g. "X% of total network deposits"), state that
 exact figure verbatim — never estimate, round, or recompute a percentage yourself from raw dollar figures.
+When a competitor's data below says a decline "should be verified" or "more often reflects a merger,
+branch consolidation, or reporting reclassification," carry that caution into your own text — do not
+upgrade it into a confident "losing deposits" or "conquest" claim; name the verification need explicitly.
 Return ONLY valid JSON, no markdown fences:
 {
   "exec_headline": "3-4 sentences. State plainly whether this network's current footprint is positioned for GROWTH, DEFENSE, or OPTIMIZATION -- pick one framing and commit to it. Reference the overall opportunity score and the Invest/Analyze/Defend/Justify mix. Frame the core deposit-acquisition tension explicitly (e.g. concentrated upside vs. broad retention burden). If a FLAGSHIP RISK finding is present above, it must anchor this headline by name and city -- it drives the network total and outweighs a smaller branch's score even if that branch tops the ranking.",
@@ -3424,6 +3450,18 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
             r_size.font.color.rgb = RGBColor(0x33, 0x33, 0x33)
 
         top_target = vuln_list[0]
+        # An implausibly steep decline (see _vulnerability_tags) is a reason
+        # to verify, not a reason to call the target "realistically winnable"
+        # -- that closing claim was unconditional before this fix, so a
+        # merger/reporting-driven decline got the same confident framing as
+        # a genuinely declining competitor.
+        top_is_unverified = _sf(top_target.get("yoy_pct")) < -20
+        closing_clause = (
+            "Confirm the decline isn't merger- or reclassification-driven before building a capture "
+            "plan around it."
+            if top_is_unverified else
+            "This is where deposit capture is realistically winnable, not just theoretically contestable."
+        )
         p_win = doc.add_paragraph()
         p_win.paragraph_format.space_before = Pt(8)
         r_win_label = p_win.add_run("Priority target: ")
@@ -3433,8 +3471,7 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         r_win_label.font.name = FONT_HEAD
         r_win = p_win.add_run(
             f"{top_target.get('bank_name')} — {_vulnerability_sentence(top_target, vuln_list[:3])}. "
-            f"This is where deposit capture is realistically winnable, not just theoretically "
-            f"contestable."
+            f"{closing_clause}"
         )
         r_win.font.size = Pt(9.5)
         r_win.font.name = FONT_HEAD
