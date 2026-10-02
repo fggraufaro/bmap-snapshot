@@ -21,7 +21,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import census_acs_ingest, fdic_sod_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
+from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_ubpr_peer_stats_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
 
@@ -95,6 +95,11 @@ STEPS = [
 GDELT_STEP = {"id": "ingest_gdelt", "label": "Ingest GDELT competitor news",
               "kind": "ingest", "fn": _run_ingest(gdelt_news_ingest.main)}
 
-ALL_STEPS = STEPS + [GDELT_STEP]
+# Standalone -- feeds a84 (UBPR Peer-Benchmarking), not the branches_master_v2
+# rebuild chain. Session 3 owns the mapping/wiring once this lands.
+UBPR_PEER_STATS_STEP = {"id": "ingest_ubpr_peer_stats", "label": "Ingest FFIEC UBPR peer-group stats (a84)",
+                         "kind": "ingest", "fn": _run_ingest(ffiec_ubpr_peer_stats_ingest.main)}
+
+ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
 RUN_ALL_ORDER = [s["id"] for s in STEPS]
