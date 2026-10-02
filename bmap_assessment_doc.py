@@ -2132,6 +2132,14 @@ Named examples: {named_str}
     deep_dive_ctx = ""
     if dives:
         lines = []
+        # Deposit share of the full network, computed exactly and handed to
+        # the model -- previously the per-branch line only gave raw dollar
+        # figures and let the model estimate each branch's share of the
+        # network from a list of up to 15 numbers, which is exactly the kind
+        # of mental arithmetic an LLM gets slightly wrong (caught on a real
+        # Cattlemens run: Addison Branch is 34.65% of network deposits,
+        # stated as "33%" in three places across the generated document).
+        total_dep_all = summary.get("total_deposits_B", 0) * 1e9
         for e in dives:
             b = e["branch"]
             strat = e.get("strategy")
@@ -2170,10 +2178,14 @@ Named examples: {named_str}
                     )
                 vuln_str = " | vulnerability-ranked competitors: " + "; ".join(parts)
 
+            own_dep_for_share = _sf(b.get("latest_dep"))
+            share_pct = (own_dep_for_share / total_dep_all * 100) if total_dep_all > 0 else None
             lines.append(
                 f"- {b.get('namebr')} ({b.get('citybr')}, {b.get('stalpbr')}): "
                 f"score {_sf(b.get('opportunity_score')):.0f}/100, zone {b.get('opportunity_zone')}, "
-                f"${_sf(b.get('latest_dep'))/1e6:.0f}M deposits, {fmt_yoy(b, capped_yoy or {})} YoY, "
+                f"${own_dep_for_share/1e6:.0f}M deposits"
+                f"{f' ({share_pct:.1f}% of total network deposits -- use this exact figure, do not estimate)' if share_pct is not None else ''}"
+                f", {fmt_yoy(b, capped_yoy or {})} YoY, "
                 f"{comp_str}, "
                 f"{driver_clause + ', ' if driver_clause else ''}"
                 f"household income ${_sf(b.get('household_income')):.0f} "
@@ -2193,6 +2205,8 @@ Tone: confident, commercial, decisive — not hedged, not academic. State the po
 Every branch reference MUST include both branch name AND city — never one without the other.
 Do not explain BMAP methodology, do not reference BMAP versions, do not ask follow-up questions,
 do not introduce data beyond what's given below. No superlatives for their own sake — earn every claim with a number.
+When a percentage is given explicitly in the data below (e.g. "X% of total network deposits"), state that
+exact figure verbatim — never estimate, round, or recompute a percentage yourself from raw dollar figures.
 Return ONLY valid JSON, no markdown fences:
 {
   "exec_headline": "3-4 sentences. State plainly whether this network's current footprint is positioned for GROWTH, DEFENSE, or OPTIMIZATION -- pick one framing and commit to it. Reference the overall opportunity score and the Invest/Analyze/Defend/Justify mix. Frame the core deposit-acquisition tension explicitly (e.g. concentrated upside vs. broad retention burden). If a FLAGSHIP RISK finding is present above, it must anchor this headline by name and city -- it drives the network total and outweighs a smaller branch's score even if that branch tops the ranking.",
