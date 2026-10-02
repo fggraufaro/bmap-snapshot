@@ -26,6 +26,7 @@ import argparse
 import requests
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 from docx import Document
 from docx.shared import Inches, Pt, RGBColor, Cm
@@ -2054,6 +2055,48 @@ def summarize_branch_strategy(branch_strategy):
     return {"tiers": tiers, "named_hits": named_hits}
 
 
+def fetch_resonate_audiences(bank_name):
+    """Resonate (Cortex) audience segments -- pulled manually via a browser
+    read of the Resonate UI, no API integration exists. This returns whatever
+    a prior manual pull already loaded into resonate_audiences /
+    resonate_audience_enrichment, not a live signal -- most banks will have
+    none yet, which is expected, not an error.
+
+    resonate_audiences.bank_name is free text set at pull time and doesn't
+    necessarily match this run's bank_name exactly (e.g. 'Trustmark' vs.
+    'Trustmark National Bank'), so match fuzzily against the small distinct
+    set already in the table rather than assuming an exact match -- and
+    rather than wildcard-escaping a user-controlled name into ilike.*...*."""
+    all_rows = supabase("resonate_audiences", "select=bank_name")
+    known_names = {r["bank_name"] for r in (all_rows if isinstance(all_rows, list) else []) if r.get("bank_name")}
+    bn_lower = (bank_name or "").lower()
+    matched = next((n for n in known_names if n.lower() in bn_lower or bn_lower in n.lower()), None)
+    if not matched:
+        return []
+
+    aud_rows = supabase(
+        "resonate_audiences",
+        f"bank_name=eq.{quote(matched)}&select=id,audience_name,description,size_pct_low,size_pct_high,"
+        "size_count_low,size_count_high,audience_index&order=audience_index.asc",
+    )
+    aud_rows = aud_rows if isinstance(aud_rows, list) else []
+    if not aud_rows:
+        return []
+
+    aud_ids = ",".join(str(a["id"]) for a in aud_rows)
+    enrich_rows = supabase(
+        "resonate_audience_enrichment",
+        f"audience_id=in.({aud_ids})&select=audience_id,section,summary,recommendations",
+    )
+    enrich_by_aud = {}
+    for e in (enrich_rows if isinstance(enrich_rows, list) else []):
+        enrich_by_aud.setdefault(e["audience_id"], {})[e["section"]] = e
+
+    for a in aud_rows:
+        a["enrichment"] = enrich_by_aud.get(a["id"], {})
+    return aud_rows
+
+
 def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives=None, capped_yoy=None,
                     vulnerability_targets=None):
     branch_strategy = branch_strategy or []
@@ -2062,6 +2105,28 @@ def get_narratives(bank_name, summary, fin, targets, branch_strategy=None, dives
     if not ANTH_KEY or not anthropic:
         print("  ⚠ No ANTHROPIC_API_KEY — using placeholder narratives")
         return _placeholder_narratives(dives)
+
+    # Light-touch only: real Resonate audience segments (demographics, full
+    # messaging-strategy copy) are rendered directly from the database in
+    # build_assessment_doc, not reproduced through the model -- same reason
+    # the deposit-share percentage fix exists elsewhere in this file: don't
+    # make the AI restate precise content it could get slightly wrong when
+    # the real value can just be rendered. The model only gets enough here
+    # to write one short paragraph connecting these real segments to the
+    # network findings already established.
+    resonate_audiences = fetch_resonate_audiences(bank_name)
+    resonate_ctx = ""
+    if resonate_audiences:
+        aud_lines = []
+        for a in resonate_audiences:
+            size = f"{_sf(a.get('size_count_low')):,.0f}-{_sf(a.get('size_count_high')):,.0f}" if a.get("size_count_low") else "size unknown"
+            strat = (a.get("enrichment", {}).get("strategic_alignment") or {}).get("summary") or ""
+            aud_lines.append(f"- {a['audience_name']} ({size} reach): {a.get('description','')} {strat}")
+        resonate_ctx = (
+            "\n\nReal Resonate (Cortex) audience segments already built for this bank -- "
+            "these are live, named, ready-to-activate audiences, not a hypothetical AudienceFinder "
+            "framing:\n" + "\n".join(aud_lines)
+        )
 
     zones = summary["zones"]
     top5_str = "; ".join(
@@ -2217,6 +2282,7 @@ Return ONLY valid JSON, no markdown fences:
   "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
+  "activation_readiness": "2-3 sentences. If real Resonate audience segments are listed in the data below, name 1-2 of them specifically by name and connect them to this network's competitive or demographic findings above -- frame these as audiences already built and ready to activate now, not a future step, and do not restate their full demographic/messaging detail (that renders separately). If no Resonate segments are listed below, return exactly this sentence with no changes: 'Audience segments have not yet been built in Resonate for this bank -- recommend starting there using Verlocity's AudienceFinder outputs.'",
   "branch_plays": {"Branch Name (City, ST)": {"resource_posture": "One sentence, grounded in THIS branch's specific score, deposits, and competitive exposure -- not a generic restatement of the play name. E.g. for a Grow Share play, name the actual budget rationale given this branch's specific numbers, not the same sentence every Grow Share branch would get. CRITICAL: if this branch has no named competitor within its adaptive radius (stated above), do NOT write language implying one exists -- no 'deter competitor response', no 'switching', no reference to a rival. Reframe around organic/uncontested capture or macro/rate pressure instead. If a relative-size figure is given for a vulnerability-ranked competitor, use it as part of the resourcing argument (e.g. 'this branch is 2.8x the size of its weakest named competitor').", "media_brief": "One to two sentences, naming the actual target audience and product implied by THIS branch's demographic and competitive data -- not the generic play-level template. Same competitor-existence constraint as resource_posture above. If a vulnerability-ranked competitor shows real weakness (declining deposits, weak ROA, elevated noncurrent assets), name conquesting that competitor's depositors as part of the angle."}},
   "branch_verdicts": {"Branch Name (City, ST)": "3-4 sentences. Synthesize the score, zone, the named competitive threat (or lack of one), and the deposit trajectory into a single clear verdict on this specific branch -- the 'why' behind its assigned play, not a restatement of the tables that follow it. If a 'score driven primarily by X, weakest on Y' clause is given, use it explicitly -- naming the actual driver of a low or high score (e.g. 'this branch's ceiling is capped by a shrinking local market, not competitive pressure' or 'the score reflects deposit scale, not underlying growth') is exactly the kind of analysis worth paying for, versus a generic restatement of the number. This is what a reader sees BEFORE the supporting detail tables, so it must stand alone: e.g. why a Defend-zone branch with strong income growth is still a retention play given who's 0.2mi away, or why a Low-Density branch with no named competitor should focus on wallet-share deepening instead of acquisition. If vulnerability-ranked competitors are given, name at least one specific weakness (declining deposits, weak ROA, elevated noncurrent assets) rather than treating competitors as an undifferentiated group -- this is the same data the reader sees highlighted in the competitor table, so the verdict must not read thinner than the table it introduces. Ground every claim in the specific numbers given -- no generic branch commentary.",
   "branch_audiences": {"Branch Name (City, ST)": {
@@ -2235,6 +2301,8 @@ Keys in branch_plays, branch_verdicts, and branch_audiences must exactly match t
 
     if deep_dive_ctx:
         ctx += deep_dive_ctx
+    if resonate_ctx:
+        ctx += resonate_ctx
 
     print("  Generating AI narratives (full-network context)...")
     client = anthropic.Anthropic(api_key=ANTH_KEY)
@@ -2268,7 +2336,7 @@ Keys in branch_plays, branch_verdicts, and branch_audiences must exactly match t
 def _placeholder_narratives(dives=None):
     base = {k: "" for k in ["exec_headline", "strategic_positioning", "network_narrative",
                              "competitive_narrative", "financial_narrative",
-                             "capture_strategy_narrative", "next_step"]}
+                             "capture_strategy_narrative", "next_step", "activation_readiness"]}
     base["priority_focus"] = []
     base["branch_audiences"] = {}
     base["branch_verdicts"] = {}
@@ -4189,6 +4257,58 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
                       f"capacity from the former to the latter.")
         fallback_next_step = " ".join(parts)
     _body(doc, narr.get("next_step") or fallback_next_step)
+
+    # ── Audience Activation — real Resonate segments ──
+    # Rendered directly from the database, not AI-reproduced: the exact
+    # messaging copy and demographic figures a human already approved in
+    # Resonate should never drift through the model (same rationale as the
+    # deposit-share-percentage fix elsewhere in this file). The AI only
+    # wrote the short connecting paragraph above (activation_readiness).
+    if narr.get("activation_readiness"):
+        doc.add_paragraph().paragraph_format.space_after = Pt(4)
+        _body(doc, narr["activation_readiness"])
+
+    resonate_audiences_for_doc = fetch_resonate_audiences(bank_name)
+    if resonate_audiences_for_doc:
+        doc.add_page_break()
+        _heading(doc, "Audience Activation — Resonate Segments", space_before=0)
+        _body(doc, "Real, named audience segments already built in Resonate for this bank — "
+                   "ready to activate, not a future step.")
+        for a in resonate_audiences_for_doc:
+            enr = a.get("enrichment", {})
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(14)
+            r = p.add_run(a.get("audience_name", ""))
+            r.bold = True
+            r.font.size = Pt(13)
+            r.font.color.rgb = NAVY
+            low, high = a.get("size_count_low"), a.get("size_count_high")
+            if low:
+                r2 = p.add_run(f"   {_sf(low):,.0f}–{_sf(high):,.0f} reach")
+                r2.font.size = Pt(10)
+                r2.font.color.rgb = RGBColor(0x5C, 0x6B, 0x75)
+            if a.get("description"):
+                _body(doc, a["description"], size=10)
+
+            demo = enr.get("demographics") or {}
+            if demo.get("summary"):
+                _body(doc, demo["summary"], size=9.5)
+
+            msg_section = enr.get("messaging") or {}
+            for strat_text in (msg_section.get("recommendations") or [])[:3]:
+                strat_lines = (strat_text or "").split("\n")
+                if not strat_lines or not strat_lines[0]:
+                    continue
+                bp = _bullet_paragraph(doc)
+                br = bp.add_run(strat_lines[0].replace("Strategy", "").strip(" -0123456789"))
+                br.bold = True
+                br.font.size = Pt(9.5)
+                sample_line = next((l for l in strat_lines if l.startswith("Sample message:")), None)
+                if sample_line:
+                    sr = bp.add_run("  " + sample_line.replace("Sample message: ", ""))
+                    sr.italic = True
+                    sr.font.size = Pt(9.5)
+                    sr.font.color.rgb = RGBColor(0x5C, 0x6B, 0x75)
 
     doc.add_page_break()
 
