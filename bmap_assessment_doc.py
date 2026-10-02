@@ -336,7 +336,7 @@ def fetch_full_network_data(ik, skip_competitive_strategy=False):
         "bank_financial_snapshot_latest",
         f"inst_key=eq.{ik}&select=roa,nim,efficiency_ratio,dep_yoy_pct,"
         "dep_qoq_pct,cost_of_funds_pct,tier1_capital_pct,net_income_yoy_pct,"
-        "total_assets,total_deposits,period",
+        "total_assets,total_deposits,loans_to_deposits_pct,period",
     )
     fin = fin_arr[0] if fin_arr else {}
 
@@ -2197,7 +2197,8 @@ Bottom 3 branches by opportunity: {bottom3_str}
 
 Financial health: ROA {_sf(fin.get('roa')):.2f}% | NIM {_sf(fin.get('nim')):.2f}% | Efficiency {_sf(fin.get('efficiency_ratio')):.1f}%
 Deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}% | Cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}% | Tier 1 {_sf(fin.get('tier1_capital_pct')):.1f}%
-Net income YoY {_sf(fin.get('net_income_yoy_pct')):+.1f}%
+Net income YoY {_sf(fin.get('net_income_yoy_pct')):+.1f}% | Loan-to-Deposit ratio {_sf(fin.get('loans_to_deposits_pct')):.1f}%
+{"FUNDING POSTURE — this bank's loan-to-deposit ratio is loaned-up enough that its above-peer NIM/ROA and its liquidity constraint are two effects of the SAME posture, not separate strengths and weaknesses: a richer, loan-heavy asset mix drives the earnings advantage, and that identical mix is what leaves little room for deposit softness. Frame financial_narrative this way explicitly -- do not score NIM and liquidity as independent line items." if _sf(fin.get('loans_to_deposits_pct')) > 90 else ""}
 
 Network-wide demographic & audience signal (Census income/population + ZHVI home-value
 trend -- the same underlying data AudienceFinder segments key off of):
@@ -2308,7 +2309,7 @@ Return ONLY valid JSON, no markdown fences:
   "priority_focus": [{"branch": "exact branch name", "city": "city", "state": "ST", "zone": "Invest/Analyze/Defend/Justify", "why_now": "one clause: momentum, competitive pressure, or market structure -- with a number", "role": "one short strategic-role phrase, e.g. 'deposit growth engine', 'selective digital capture', 'defend and retain balances'"}] , // 2-3 entries. If a FLAGSHIP RISK finding is present, it MUST be one of these entries (role should reflect its risk, e.g. 'stabilize and retain' or 'exit review'). Otherwise lead with the top opportunity-score branch.
   "network_narrative": "2-3 sentences on what the zone distribution reveals about the network's overall position. (Used later in the doc, not the exec summary above -- can restate the zone framing in different words.)",
   "competitive_narrative": "2-3 sentences naming the specific network-level target and why it is vulnerable.",
-  "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose.",
+  "financial_narrative": "2-3 sentences on what the financial metrics mean together — not a list restated as prose. If a FUNDING POSTURE note is present above, lead with it explicitly: name the loan-to-deposit ratio and connect it directly to the NIM/ROA figures as cause and effect (the loan-heavy mix driving both), not as two separate scored metrics.",
   "capture_strategy_narrative": "3-4 sentences on the branch-level adaptive-radius findings. Name at least one specific dense/high-value branch with its named largest nearby competitor and distance, and contrast the tactical approach that implies (rate/digital competition at close range) against what the low-density branches need instead (defense and wallet-share deepening, since there is often no competitor within the adaptive radius to capture from). This is the 'win deposits by branch AND as a full bank' section.",
   "next_step": "2-3 sentences. A specific, named recommendation tied to the top opportunity branches. (Used in the closing Recommendation section, not the exec summary above.)",
   "activation_readiness": "2-3 sentences. If real Resonate audience segments are listed in the data below, name 1-2 of them specifically by name and connect them to this network's competitive or demographic findings above -- frame these as audiences already built and ready to activate now, not a future step, and do not restate their full demographic/messaging detail (that renders separately). If no Resonate segments are listed below, return exactly this sentence with no changes: 'Audience segments have not yet been built in Resonate for this bank -- recommend starting there using Verlocity's AudienceFinder outputs.'",
@@ -4233,12 +4234,19 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
 
     # ── Financial Health Benchmarking ──
     # a10 finding: same missing-fallback issue, built from real fin data.
+    ltd = _sf(fin.get("loans_to_deposits_pct"))
     fallback_financial_narrative = (
         f"ROA {_sf(fin.get('roa')):.2f}%, NIM {_sf(fin.get('nim')):.2f}%, efficiency ratio "
         f"{_sf(fin.get('efficiency_ratio')):.1f}%, deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}%, "
         f"cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}%, Tier 1 capital "
-        f"{_sf(fin.get('tier1_capital_pct')):.1f}%."
+        f"{_sf(fin.get('tier1_capital_pct')):.1f}%, loan-to-deposit ratio {ltd:.1f}%."
     )
+    if ltd > 90:
+        fallback_financial_narrative += (
+            f" At {ltd:.1f}%, the loan-to-deposit ratio is loaned-up enough that the above-peer "
+            f"NIM/ROA and the limited liquidity cushion are two effects of the same asset mix, not "
+            f"separate strengths and weaknesses."
+        )
     _heading(doc, "Financial Health Benchmarking")
     _body(doc, narr.get("financial_narrative") or fallback_financial_narrative)
 
@@ -4259,6 +4267,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
         ("Cost of Funds", f"{_sf(fin.get('cost_of_funds_pct')):.2f}%", "<2%"),
         ("Tier 1 Capital", f"{_sf(fin.get('tier1_capital_pct')):.1f}%", ">8%"),
         ("Net Income YoY", f"{_sf(fin.get('net_income_yoy_pct')):+.1f}%", ">0%"),
+        ("Loan-to-Deposit Ratio", f"{_sf(fin.get('loans_to_deposits_pct')):.1f}%", "70–90%"),
     ]
     for label, val, bench in metrics:
         row = ft.add_row().cells
