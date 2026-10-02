@@ -21,7 +21,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_ubpr_peer_stats_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
+from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
 
@@ -100,6 +100,12 @@ GDELT_STEP = {"id": "ingest_gdelt", "label": "Ingest GDELT competitor news",
 UBPR_PEER_STATS_STEP = {"id": "ingest_ubpr_peer_stats", "label": "Ingest FFIEC UBPR peer-group stats (a84)",
                          "kind": "ingest", "fn": _run_ingest(ffiec_ubpr_peer_stats_ingest.main)}
 
-ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP]
+# Standalone, same reason as above. Large (~30M rows, institution x peer
+# group x field) -- expect this one to run considerably longer than the
+# Stats pull.
+UBPR_RANK_STEP = {"id": "ingest_ubpr_rank", "label": "Ingest FFIEC UBPR bank-vs-peer rank (a84)",
+                   "kind": "ingest", "fn": _run_ingest(ffiec_ubpr_rank_ingest.main)}
+
+ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
 RUN_ALL_ORDER = [s["id"] for s in STEPS]
