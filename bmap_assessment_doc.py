@@ -125,6 +125,10 @@ SCHEMA_MAP = {
     "raw_sod":                        "raw",
     "raw_population":                 "raw",
     "raw_occupation":                 "raw",
+    "ubpr_peer_stats_clean":          "analytics",
+    "ubpr_rank_clean":                "analytics",
+    "ubpr_bank_peer_group":           "analytics",
+    "ubpr_rank_coverage":             "analytics",
 }
 
 # Census ACS age brackets (raw.raw_population) and occupation categories
@@ -216,6 +220,110 @@ def supabase_rpc(fn_name, payload, timeout=20, paginate=False, page_size=1000):
     print(f"  ✓ RPC {fn_name} paginated: {len(all_rows)} total rows "
           f"({offset // page_size + 1} page{'s' if offset else ''})")
     return all_rows
+
+
+# FFIEC UBPR commercial-bank peer-group asset-size ladder (a84), verified
+# against analytics.ubpr_peer_stats_clean's own peer_group_description values
+# -- not a generic/assumed ladder.
+UBPR_PEER_GROUP_ASSET_LADDER = [
+    (100_000_000_000, "1"),   # > $100B
+    (10_000_000_000, "2"),    # $10B-$100B
+    (3_000_000_000, "3"),     # $3B-$10B
+    (1_000_000_000, "4"),     # $1B-$3B
+    (300_000_000, "5"),       # $300M-$1B
+    (100_000_000, "6"),       # $100M-$300M
+    (50_000_000, "7"),        # $50M-$100M
+]
+UBPR_PEER_GROUP_SMALLEST = "8"  # < $50M
+
+
+def ubpr_peer_group_for_assets(total_assets):
+    assets = _sf(total_assets)
+    for floor, group in UBPR_PEER_GROUP_ASSET_LADDER:
+        if assets > floor:
+            return group
+    return UBPR_PEER_GROUP_SMALLEST
+
+
+def fetch_ubpr_benchmarks(ik, total_assets, period, suffixes):
+    """Real FFIEC UBPR peer averages and this bank's own percentile rank,
+    both for the bank's asset-size tier (a84). `suffixes` are bare field
+    codes like "E013"; UBPS<suffix> is the peer-group average and
+    UBPK<suffix> is the bank's percentile within that same peer group.
+    Returns {"peer_group", "peer_group_description", "reporting_period",
+    "stats": {suffix: value}, "rank": {suffix: value}} or None. UBPR has no
+    credit-union coverage (CUs report to NCUA), so non-bank inst_keys
+    return None and callers fall back to the flat industry thresholds."""
+    if not ik or not ik.startswith("bank_") or not suffixes:
+        return None
+    rssd = ik.replace("bank_", "")  # institution_id == RSSD for all banks (verified)
+    # FFIEC's own charter/size peer group for this bank (commercial 1-8, savings
+    # 101-104, etc.); the commercial asset ladder is only the fallback for banks
+    # FFIEC's Rank product doesn't cover.
+    pg_rows = supabase(
+        "ubpr_bank_peer_group",
+        f"id_rssd=eq.{rssd}&select=reporting_period,peer_group&order=reporting_period.desc&limit=6",
+    )
+    if pg_rows:
+        pg_by_period = {r["reporting_period"]: r["peer_group"] for r in pg_rows}
+        chosen = period if period in pg_by_period else max(pg_by_period)
+        peer_group = pg_by_period[chosen]
+    else:
+        chosen = None
+        peer_group = ubpr_peer_group_for_assets(total_assets)
+    stat_codes = ",".join(f"UBPS{x}" for x in suffixes)
+    rows = supabase(
+        "ubpr_peer_stats_clean",
+        f"peer_group=eq.{peer_group}&field_code=in.({stat_codes})"
+        f"&select=reporting_period,peer_group_description,field_code,field_value"
+        f"&order=reporting_period.desc&limit={len(suffixes) * 6}",
+    )
+    if not rows:
+        return None
+    periods = {r["reporting_period"] for r in rows}
+    if chosen not in periods:
+        chosen = period if period in periods else max(periods)
+    stats_rows = [r for r in rows if r["reporting_period"] == chosen]
+    stats = {r["field_code"][4:]: _sf(r["field_value"]) for r in stats_rows
+             if r.get("field_value") is not None}
+
+    rank = {}
+    rank_codes = ",".join(f"UBPK{x}" for x in suffixes)
+    rank_rows = supabase(
+        "ubpr_rank_clean",
+        f"id_rssd=eq.{rssd}&peer_group=eq.{peer_group}&reporting_period=eq.{chosen}"
+        f"&field_code=in.({rank_codes})&select=field_code,field_value&limit={len(suffixes)}",
+    )
+    for r in rank_rows:
+        if r.get("field_value") is not None:
+            rank[r["field_code"][4:]] = _sf(r["field_value"])
+
+    # Share of the peer group that actually reports each ratio (some, like uninsured
+    # deposits, are reported by only part of a group); a missing row means none do.
+    coverage = {}
+    cov_rows = supabase(
+        "ubpr_rank_coverage",
+        f"peer_group=eq.{peer_group}&reporting_period=eq.{chosen}"
+        f"&field_code=in.({rank_codes})&select=field_code,n_ranked,n_banks&limit={len(suffixes)}",
+    )
+    for r in cov_rows:
+        if r.get("n_banks"):
+            coverage[r["field_code"][4:]] = r["n_ranked"] / r["n_banks"]
+
+    return {
+        "peer_group": peer_group,
+        "peer_group_description": stats_rows[0].get("peer_group_description") if stats_rows else None,
+        "reporting_period": chosen,
+        "stats": stats,
+        "rank": rank,
+        "coverage": coverage,
+    }
+
+
+def _ordinal(n):
+    n = int(round(n))
+    suffix = "th" if 10 <= n % 100 <= 20 else {1: "st", 2: "nd", 3: "rd"}.get(n % 10, "th")
+    return f"{n}{suffix}"
 
 
 def _acs_int(v):
@@ -2046,6 +2154,7 @@ def summarize_network(d):
             flagship_risk = {**largest_branch, "deposit_share_pct": share * 100}
 
     return {
+        "inst_key": d.get("inst_key"),
         "branch_count": n,
         "zones": zones,
         "total_deposits_B": total_dep / 1e9,
@@ -3788,6 +3897,88 @@ def _body(doc, text, size=10.5, color=RGBColor(0x33, 0x33, 0x33)):
     return p
 
 
+# (suffix, label, wording when the bank ranks high vs. peers, wording when low)
+UBPR_FUNDING_METRICS = [
+    ("QE44", "Noninterest-bearing deposits (% of assets)",
+     "a larger share of noninterest-bearing deposits", "a smaller share of noninterest-bearing deposits"),
+    ("QE43", "Time deposits (% of assets)",
+     "heavier reliance on time deposits", "lighter reliance on time deposits"),
+    ("E701", "Cost of interest-bearing deposits (annualized)",
+     "a higher cost of interest-bearing deposits", "a lower cost of interest-bearing deposits"),
+    ("QE32", "Uninsured deposits (% of assets)",
+     "more uninsured-deposit exposure", "less uninsured-deposit exposure"),
+    ("QE26", "Brokered deposits (% of assets)",
+     "more brokered deposits", "fewer brokered deposits"),
+    ("QE36", "Public-fund deposits (% of assets)",
+     "a larger share of public-fund deposits", "a smaller share of public-fund deposits"),
+    ("QE22", "Wholesale funding (% of assets)",
+     "more wholesale funding", "less wholesale funding"),
+    ("QE15", "Liquid assets (% of assets)",
+     "a larger liquidity cushion", "a thinner liquidity cushion"),
+]
+UBPR_FUNDING_MIN_COVERAGE = 0.5
+UBPR_FUNDING_MIN_ROWS = 4
+
+
+def render_deposit_funding_profile(doc, peer):
+    """How the bank's funding base ranks against its FFIEC peer group (a84).
+    Shows the peer average and the bank's percentile, not the bank's own value
+    (not loaded for these ratios). Rows reported by under half the peer group
+    are dropped; the whole section is skipped if too few rows survive."""
+    if not peer:
+        return
+    rows = []
+    for suffix, label, hi_txt, lo_txt in UBPR_FUNDING_METRICS:
+        avg = peer["stats"].get(suffix)
+        pct = peer["rank"].get(suffix)
+        if avg is None or pct is None:
+            continue
+        if peer.get("coverage", {}).get(suffix, 0) < UBPR_FUNDING_MIN_COVERAGE:
+            continue
+        rows.append((label, avg, pct, hi_txt, lo_txt))
+    if len(rows) < UBPR_FUNDING_MIN_ROWS:
+        return
+
+    _heading(doc, "Deposit Funding Profile vs. Peers")
+    _body(doc, "How this institution's funding base compares with its FFIEC peer group — "
+               "deposit mix, concentration, liquidity and cost of deposits.")
+
+    t = doc.add_table(rows=1, cols=3)
+    _apply_grid_borders(t)
+    for i, h in enumerate(["Metric", "Peer Average", "This Institution vs. Peers"]):
+        t.rows[0].cells[i].text = h
+    for label, avg, pct, _hi, _lo in rows:
+        pos = "Above peers" if pct >= 75 else ("Below peers" if pct <= 25 else "In line with peers")
+        c = t.add_row().cells
+        c[0].text = label
+        c[1].text = f"{avg:.1f}%"
+        c[2].text = f"{pos} ({_ordinal(pct)} percentile)"
+
+    notable = sorted((r for r in rows if r[2] >= 80 or r[2] <= 20), key=lambda r: -abs(r[2] - 50))[:4]
+    if notable:
+        phrases = [f"{r[3] if r[2] >= 50 else r[4]} ({_ordinal(r[2])} percentile)" for r in notable]
+        takeaway = "Relative to peers, this institution shows " + "; ".join(phrases) + "."
+    else:
+        takeaway = "On every measure shown, this institution's funding mix sits within the normal range of its peers."
+    _body(doc, takeaway)
+
+    desc = peer.get("peer_group_description") or "its peer group"
+    desc = desc[0].lower() + desc[1:]
+    p = doc.add_paragraph()
+    p.paragraph_format.space_before = Pt(4)
+    r = p.add_run(
+        f"Source: FFIEC UBPR peer-group averages and percentile ranks for {desc}, as of "
+        f"{peer.get('reporting_period')}. The percentile ranks this institution within that peer group "
+        f"(a higher percentile means a higher value, which is not always the favorable direction); its own "
+        f"figure for each ratio is not shown. Ratios reported by too few institutions in the peer group "
+        f"are omitted."
+    )
+    r.italic = True
+    r.font.size = Pt(8.5)
+    r.font.color.rgb = GRAY3
+    r.font.name = FONT_HEAD
+
+
 def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branches_geo=None,
                           branch_strategy=None, dives=None, deep_mode=None, tmpdir=".", capped_yoy=None,
                           vulnerability_targets=None,
@@ -4257,35 +4448,91 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     ft = doc.add_table(rows=1, cols=3)
     _apply_grid_borders(ft)
     hdr = ft.rows[0].cells
-    for i, h in enumerate(["Metric", "Value", "Industry Benchmark"]):
+    for i, h in enumerate(["Metric", "Value", "Benchmark"]):
         hdr[i].text = h
+
+    # a84: real FFIEC UBPR peer-group averages for this bank's FFIEC peer
+    # group, for the seven metrics whose snapshot field was verified against
+    # the UBPR field (rank-order Spearman >= 0.998 and matching levels across
+    # tier-5 banks). Cost of Funds is deliberately NOT mapped: the snapshot
+    # divides un-annualized YTD interest expense by deposits, which no UBPR
+    # ratio matches, so it keeps the flat threshold.
+    peer = fetch_ubpr_benchmarks(summary.get("inst_key"), fin.get("total_assets"), fin.get("period"),
+                                 ["E013", "E018", "D486", "E600", "E088", "E209", "E076"])
+
+    # The percentile is FFIEC's rank of the bank's value at the peer data's
+    # reporting period; if the snapshot value shown beside it is from a
+    # different quarter, the two don't describe the same number, so skip it.
+    rank_period_matches = bool(peer) and peer["reporting_period"] == fin.get("period")
+    any_percentile = False
+
+    def _peer_or_flat(peer_field, flat, decimals=2, signed=False):
+        nonlocal any_percentile
+        if peer and peer["stats"].get(peer_field) is not None:
+            text = f"{peer['stats'][peer_field]:{'+' if signed else ''}.{decimals}f}%"
+            pct = peer["rank"].get(peer_field)
+            if rank_period_matches and pct is not None:
+                text += f" · {_ordinal(pct)} percentile"
+                any_percentile = True
+            return text, True
+        return flat, False
+
+    roa_bench, roa_real = _peer_or_flat("E013", ">1.0%")
+    nim_bench, nim_real = _peer_or_flat("E018", "2.5–3.5%")
+    tier1_bench, tier1_real = _peer_or_flat("D486", ">8%", decimals=1)
+    ltd_bench, ltd_real = _peer_or_flat("E600", "70–90%", decimals=1)
+    eff_bench, eff_real = _peer_or_flat("E088", "<60%", decimals=1)
+    depyoy_bench, depyoy_real = _peer_or_flat("E209", ">2%", decimals=1, signed=True)
+    niyoy_bench, niyoy_real = _peer_or_flat("E076", ">0%", decimals=1, signed=True)
+
     metrics = [
-        ("ROA", f"{_sf(fin.get('roa')):.2f}%", ">1.0%"),
-        ("NIM", f"{_sf(fin.get('nim')):.2f}%", "2.5–3.5%"),
-        ("Efficiency Ratio", f"{_sf(fin.get('efficiency_ratio')):.1f}%", "<60%"),
-        ("Deposit YoY", f"{_sf(fin.get('dep_yoy_pct')):+.1f}%", ">2%"),
-        ("Cost of Funds", f"{_sf(fin.get('cost_of_funds_pct')):.2f}%", "<2%"),
-        ("Tier 1 Capital", f"{_sf(fin.get('tier1_capital_pct')):.1f}%", ">8%"),
-        ("Net Income YoY", f"{_sf(fin.get('net_income_yoy_pct')):+.1f}%", ">0%"),
-        ("Loan-to-Deposit Ratio", f"{_sf(fin.get('loans_to_deposits_pct')):.1f}%", "70–90%"),
+        ("ROA", f"{_sf(fin.get('roa')):.2f}%", roa_bench, roa_real),
+        ("NIM", f"{_sf(fin.get('nim')):.2f}%", nim_bench, nim_real),
+        ("Efficiency Ratio", f"{_sf(fin.get('efficiency_ratio')):.1f}%", eff_bench, eff_real),
+        ("Deposit YoY", f"{_sf(fin.get('dep_yoy_pct')):+.1f}%", depyoy_bench, depyoy_real),
+        ("Cost of Funds", f"{_sf(fin.get('cost_of_funds_pct')):.2f}%", "<2%", False),
+        ("Tier 1 Capital", f"{_sf(fin.get('tier1_capital_pct')):.1f}%", tier1_bench, tier1_real),
+        ("Net Income YoY", f"{_sf(fin.get('net_income_yoy_pct')):+.1f}%", niyoy_bench, niyoy_real),
+        ("Loan-to-Deposit Ratio", f"{_sf(fin.get('loans_to_deposits_pct')):.1f}%", ltd_bench, ltd_real),
     ]
-    for label, val, bench in metrics:
+    any_real_peer = any(is_real for *_, is_real in metrics)
+    for label, val, bench, is_real in metrics:
         row = ft.add_row().cells
         row[0].text = label
         row[1].text = val
-        row[2].text = bench
+        row[2].text = (bench + " *") if is_real else bench
 
     p_finnote = doc.add_paragraph()
     p_finnote.paragraph_format.space_before = Pt(4)
-    r_finnote = p_finnote.add_run(
-        "Benchmarks are standard community-bank industry thresholds, not this institution's "
-        "specific peer group — provided as a general reference point for reading the metrics above, "
-        "not a formal peer comparison."
-    )
+    if any_real_peer:
+        peer_desc = (peer or {}).get("peer_group_description") or "institutions of comparable asset size"
+        peer_desc = peer_desc[0].lower() + peer_desc[1:]
+        peer_period = (peer or {}).get("reporting_period") or "the most recent available period"
+        note_text = (
+            f"* Real FFIEC UBPR peer-group average for {peer_desc}, as of {peer_period} — not a "
+            f"generic threshold. Unmarked benchmarks are standard community-bank industry thresholds, "
+            f"provided as a general reference point, not a formal peer comparison."
+        )
+        if any_percentile:
+            note_text += (
+                " Percentile is this institution's rank within that same peer group (a higher "
+                "percentile means a higher value, which is not always the favorable direction)."
+            )
+    else:
+        note_text = (
+            "Benchmarks are standard community-bank industry thresholds, not this institution's "
+            "specific peer group — provided as a general reference point for reading the metrics above, "
+            "not a formal peer comparison."
+        )
+    r_finnote = p_finnote.add_run(note_text)
     r_finnote.italic = True
     r_finnote.font.size = Pt(8.5)
     r_finnote.font.color.rgb = GRAY3
     r_finnote.font.name = FONT_HEAD
+
+    render_deposit_funding_profile(doc, fetch_ubpr_benchmarks(
+        summary.get("inst_key"), fin.get("total_assets"), fin.get("period"),
+        [m[0] for m in UBPR_FUNDING_METRICS]))
 
     # ── Next Step Recommendation ──
     _heading(doc, "Recommendation")
