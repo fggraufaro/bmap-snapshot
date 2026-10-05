@@ -109,9 +109,11 @@ UBPR_RANK_STEP = {"id": "ingest_ubpr_rank", "label": "Ingest FFIEC UBPR bank-vs-
 # Standalone, and deliberately NOT in RUN_ALL_ORDER (a85). Loads the newest
 # FFIEC quarter into raw_schedule_RI/RC + raw_UBPR (raw tables only; skips
 # any table that already has it, errors on a partial load; never deletes).
-# It does NOT run refresh_bmap_after_upload -- that rebuilds
-# analytics.bank_financial_snapshot_latest and stays gated on the
-# cost-of-funds view fix + Francisco's approval.
+# It does NOT run refresh_bmap_after_upload, a database procedure that
+# truncates and rebuilds the analytics snapshot/score tables. Nothing in this
+# registry calls it, so it cannot be triggered from the command center. Loading
+# a quarter here only adds raw rows; the snapshot refresh is a separate, manual
+# step (see the staged swap Session 3 is specifying for the 9/30 load).
 CALL_REPORT_STEP = {"id": "ingest_bank_quarter", "label": "Ingest latest FFIEC bank quarter (RI/RC/UBPR, raw only)",
                      "kind": "ingest", "fn": _run_ingest(ffiec_call_report_ingest.load_latest)}
 

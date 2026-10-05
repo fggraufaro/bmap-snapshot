@@ -191,8 +191,9 @@ def load(period_str, only=None, dry_run=False, skip_loaded=False):
 
 def load_latest():
     """Command-center entry point: load the newest quarter the portal has.
-    Raw tables only -- does NOT run refresh_bmap_after_upload (that rebuilds
-    analytics.bank_financial_snapshot_latest and is gated separately)."""
+    Raw tables only -- does NOT run refresh_bmap_after_upload (a database
+    procedure that truncates/rebuilds the analytics snapshot and score tables;
+    nothing in this pipeline calls it)."""
     period = latest_quarter()
     print(f"Latest FFIEC quarter on the portal: {period}")
     load(period, skip_loaded=True)
