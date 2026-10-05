@@ -83,6 +83,19 @@ def upsert(table, rows, on_conflict, schema="public", batch_size=5000):
     return sent
 
 
+def count(table, schema="public", params=""):
+    """Exact row count via PostgREST's Content-Range (Prefer: count=exact),
+    without fetching rows."""
+    url = f"{SUPA_URL}/rest/v1/{table}?select=*" + (f"&{params}" if params else "")
+    headers = _headers(schema)
+    headers["Prefer"] = "count=exact"
+    headers["Range-Unit"] = "items"
+    headers["Range"] = "0-0"
+    r = requests.get(url, headers=headers, timeout=60)
+    r.raise_for_status()
+    return int(r.headers["Content-Range"].split("/")[-1])
+
+
 def insert(table, rows, schema="public", batch_size=1000):
     """Plain batched INSERT (no on_conflict) for tables with no unique key
     (e.g. raw.raw_schedule_RI/RC, raw.raw_UBPR). NOT idempotent -- callers

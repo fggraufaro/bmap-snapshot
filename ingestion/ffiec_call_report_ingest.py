@@ -26,6 +26,7 @@ would duplicate -- the script refuses to touch a table that already has any
 row for the period (it never deletes). Never calls refresh_bmap_after_upload.
 
 Usage:
+  python -m ingestion.ffiec_call_report_ingest --latest --dry-run     # what the command-center step does
   python -m ingestion.ffiec_call_report_ingest --period 06/30/2026 --dry-run
   python -m ingestion.ffiec_call_report_ingest --period 06/30/2026
   python -m ingestion.ffiec_call_report_ingest --period 06/30/2025 --only ri rc   # raw_UBPR 6/30/2025 already loaded
@@ -37,8 +38,10 @@ import io
 import sys
 from datetime import datetime
 
-from ingestion.ffiec_bulk_portal import fetch_zip
-from ingestion.supabase_client import get, insert
+import requests
+
+from ingestion.ffiec_bulk_portal import _scrape_form_state, fetch_zip
+from ingestion.supabase_client import count, get, insert
 
 CALL_PRODUCT = "ReportingSeriesSinglePeriod"
 UBPR_PRODUCT = "PerformanceReportingSeriesFourPeriods"
@@ -56,9 +59,15 @@ def _table_columns(table):
     return set(sample[0].keys())
 
 
-def _already_loaded(table, period_iso):
-    rows = get(table, schema="raw", params=f"select=period&period=eq.{period_iso}&limit=1")
-    return bool(rows)
+def _loaded_rows(table, period_iso):
+    return count(table, schema="raw", params=f"period=eq.{period_iso}")
+
+
+def latest_quarter():
+    """Newest quarter-end the portal offers for the Call Reports product
+    (dropdown is listed newest first), as MM/DD/YYYY."""
+    _, _, options = _scrape_form_state(requests.Session(), CALL_PRODUCT)
+    return options[0][1]
 
 
 def parse_schedule(raw_bytes, table_cols, period_iso, date_text):
@@ -112,20 +121,26 @@ def _report(name, rows, id_col, dropped):
         raise RuntimeError(f"{name}: {len(rows)} rows but {banks} distinct banks -- unexpected duplicates in source file")
 
 
-def load(period_str, only=None, dry_run=False):
+def load(period_str, only=None, dry_run=False, skip_loaded=False):
+    """skip_loaded=False (CLI default): refuse if any target already has the
+    period. skip_loaded=True (command-center step): a table that already has
+    the period is skipped IF its row count equals the source file's -- a
+    mismatch (e.g. a crashed partial insert) raises instead of silently
+    skipping or duplicating. Never deletes either way."""
     period_dt = datetime.strptime(period_str, "%m/%d/%Y").date()
     period_iso = period_dt.isoformat()
     date_text = period_dt.strftime("%m/%d/%Y")
     targets = set(only) if only else {"ri", "rc", "ubpr"}
 
-    # Fail fast, before any download, if a target already has the period.
     names = {"ri": "raw_schedule_RI", "rc": "raw_schedule_RC", "ubpr": "raw_UBPR"}
-    for key in sorted(targets):
-        if _already_loaded(names[key], period_iso):
-            raise RuntimeError(f"raw.{names[key]} already has rows for {period_iso} -- refusing to insert "
-                               f"(no unique key; would duplicate). Nothing was written.")
+    existing = {k: _loaded_rows(names[k], period_iso) for k in targets}
+    if not skip_loaded:
+        for key in sorted(targets):
+            if existing[key]:
+                raise RuntimeError(f"raw.{names[key]} already has {existing[key]} rows for {period_iso} -- refusing to "
+                                   f"insert (no unique key; would duplicate). Nothing was written.")
 
-    plan = []  # (table, rows)
+    parsed = {}  # key -> (table, rows)
     if targets & {"ri", "rc"}:
         zf, _ = fetch_zip(CALL_PRODUCT, period_str)
         mmddyyyy = period_dt.strftime("%m%d%Y")
@@ -135,7 +150,7 @@ def load(period_str, only=None, dry_run=False):
             raw = zf.read(f"FFIEC CDR Call Schedule {sched} {mmddyyyy}.txt")
             rows, dropped = parse_schedule(raw, _table_columns(names[key]), period_iso, date_text)
             _report(names[key], rows, "IDRSSD", dropped)
-            plan.append((names[key], rows))
+            parsed[key] = (names[key], rows)
 
     if "ubpr" in targets:
         zf, _ = fetch_zip(UBPR_PRODUCT, period_dt.year)
@@ -143,25 +158,63 @@ def load(period_str, only=None, dry_run=False):
         rows, dropped = parse_ubpr(raw, _table_columns("raw_UBPR"), period_dt, period_iso)
         for r in rows:
             r["Reporting Period"] = f"{period_dt.month}/{period_dt.day}/{period_dt.year} 11:59:59 PM"
-        _report("raw_UBPR", rows, "ID RSSD", dropped)
-        plan.append(("raw_UBPR", rows))
+        if rows:
+            _report("raw_UBPR", rows, "ID RSSD", dropped)
+        parsed["ubpr"] = ("raw_UBPR", rows)
+
+    plan = []
+    for key in sorted(parsed):
+        table, rows = parsed[key]
+        if not rows:
+            msg = f"raw.{table}: {period_iso} not in the source file yet (UBPR can lag Call Reports)"
+            if skip_loaded:
+                print(f"  {msg} -- skipping.")
+                continue
+            raise RuntimeError(msg)
+        if existing[key]:
+            if existing[key] != len(rows):
+                raise RuntimeError(f"raw.{table} has {existing[key]} rows for {period_iso} but the source has "
+                                   f"{len(rows)} -- possible partial load. Refusing to insert or skip; needs a manual look.")
+            print(f"  raw.{table}: {period_iso} already loaded ({existing[key]} rows, matches source) -- skipping.")
+            continue
+        plan.append((table, rows))
 
     if dry_run:
-        print("Dry run -- nothing written.")
+        print(f"Dry run -- nothing written ({len(plan)} table(s) would load).")
         return
     for table, rows in plan:
         sent = insert(table, rows, schema="raw", batch_size=500)
         print(f"Inserted {sent} rows into raw.{table} ({period_iso}).")
+    if not plan:
+        print(f"Nothing to load for {period_iso}.")
+
+
+def load_latest():
+    """Command-center entry point: load the newest quarter the portal has.
+    Raw tables only -- does NOT run refresh_bmap_after_upload (that rebuilds
+    analytics.bank_financial_snapshot_latest and is gated separately)."""
+    period = latest_quarter()
+    print(f"Latest FFIEC quarter on the portal: {period}")
+    load(period, skip_loaded=True)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--period", required=True, help="quarter-end as MM/DD/YYYY, e.g. 06/30/2026")
+    ap.add_argument("--period", default=None, help="quarter-end as MM/DD/YYYY, e.g. 06/30/2026 "
+                     "(omit with --latest)")
+    ap.add_argument("--latest", action="store_true", help="load the newest quarter the portal offers, skipping tables that already have it")
     ap.add_argument("--only", nargs="+", choices=["ri", "rc", "ubpr"], default=None,
                      help="subset of tables (default: all three)")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    load(args.period, args.only, args.dry_run)
+    if args.latest:
+        period = latest_quarter()
+        print(f"Latest FFIEC quarter on the portal: {period}")
+        load(period, args.only, args.dry_run, skip_loaded=True)
+    elif args.period:
+        load(args.period, args.only, args.dry_run)
+    else:
+        ap.error("give --period MM/DD/YYYY or --latest")
 
 
 if __name__ == "__main__":

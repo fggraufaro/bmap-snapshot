@@ -21,7 +21,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
+from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_call_report_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
 
@@ -106,6 +106,15 @@ UBPR_PEER_STATS_STEP = {"id": "ingest_ubpr_peer_stats", "label": "Ingest FFIEC U
 UBPR_RANK_STEP = {"id": "ingest_ubpr_rank", "label": "Ingest FFIEC UBPR bank-vs-peer rank (a84)",
                    "kind": "ingest", "fn": _run_ingest(ffiec_ubpr_rank_ingest.main)}
 
-ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP]
+# Standalone, and deliberately NOT in RUN_ALL_ORDER (a85). Loads the newest
+# FFIEC quarter into raw_schedule_RI/RC + raw_UBPR (raw tables only; skips
+# any table that already has it, errors on a partial load; never deletes).
+# It does NOT run refresh_bmap_after_upload -- that rebuilds
+# analytics.bank_financial_snapshot_latest and stays gated on the
+# cost-of-funds view fix + Francisco's approval.
+CALL_REPORT_STEP = {"id": "ingest_bank_quarter", "label": "Ingest latest FFIEC bank quarter (RI/RC/UBPR, raw only)",
+                     "kind": "ingest", "fn": _run_ingest(ffiec_call_report_ingest.load_latest)}
+
+ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
 RUN_ALL_ORDER = [s["id"] for s in STEPS]
