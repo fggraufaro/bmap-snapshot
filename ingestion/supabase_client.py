@@ -83,6 +83,24 @@ def upsert(table, rows, on_conflict, schema="public", batch_size=5000):
     return sent
 
 
+def insert(table, rows, schema="public", batch_size=1000):
+    """Plain batched INSERT (no on_conflict) for tables with no unique key
+    (e.g. raw.raw_schedule_RI/RC, raw.raw_UBPR). NOT idempotent -- callers
+    must check the target period isn't already loaded first."""
+    if not rows:
+        return 0
+    url = f"{SUPA_URL}/rest/v1/{table}"
+    headers = _headers(schema, write=True)
+    headers["Content-Type"] = "application/json"
+    headers["Prefer"] = "return=minimal"
+    sent = 0
+    for i in range(0, len(rows), batch_size):
+        batch = rows[i:i + batch_size]
+        _post_with_retry(url, headers, batch, timeout=120)
+        sent += len(batch)
+    return sent
+
+
 def call_rpc(fn, args=None, schema="public", timeout=1800):
     """POST to /rest/v1/rpc/<fn> - for the refresh_*/archive_* stored
     procedures (refresh_bmap_after_upload, refresh_branch_opportunity_base,
