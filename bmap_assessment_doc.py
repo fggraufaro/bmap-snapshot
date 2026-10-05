@@ -222,55 +222,30 @@ def supabase_rpc(fn_name, payload, timeout=20, paginate=False, page_size=1000):
     return all_rows
 
 
-# FFIEC UBPR commercial-bank peer-group asset-size ladder (a84), verified
-# against analytics.ubpr_peer_stats_clean's own peer_group_description values
-# -- not a generic/assumed ladder.
-UBPR_PEER_GROUP_ASSET_LADDER = [
-    (100_000_000_000, "1"),   # > $100B
-    (10_000_000_000, "2"),    # $10B-$100B
-    (3_000_000_000, "3"),     # $3B-$10B
-    (1_000_000_000, "4"),     # $1B-$3B
-    (300_000_000, "5"),       # $300M-$1B
-    (100_000_000, "6"),       # $100M-$300M
-    (50_000_000, "7"),        # $50M-$100M
-]
-UBPR_PEER_GROUP_SMALLEST = "8"  # < $50M
-
-
-def ubpr_peer_group_for_assets(total_assets):
-    assets = _sf(total_assets)
-    for floor, group in UBPR_PEER_GROUP_ASSET_LADDER:
-        if assets > floor:
-            return group
-    return UBPR_PEER_GROUP_SMALLEST
-
-
-def fetch_ubpr_benchmarks(ik, total_assets, period, suffixes):
+def fetch_ubpr_benchmarks(ik, period, suffixes):
     """Real FFIEC UBPR peer averages and this bank's own percentile rank,
-    both for the bank's asset-size tier (a84). `suffixes` are bare field
+    both for the bank's FFIEC peer group (a84). `suffixes` are bare field
     codes like "E013"; UBPS<suffix> is the peer-group average and
     UBPK<suffix> is the bank's percentile within that same peer group.
     Returns {"peer_group", "peer_group_description", "reporting_period",
     "stats": {suffix: value}, "rank": {suffix: value}} or None. UBPR has no
-    credit-union coverage (CUs report to NCUA), so non-bank inst_keys
-    return None and callers fall back to the flat industry thresholds."""
+    credit-union coverage (CUs report to NCUA), and a bank FFIEC's Rank product
+    doesn't cover has no confirmed peer group (guessing one would compare, say, a
+    savings bank to commercial banks); both return None and callers fall back to
+    the flat industry thresholds."""
     if not ik or not ik.startswith("bank_") or not suffixes:
         return None
     rssd = ik.replace("bank_", "")  # institution_id == RSSD for all banks (verified)
-    # FFIEC's own charter/size peer group for this bank (commercial 1-8, savings
-    # 101-104, etc.); the commercial asset ladder is only the fallback for banks
-    # FFIEC's Rank product doesn't cover.
+    # FFIEC's own charter/size peer group for this bank (commercial 1-8, savings 101-104, etc.).
     pg_rows = supabase(
         "ubpr_bank_peer_group",
         f"id_rssd=eq.{rssd}&select=reporting_period,peer_group&order=reporting_period.desc&limit=6",
     )
-    if pg_rows:
-        pg_by_period = {r["reporting_period"]: r["peer_group"] for r in pg_rows}
-        chosen = period if period in pg_by_period else max(pg_by_period)
-        peer_group = pg_by_period[chosen]
-    else:
-        chosen = None
-        peer_group = ubpr_peer_group_for_assets(total_assets)
+    if not pg_rows:
+        return None
+    pg_by_period = {r["reporting_period"]: r["peer_group"] for r in pg_rows}
+    chosen = period if period in pg_by_period else max(pg_by_period)
+    peer_group = pg_by_period[chosen]
     stat_codes = ",".join(f"UBPS{x}" for x in suffixes)
     rows = supabase(
         "ubpr_peer_stats_clean",
@@ -318,6 +293,11 @@ def fetch_ubpr_benchmarks(ik, total_assets, period, suffixes):
         "rank": rank,
         "coverage": coverage,
     }
+
+
+def _fmt(v, spec, unit="%"):
+    """Format a financial value, or "n/a" when it's missing (not a real zero)."""
+    return "n/a" if v is None else f"{_sf(v):{spec}}{unit}"
 
 
 def _ordinal(n):
@@ -2304,9 +2284,9 @@ Top 5 branches by opportunity: {top5_str}
 Bottom 3 branches by opportunity: {bottom3_str}
 {"FLAGSHIP RISK — the network's single largest branch by deposits carries the story regardless of its opportunity-score rank: " + summary['flagship_risk']['namebr'] + " (" + summary['flagship_risk']['citybr'] + ", " + summary['flagship_risk']['stalpbr'] + ") holds " + f"{summary['flagship_risk']['deposit_share_pct']:.0f}%" + " of total network deposits ($" + f"{_sf(summary['flagship_risk']['latest_dep'])/1e6:.0f}M" + "), is down " + f"{_sf(summary['flagship_risk']['yoy_deposits'])*100:+.1f}%" + " YoY, and sits in the " + str(summary['flagship_risk']['opportunity_zone']) + " zone." if summary.get('flagship_risk') else ""}
 
-Financial health: ROA {_sf(fin.get('roa')):.2f}% | NIM {_sf(fin.get('nim')):.2f}% | Efficiency {_sf(fin.get('efficiency_ratio')):.1f}%
-Deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}% | Cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}% | Tier 1 {_sf(fin.get('tier1_capital_pct')):.1f}%
-Net income YoY {_sf(fin.get('net_income_yoy_pct')):+.1f}% | Loan-to-Deposit ratio {_sf(fin.get('loans_to_deposits_pct')):.1f}%
+Financial health: ROA {_fmt(fin.get('roa'), '.2f')} | NIM {_fmt(fin.get('nim'), '.2f')} | Efficiency {_fmt(fin.get('efficiency_ratio'), '.1f')}
+Deposit YoY {_fmt(fin.get('dep_yoy_pct'), '+.1f')} | Cost of funds {_fmt(fin.get('cost_of_funds_pct'), '.2f')} | Tier 1 {_fmt(fin.get('tier1_capital_pct'), '.1f')}
+Net income YoY {_fmt(fin.get('net_income_yoy_pct'), '+.1f')} | Loan-to-Deposit ratio {_fmt(fin.get('loans_to_deposits_pct'), '.1f')}
 {"FUNDING POSTURE — this bank's loan-to-deposit ratio is loaned-up enough that its above-peer NIM/ROA and its liquidity constraint are two effects of the SAME posture, not separate strengths and weaknesses: a richer, loan-heavy asset mix drives the earnings advantage, and that identical mix is what leaves little room for deposit softness. Frame financial_narrative this way explicitly -- do not score NIM and liquidity as independent line items." if _sf(fin.get('loans_to_deposits_pct')) > 90 else ""}
 
 Network-wide demographic & audience signal (Census income/population + ZHVI home-value
@@ -4427,10 +4407,10 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     # a10 finding: same missing-fallback issue, built from real fin data.
     ltd = _sf(fin.get("loans_to_deposits_pct"))
     fallback_financial_narrative = (
-        f"ROA {_sf(fin.get('roa')):.2f}%, NIM {_sf(fin.get('nim')):.2f}%, efficiency ratio "
-        f"{_sf(fin.get('efficiency_ratio')):.1f}%, deposit YoY {_sf(fin.get('dep_yoy_pct')):+.1f}%, "
-        f"cost of funds {_sf(fin.get('cost_of_funds_pct')):.2f}%, Tier 1 capital "
-        f"{_sf(fin.get('tier1_capital_pct')):.1f}%, loan-to-deposit ratio {ltd:.1f}%."
+        f"ROA {_fmt(fin.get('roa'), '.2f')}, NIM {_fmt(fin.get('nim'), '.2f')}, efficiency ratio "
+        f"{_fmt(fin.get('efficiency_ratio'), '.1f')}, deposit YoY {_fmt(fin.get('dep_yoy_pct'), '+.1f')}, "
+        f"cost of funds {_fmt(fin.get('cost_of_funds_pct'), '.2f')}, Tier 1 capital "
+        f"{_fmt(fin.get('tier1_capital_pct'), '.1f')}, loan-to-deposit ratio {_fmt(fin.get('loans_to_deposits_pct'), '.1f')}."
     )
     if ltd > 90:
         fallback_financial_narrative += (
@@ -4457,7 +4437,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     # tier-5 banks). Cost of Funds is deliberately NOT mapped: the snapshot
     # divides un-annualized YTD interest expense by deposits, which no UBPR
     # ratio matches, so it keeps the flat threshold.
-    peer = fetch_ubpr_benchmarks(summary.get("inst_key"), fin.get("total_assets"), fin.get("period"),
+    peer = fetch_ubpr_benchmarks(summary.get("inst_key"), fin.get("period"),
                                  ["E013", "E018", "D486", "E600", "E088", "E209", "E076"])
 
     # The percentile is FFIEC's rank of the bank's value at the peer data's
@@ -4486,14 +4466,14 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     niyoy_bench, niyoy_real = _peer_or_flat("E076", ">0%", decimals=1, signed=True)
 
     metrics = [
-        ("ROA", f"{_sf(fin.get('roa')):.2f}%", roa_bench, roa_real),
-        ("NIM", f"{_sf(fin.get('nim')):.2f}%", nim_bench, nim_real),
-        ("Efficiency Ratio", f"{_sf(fin.get('efficiency_ratio')):.1f}%", eff_bench, eff_real),
-        ("Deposit YoY", f"{_sf(fin.get('dep_yoy_pct')):+.1f}%", depyoy_bench, depyoy_real),
-        ("Cost of Funds", f"{_sf(fin.get('cost_of_funds_pct')):.2f}%", "<2%", False),
-        ("Tier 1 Capital", f"{_sf(fin.get('tier1_capital_pct')):.1f}%", tier1_bench, tier1_real),
-        ("Net Income YoY", f"{_sf(fin.get('net_income_yoy_pct')):+.1f}%", niyoy_bench, niyoy_real),
-        ("Loan-to-Deposit Ratio", f"{_sf(fin.get('loans_to_deposits_pct')):.1f}%", ltd_bench, ltd_real),
+        ("ROA", _fmt(fin.get('roa'), '.2f'), roa_bench, roa_real),
+        ("NIM", _fmt(fin.get('nim'), '.2f'), nim_bench, nim_real),
+        ("Efficiency Ratio", _fmt(fin.get('efficiency_ratio'), '.1f'), eff_bench, eff_real),
+        ("Deposit YoY", _fmt(fin.get('dep_yoy_pct'), '+.1f'), depyoy_bench, depyoy_real),
+        ("Cost of Funds", _fmt(fin.get('cost_of_funds_pct'), '.2f'), "<2%", False),
+        ("Tier 1 Capital", _fmt(fin.get('tier1_capital_pct'), '.1f'), tier1_bench, tier1_real),
+        ("Net Income YoY", _fmt(fin.get('net_income_yoy_pct'), '+.1f'), niyoy_bench, niyoy_real),
+        ("Loan-to-Deposit Ratio", _fmt(fin.get('loans_to_deposits_pct'), '.1f'), ltd_bench, ltd_real),
     ]
     any_real_peer = any(is_real for *_, is_real in metrics)
     for label, val, bench, is_real in metrics:
@@ -4531,7 +4511,7 @@ def build_assessment_doc(bank_name, summary, fin, targets, narr, branches, branc
     r_finnote.font.name = FONT_HEAD
 
     render_deposit_funding_profile(doc, fetch_ubpr_benchmarks(
-        summary.get("inst_key"), fin.get("total_assets"), fin.get("period"),
+        summary.get("inst_key"), fin.get("period"),
         [m[0] for m in UBPR_FUNDING_METRICS]))
 
     # ── Next Step Recommendation ──
