@@ -140,6 +140,19 @@ def main():
         cv = q._validate_ubpr(cur, targets=U, stg=S)
         check("UBPR validation FAILS when staging is missing a field code", not cv.ok)
 
+        # the newest bank quarter missing from staged Stats/Rank: swap-mode fails, dry-run mode only warns
+        newest_raw = scalar(cur, 'select max(period) from raw."raw_UBPR"')
+        M = {k: copy_table(cur, q.PROD[k], f"um_{k}") for k in keys}
+        for k in ("peer_stats", "rank"):
+            cur.execute(sql.SQL("DELETE FROM {} WHERE reporting_period = %s").format(sql.Identifier(*M[k])), (newest_raw,))
+        strict_fail = any("includes the newest bank quarter" in n and not ok for n, ok, _ in q._validate_ubpr(cur, targets=U, stg=M, strict=True).rows)
+        soft = q._validate_ubpr(cur, targets=U, stg=M, strict=False)
+        soft_missing = [n for n, ok, _ in soft.rows if "newest bank quarter" in n]
+        check("missing newest quarter FAILS the check in swap mode", strict_fail)
+        check("...but is only a warning (no failed check about it) in dry-run mode", not soft_missing)
+        check("current staged copies (live data) pass the newest-quarter check in swap mode",
+              all(ok for n, ok, _ in q._validate_ubpr(cur, targets=U, stg=U, strict=True).rows if "newest bank quarter" in n))
+
         empty = dict(S)
         empty["coverage"] = copy_table(cur, q.PROD["coverage"], "us_empty_cov", with_data=False)
         raised = False

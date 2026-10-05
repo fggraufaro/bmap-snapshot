@@ -30,6 +30,12 @@ Design choices worth knowing:
     It only writes rows whose values actually change.
   - After the inserts, counts are re-checked inside the transaction and any
     mismatch raises, which rolls everything back.
+  - "newest staged period == newest raw quarter" (snapshot) compares max(period) over the
+    whole view, credit unions included, with the newest BANK quarter in raw_schedule_RI. If
+    credit-union data were ever newer than the bank data it would fail closed (safe, but
+    that is the reason if it trips).
+  - Step A also requires the staged Stats and Rank tables to include the newest raw_UBPR
+    quarter: a swap fails without it; the dry run only warns.
   - Backup tables are suffixed with date AND time so a same-day retry can't
     collide.
 
@@ -162,6 +168,9 @@ class Checks:
 
     def info(self, name, detail):
         _log(f"  [info] {name}: {detail}")
+
+    def warn(self, name, detail):
+        _log(f"  [WARN] {name}: {detail}")
 
     @property
     def ok(self):
@@ -419,7 +428,9 @@ def _stage_ubpr(cur):
         _log(f"  staged {STG[t][1]}: {_scalar(cur, sql.SQL('select count(*) from {}').format(_ident(STG[t])))} rows")
 
 
-def _validate_ubpr(cur, targets=PROD, stg=STG):
+def _validate_ubpr(cur, targets=PROD, stg=STG, strict=True):
+    """strict=True (swap): problems fail the run. strict=False (dry run): the
+    missing-newest-quarter check is reported as a warning instead."""
     c = Checks()
     for key in ("peer_stats", "rank", "bank_pg", "coverage"):
         s_cols, l_cols = _cols(cur, stg[key]), _cols(cur, targets[key])
@@ -432,6 +443,18 @@ def _validate_ubpr(cur, targets=PROD, stg=STG):
             from (select reporting_period, count(distinct id_rssd) n from {} group by 1) b order by 1""").format(_ident(stg["bank_pg"]))):
         d = abs(n_bpg - n_raw) / n_raw if n_raw else 1
         c.add(f"bank count in peer-group map within 5% of raw_UBPR at {period}", d <= 0.05, f"{n_bpg} vs {n_raw} ({d * 100:.1f}%)")
+    # The Stats/Rank pulls must include the newest bank quarter, otherwise the layer would
+    # swap in with only the older period and nothing would say why.
+    newest_raw = _scalar(cur, 'select max(period) from raw."raw_UBPR"')
+    for key, label in (("peer_stats", "peer stats"), ("rank", "rank")):
+        newest = _scalar(cur, sql.SQL("select max(reporting_period) from {}").format(_ident(stg[key])))
+        detail = f"staged {newest} vs newest raw_UBPR quarter {newest_raw}"
+        if newest == newest_raw:
+            c.add(f"{label} includes the newest bank quarter", True, detail)
+        elif strict:
+            c.add(f"{label} includes the newest bank quarter", False, detail + " (run the UBPR Stats and Rank pulls first)")
+        else:
+            c.warn(f"{label} is missing the newest bank quarter", detail + " (run the UBPR Stats and Rank pulls first; a swap would refuse)")
     multi = _scalar(cur, sql.SQL("select count(*) from (select id_rssd, reporting_period from {} group by 1,2 having count(*) > 1) x").format(_ident(stg["bank_pg"])))
     c.add("each bank has exactly one tier peer group per period", multi == 0, f"{multi} banks with more than one")
     same_periods = _scalar(cur, sql.SQL("""select (select array_agg(distinct reporting_period order by reporting_period) from {s}) =
@@ -452,7 +475,7 @@ def ubpr_layer_dry_run():
     with _session() as conn, conn.cursor() as cur:
         try:
             _stage_ubpr(cur)
-            _validate_ubpr(cur).raise_if_failed()
+            _validate_ubpr(cur, strict=False).raise_if_failed()
             _log("DRY RUN PASSED: a real swap would validate cleanly on today's data.")
         finally:
             for t in ("peer_stats", "rank", "bank_pg", "coverage"):
