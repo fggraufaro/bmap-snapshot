@@ -21,6 +21,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
+from ingestion import quarterly_refresh
 from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_call_report_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
@@ -117,6 +118,30 @@ UBPR_RANK_STEP = {"id": "ingest_ubpr_rank", "label": "Ingest FFIEC UBPR bank-vs-
 CALL_REPORT_STEP = {"id": "ingest_bank_quarter", "label": "Ingest latest FFIEC bank quarter (RI/RC/UBPR, raw only)",
                      "kind": "ingest", "fn": _run_ingest(ffiec_call_report_ingest.load_latest)}
 
-ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP]
+# New-quarter refresh (a84): run in this order when FFIEC publishes a quarter.
+# The two *_swap steps are DESTRUCTIVE (back up, then TRUNCATE + INSERT the
+# production analytics tables), so they carry "guard_env": they refuse to run,
+# and the page shows them locked, until ALLOW_ANALYTICS_SWAP=yes is set on the
+# service. It is deliberately not set (a90 hold; Coordinator sign-off first).
+# The dry-run steps stage + validate + report and never touch a production
+# table. None of these call refresh_bmap_after_upload or rebuild
+# branch_opportunity_base / branch_target_competitors.
+UBPR_LAYER_DRY_RUN_STEP = {"id": "ubpr_layer_dry_run", "label": "UBPR analytics layer: dry run (stage + validate, changes nothing)",
+                            "kind": "refresh", "fn": _run_ingest(quarterly_refresh.ubpr_layer_dry_run)}
+UBPR_LAYER_SWAP_STEP = {"id": "ubpr_layer_swap", "label": "UBPR analytics layer: rebuild (backs up, then swaps)",
+                         "kind": "refresh", "fn": _run_ingest(quarterly_refresh.ubpr_layer_swap),
+                         "guard_env": quarterly_refresh.GUARD_ENV}
+SNAPSHOT_DRY_RUN_STEP = {"id": "snapshot_dry_run", "label": "Financial snapshot: dry run (stage + validate, changes nothing)",
+                          "kind": "refresh", "fn": _run_ingest(quarterly_refresh.snapshot_dry_run)}
+SNAPSHOT_SWAP_STEP = {"id": "snapshot_swap", "label": "Financial snapshot: refresh (backs up, then swaps)",
+                       "kind": "refresh", "fn": _run_ingest(quarterly_refresh.snapshot_swap),
+                       "guard_env": quarterly_refresh.GUARD_ENV}
+
+ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP,
+                     UBPR_LAYER_DRY_RUN_STEP, UBPR_LAYER_SWAP_STEP, SNAPSHOT_DRY_RUN_STEP, SNAPSHOT_SWAP_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
 RUN_ALL_ORDER = [s["id"] for s in STEPS]
+
+# Display order for the "new-quarter refresh" section of the command center.
+QUARTERLY_ORDER = ["ingest_bank_quarter", "ingest_ubpr_peer_stats", "ingest_ubpr_rank",
+                   "ubpr_layer_dry_run", "ubpr_layer_swap", "snapshot_dry_run", "snapshot_swap"]

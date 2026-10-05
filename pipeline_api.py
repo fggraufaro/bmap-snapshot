@@ -64,7 +64,7 @@ import requests as http
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from ingestion.pipeline_steps import ALL_STEPS, RUN_ALL_ORDER, STEP_BY_ID
+from ingestion.pipeline_steps import ALL_STEPS, QUARTERLY_ORDER, RUN_ALL_ORDER, STEP_BY_ID
 from ingestion.supabase_client import SUPA_KEY, SUPA_URL
 
 app = Flask(__name__)
@@ -241,6 +241,16 @@ def _run_all_job(job_id):
 
 
 _CHAIN_POSITION = {sid: i + 1 for i, sid in enumerate(RUN_ALL_ORDER)}
+_QUARTERLY_POSITION = {sid: i + 1 for i, sid in enumerate(QUARTERLY_ORDER)}
+_QUARTERLY_PHASE = {"ingest_bank_quarter": "Load the new raw data", "ingest_ubpr_peer_stats": "Load the new raw data",
+                    "ingest_ubpr_rank": "Load the new raw data", "ubpr_layer_dry_run": "UBPR analytics layer",
+                    "ubpr_layer_swap": "UBPR analytics layer", "snapshot_dry_run": "Financial snapshot",
+                    "snapshot_swap": "Financial snapshot"}
+
+
+def _locked(step):
+    g = step.get("guard_env")
+    return bool(g) and os.environ.get(g) != "yes"
 
 
 def _phase(step_id):
@@ -267,9 +277,12 @@ def list_steps():
         except Exception:
             last = None
         seq = _CHAIN_POSITION.get(s["id"])
+        qseq = _QUARTERLY_POSITION.get(s["id"])
+        group = "chain" if seq else ("quarterly" if qseq else "standalone")
         out.append({"id": s["id"], "label": s["label"], "kind": s["kind"], "last_run": last,
-                    "group": "chain" if seq else "standalone", "seq": seq,
-                    "phase": _phase(s["id"]) if seq else None})
+                    "group": group, "seq": seq or qseq,
+                    "phase": _phase(s["id"]) if seq else _QUARTERLY_PHASE.get(s["id"]),
+                    "locked": _locked(s)})
     return jsonify(out)
 
 
@@ -280,6 +293,9 @@ def run_step(step_id):
         return _cors_headers(jsonify({}))
     if step_id not in STEP_BY_ID:
         return jsonify({"error": f"unknown step '{step_id}'"}), 404
+    if _locked(STEP_BY_ID[step_id]):
+        return jsonify({"error": "This step is locked: the swap is disabled until it is signed off and enabled "
+                                 f"({STEP_BY_ID[step_id]['guard_env']}). Use the dry-run step to test."}), 403
 
     try:
         job_id = _job_create(step_id)
