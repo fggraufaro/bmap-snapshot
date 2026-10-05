@@ -240,6 +240,17 @@ def _run_all_job(job_id):
                    log="\n".join(log_lines), finished_at=datetime.now(timezone.utc).isoformat())
 
 
+_CHAIN_POSITION = {sid: i + 1 for i, sid in enumerate(RUN_ALL_ORDER)}
+
+
+def _phase(step_id):
+    if step_id.startswith("ingest_"):
+        return "Ingest sources"
+    if step_id.startswith("rebuild_"):
+        return "Rebuild tables"
+    return "Archive"
+
+
 @app.route("/steps", methods=["GET", "OPTIONS"])
 @require_session
 def list_steps():
@@ -255,7 +266,10 @@ def list_steps():
             last = r.json()[0] if r.ok and r.json() else None
         except Exception:
             last = None
-        out.append({"id": s["id"], "label": s["label"], "kind": s["kind"], "last_run": last})
+        seq = _CHAIN_POSITION.get(s["id"])
+        out.append({"id": s["id"], "label": s["label"], "kind": s["kind"], "last_run": last,
+                    "group": "chain" if seq else "standalone", "seq": seq,
+                    "phase": _phase(s["id"]) if seq else None})
     return jsonify(out)
 
 
