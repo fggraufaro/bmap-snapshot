@@ -39,6 +39,13 @@ Endpoints:
        public.profiles row in one call -- role is "admin" or "bank_user";
        inst_key required iff role is "bank_user".
 
+  Engagement Builder (admin-only, same login; details in engagement/api.py):
+  GET  /engagement/catalog | /engagement/list | /engagement/<id>
+  POST /engagement/create | /<id>/chat | /<id>/suggestion | /<id>/fields | /<id>/narrative | /<id>/generate
+  GET  /engagement/<id>/draft/<draft_id>/docx
+  POST /engagement/<id>/draft/<draft_id>/status  { status, actor, note }
+  Needs ANTHROPIC_API_KEY for the chat and narrative drafting (the rest works without it).
+
 Required Railway env vars:
   SUPABASE_SERVICE_KEY     -- same one the ingestion scripts already use
   PIPELINE_ADMIN_PASSWORD  -- separate from the Hub's HUB_ACCESS_PASSWORD
@@ -136,6 +143,7 @@ def _cors_headers(resp):
     resp.headers["Access-Control-Allow-Origin"] = ALLOWED_ORIGIN
     resp.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
     resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+    resp.headers["Access-Control-Expose-Headers"] = "Content-Disposition"
     return resp
 
 
@@ -456,6 +464,15 @@ def admin_invite_user():
         return jsonify({"error": "invite sent, but saving the profile failed -- set it manually"}), 502
 
     return jsonify({"ok": True, "id": user_id, "email": email, "role": role, "inst_key": inst_key})
+
+
+# Engagement Builder (intake chat -> SOW draft -> sign-off log). Mounted last and
+# wrapped so a problem in it can never stop the pipeline API from starting.
+try:
+    from engagement.api import register as _register_engagement
+    _register_engagement(app, require_session)
+except Exception as _exc:  # noqa: BLE001
+    print(f"WARNING: Engagement Builder not mounted ({type(_exc).__name__}: {_exc})")
 
 
 if __name__ == "__main__":
