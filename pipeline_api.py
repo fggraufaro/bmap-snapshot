@@ -23,7 +23,8 @@ Endpoints:
   POST /auth/login         { password }  -> { token }
   GET  /steps              Bearer token  -> [{ id, label, kind, last_run }]
   POST /run/<step_id>      Bearer token  -> { job_id }   (runs one step, async)
-  POST /run-all            Bearer token  -> { job_id }   (runs the full pipeline in order, async)
+  GET  /groups             Bearer token  -> [{ id, label, note, steps, last_run }]
+  POST /run-group/<id>     Bearer token  -> { job_id }   (runs a group's steps in order, stops at the first failure, async)
   GET  /status/<job_id>    Bearer token  -> pipeline_jobs row
   GET  /jobs               Bearer token  -> last 50 pipeline_jobs rows
   GET  /health             -> { status: ok }
@@ -64,7 +65,7 @@ import requests as http
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 
-from ingestion.pipeline_steps import ALL_STEPS, QUARTERLY_ORDER, RUN_ALL_ORDER, STEP_BY_ID
+from ingestion.pipeline_steps import ALL_STEPS, GROUP_BY_ID, GROUPS, QUARTERLY_ORDER, STEP_BY_ID
 from ingestion.supabase_client import SUPA_KEY, SUPA_URL
 
 app = Flask(__name__)
@@ -219,28 +220,31 @@ def _run_step_job(job_id, step_id):
                    finished_at=datetime.now(timezone.utc).isoformat())
 
 
-def _run_all_job(job_id):
+def _run_group_job(job_id, group_id):
     log_lines = []
     try:
         _job_write(job_id, status="running")
-        for step_id in RUN_ALL_ORDER:
+        for step_id in GROUP_BY_ID[group_id]["steps"]:
             log_lines.append(f"-> {step_id}")
             _job_write(job_id, log="\n".join(log_lines))
             STEP_BY_ID[step_id]["fn"]()
             log_lines[-1] += " ok"
             _job_write(job_id, log="\n".join(log_lines))
         _job_write(job_id, status="done", finished_at=datetime.now(timezone.utc).isoformat())
-        print(f"[pipeline] run-all ({job_id}) done")
+        print(f"[pipeline] group {group_id} ({job_id}) done")
     except Exception as e:
         tb = traceback.format_exc()
-        print(f"[pipeline] run-all ({job_id}) FAILED: {e}\n{tb}")
+        print(f"[pipeline] group {group_id} ({job_id}) FAILED: {e}\n{tb}")
         if log_lines:
             log_lines[-1] += f" FAILED: {e}"
         _job_write(job_id, status="error", error_message=str(e)[:2000],
                    log="\n".join(log_lines), finished_at=datetime.now(timezone.utc).isoformat())
 
 
-_CHAIN_POSITION = {sid: i + 1 for i, sid in enumerate(RUN_ALL_ORDER)}
+_GROUP_OF = {sid: g["id"] for g in GROUPS for sid in g["steps"]}
+_GROUP_POSITION = {sid: i + 1 for g in GROUPS for i, sid in enumerate(g["steps"])}
+_SEPARATE = ["refresh_dim_institutions", "refresh_network_top_targets", "archive_year"]
+_SEPARATE_POSITION = {sid: i + 1 for i, sid in enumerate(_SEPARATE)}
 _QUARTERLY_POSITION = {sid: i + 1 for i, sid in enumerate(QUARTERLY_ORDER)}
 _QUARTERLY_PHASE = {"ingest_bank_quarter": "Load the new raw data", "ingest_ubpr_peer_stats": "Load the new raw data",
                     "ingest_ubpr_rank": "Load the new raw data", "ubpr_layer_dry_run": "UBPR analytics layer",
@@ -251,14 +255,6 @@ _QUARTERLY_PHASE = {"ingest_bank_quarter": "Load the new raw data", "ingest_ubpr
 def _locked(step):
     g = step.get("guard_env")
     return bool(g) and os.environ.get(g) != "yes"
-
-
-def _phase(step_id):
-    if step_id.startswith("ingest_"):
-        return "Ingest sources"
-    if step_id.startswith("rebuild_") or step_id.startswith("refresh_"):
-        return "Rebuild tables"
-    return "Archive"
 
 
 @app.route("/steps", methods=["GET", "OPTIONS"])
@@ -276,15 +272,20 @@ def list_steps():
             last = r.json()[0] if r.ok and r.json() else None
         except Exception:
             last = None
-        seq = _CHAIN_POSITION.get(s["id"])
         qseq = _QUARTERLY_POSITION.get(s["id"])
-        group = "chain" if seq else ("quarterly" if qseq else "standalone")
+        if s["id"] in _GROUP_OF:
+            group, seq, phase = _GROUP_OF[s["id"]], _GROUP_POSITION[s["id"]], None
+        elif s["id"] in _SEPARATE_POSITION:
+            group, seq, phase = "separate", _SEPARATE_POSITION[s["id"]], None
+        elif qseq:
+            group, seq, phase = "quarterly", qseq, _QUARTERLY_PHASE.get(s["id"])
+        else:
+            group, seq, phase = "standalone", None, None
         label = s["label"]
         if s.get("guard_fallback") and os.environ.get(s["guard_fallback"]) != "yes":
             label += " (dry run only until enabled)"
         out.append({"id": s["id"], "label": label, "kind": s["kind"], "last_run": last,
-                    "group": group, "seq": seq or qseq,
-                    "phase": _phase(s["id"]) if seq else _QUARTERLY_PHASE.get(s["id"]),
+                    "group": group, "seq": seq, "phase": phase,
                     "locked": _locked(s)})
     return jsonify(out)
 
@@ -311,20 +312,43 @@ def run_step(step_id):
     return jsonify({"job_id": job_id}), 202
 
 
-@app.route("/run-all", methods=["POST", "OPTIONS"])
+@app.route("/groups", methods=["GET", "OPTIONS"])
 @require_session
-def run_all():
+def list_groups():
     if request.method == "OPTIONS":
         return _cors_headers(jsonify({}))
+    out = []
+    for g in GROUPS:
+        url = (f"{SUPA_URL}/rest/v1/pipeline_jobs?step_id=eq.group_{g['id']}"
+               f"&select=status,started_at,finished_at,error_message,log&order=started_at.desc&limit=1")
+        try:
+            r = http.get(url, headers=_jobs_headers(), timeout=15)
+            last = r.json()[0] if r.ok and r.json() else None
+        except Exception:
+            last = None
+        out.append({"id": g["id"], "label": g["label"], "note": g["note"], "steps": g["steps"], "last_run": last})
+    return jsonify(out)
+
+
+@app.route("/run-group/<group_id>", methods=["POST", "OPTIONS"])
+@require_session
+def run_group(group_id):
+    if request.method == "OPTIONS":
+        return _cors_headers(jsonify({}))
+    if group_id not in GROUP_BY_ID:
+        return jsonify({"error": f"unknown group '{group_id}'"}), 404
+    locked = [sid for sid in GROUP_BY_ID[group_id]["steps"] if _locked(STEP_BY_ID[sid])]
+    if locked:
+        return jsonify({"error": f"group contains locked steps: {', '.join(locked)}"}), 403
 
     try:
-        job_id = _job_create("run_all")
+        job_id = _job_create(f"group_{group_id}")
     except Exception as e:
         return jsonify({"error": f"could not create job: {e}"}), 500
 
-    thread = threading.Thread(target=_run_all_job, args=(job_id,), daemon=True)
+    thread = threading.Thread(target=_run_group_job, args=(job_id, group_id), daemon=True)
     thread.start()
-    print(f"[pipeline] started run-all ({job_id})")
+    print(f"[pipeline] started group {group_id} ({job_id})")
     return jsonify({"job_id": job_id}), 202
 
 

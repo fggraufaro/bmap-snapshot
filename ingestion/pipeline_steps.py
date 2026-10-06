@@ -7,12 +7,15 @@ Two kinds of step:
   - "ingest": calls a Python ingestion script's main()
   - "rpc":    calls a Supabase Postgres function via PostgREST RPC
 
-Rebuild steps must run in this order -- each reads from what the previous
-one just wrote:
-  ingest sources -> branches_master_v2 -> tiered system -> 10mi system
-  -> branch_opportunity_base -> archive to history
+Steps are grouped (see GROUPS at the bottom): "sources" and "rebuild" each run
+as one sequenced button. The rebuild group must run in this order -- each step
+reads from what the previous one just wrote:
+  branches_master_v2 -> tiered system -> 10mi system -> branch_opportunity_base
+  -> branch_target_competitors
+ref.dim_institutions, public.network_top_targets and the yearly archive are
+separate buttons, run by hand after the rebuild group.
 
-GDELT news monitoring is intentionally excluded from RUN_ALL_ORDER -- its
+GDELT news monitoring is intentionally excluded from every group -- its
 own module docstring notes it can take hours at GDELT's rate limit, and it's
 not part of the core ingest-then-rebuild chain. It's a standalone step,
 triggered on its own.
@@ -21,7 +24,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import quarterly_refresh, refresh_dim_institutions
+from ingestion import quarterly_refresh, refresh_dim_institutions, refresh_network_top_targets
 from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_call_report_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
@@ -70,6 +73,8 @@ def _archive_year():
 
 
 STEPS = [
+    # Group "sources": each source publishes on its own schedule, so each has its own button;
+    # the group button runs them one after another.
     {"id": "ingest_fdic_sod", "label": "Ingest FDIC SOD (bank branches)",
      "kind": "ingest", "fn": _run_ingest(fdic_sod_ingest.main)},
     {"id": "ingest_ncua", "label": "Ingest NCUA (CU branches + FS220)",
@@ -78,14 +83,9 @@ STEPS = [
      "kind": "ingest", "fn": _run_ingest(census_acs_ingest.main)},
     {"id": "ingest_zhvi", "label": "Ingest Zillow ZHVI (home values)",
      "kind": "ingest", "fn": _run_ingest(zhvi_ingest.main)},
+    # Group "rebuild": each step reads what the one before it just wrote.
     {"id": "rebuild_branches_master", "label": "Rebuild branches_master_v2",
      "kind": "rpc", "fn": _rebuild_branches_master},
-    # Reads the branch master (to keep AK/HI-headquartered institutions that have scored
-    # branches), so it runs right after it. Applies only when ALLOW_ANALYTICS_SWAP=yes;
-    # otherwise it does a dry run, which keeps "Run all" safe. See refresh_dim_institutions.py.
-    {"id": "refresh_dim_institutions", "label": "Refresh institution directory (ref.dim_institutions)",
-     "kind": "refresh", "fn": _run_ingest(refresh_dim_institutions.refresh_dim_institutions),
-     "guard_fallback": quarterly_refresh.GUARD_ENV},
     {"id": "rebuild_tiered", "label": "Rebuild tiered competitor system",
      "kind": "rpc", "fn": lambda: call_procedure("CALL public.refresh_tiered_competitor_system()")},
     {"id": "rebuild_10mi", "label": "Rebuild 10mi competitor system (capped top-50)",
@@ -94,11 +94,22 @@ STEPS = [
      "kind": "rpc", "fn": lambda: call_procedure("CALL public.refresh_branch_opportunity_base_with_backup()")},
     {"id": "rebuild_target_competitors", "label": "Rebuild target-competitor engine (Hub drill-downs)",
      "kind": "rpc", "fn": lambda: call_procedure("CALL analytics.refresh_branch_target_competitors()")},
-    {"id": "archive_year", "label": "Archive current year to history",
-     "kind": "rpc", "fn": _archive_year},
 ]
 
-# Standalone -- not part of RUN_ALL_ORDER (see module docstring).
+# Separate buttons, deliberately NOT in a group. Run them by hand, in the order the page shows.
+# Reads the branch master (to keep AK/HI-headquartered institutions that have scored branches).
+# Applies only when ALLOW_ANALYTICS_SWAP=yes; otherwise it does a dry run. See refresh_dim_institutions.py.
+DIM_STEP = {"id": "refresh_dim_institutions", "label": "Refresh institution directory (ref.dim_institutions)",
+            "kind": "refresh", "fn": _run_ingest(refresh_dim_institutions.refresh_dim_institutions),
+            "guard_fallback": quarterly_refresh.GUARD_ENV}
+# Reads branch_target_competitors + ref.dim_institutions + the financial snapshot; truncates and
+# reloads in one transaction, with a backup first. See refresh_network_top_targets.py.
+NTT_STEP = {"id": "refresh_network_top_targets", "label": "Refresh top targets per institution (public.network_top_targets)",
+            "kind": "refresh", "fn": _run_ingest(refresh_network_top_targets.refresh_network_top_targets)}
+ARCHIVE_STEP = {"id": "archive_year", "label": "Archive current year to history",
+                "kind": "rpc", "fn": _archive_year}
+
+# Standalone -- not part of any group (see module docstring).
 GDELT_STEP = {"id": "ingest_gdelt", "label": "Ingest GDELT competitor news",
               "kind": "ingest", "fn": _run_ingest(gdelt_news_ingest.main)}
 
@@ -113,7 +124,7 @@ UBPR_PEER_STATS_STEP = {"id": "ingest_ubpr_peer_stats", "label": "Ingest FFIEC U
 UBPR_RANK_STEP = {"id": "ingest_ubpr_rank", "label": "Ingest FFIEC UBPR bank-vs-peer rank (a84)",
                    "kind": "ingest", "fn": _run_ingest(ffiec_ubpr_rank_ingest.main)}
 
-# Standalone, and deliberately NOT in RUN_ALL_ORDER (a85). Loads the newest
+# Standalone, and deliberately NOT in any group (a85). Loads the newest
 # FFIEC quarter into raw_schedule_RI/RC + raw_UBPR (raw tables only; skips
 # any table that already has it, errors on a partial load; never deletes).
 # It does NOT run refresh_bmap_after_upload, a database procedure that
@@ -143,10 +154,24 @@ SNAPSHOT_SWAP_STEP = {"id": "snapshot_swap", "label": "Financial snapshot: refre
                        "kind": "refresh", "fn": _run_ingest(quarterly_refresh.snapshot_swap),
                        "guard_env": quarterly_refresh.GUARD_ENV}
 
-ALL_STEPS = STEPS + [GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP,
+ALL_STEPS = STEPS + [DIM_STEP, NTT_STEP, ARCHIVE_STEP, GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP,
                      UBPR_LAYER_DRY_RUN_STEP, UBPR_LAYER_SWAP_STEP, SNAPSHOT_DRY_RUN_STEP, SNAPSHOT_SWAP_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
-RUN_ALL_ORDER = [s["id"] for s in STEPS]
+
+# Groups: one button runs the group's steps in order, stopping at the first failure.
+GROUPS = [
+    {"id": "sources", "label": "Ingest all sources",
+     "note": "Pulls SOD, NCUA, Census and ZHVI one after another. Each source also has its own button.",
+     "steps": ["ingest_fdic_sod", "ingest_ncua", "ingest_census", "ingest_zhvi"]},
+    {"id": "rebuild", "label": "Rebuild BMAP tables",
+     "note": "Branch master, tiered, 10mi, opportunity base, then target competitors, in that order. "
+             "Takes a while (the last two alone are several minutes).",
+     "steps": ["rebuild_branches_master", "rebuild_tiered", "rebuild_10mi",
+               "rebuild_opportunity_base", "rebuild_target_competitors"]},
+]
+GROUP_BY_ID = {g["id"]: g for g in GROUPS}
+# Kept for run_all.py (CLI): sources then rebuild, nothing else.
+RUN_ALL_ORDER = [sid for g in GROUPS for sid in g["steps"]]
 
 # Display order for the "new-quarter refresh" section of the command center.
 QUARTERLY_ORDER = ["ingest_bank_quarter", "ingest_ubpr_peer_stats", "ingest_ubpr_rank",
