@@ -256,7 +256,7 @@ def _locked(step):
 def _phase(step_id):
     if step_id.startswith("ingest_"):
         return "Ingest sources"
-    if step_id.startswith("rebuild_"):
+    if step_id.startswith("rebuild_") or step_id.startswith("refresh_"):
         return "Rebuild tables"
     return "Archive"
 
@@ -279,7 +279,10 @@ def list_steps():
         seq = _CHAIN_POSITION.get(s["id"])
         qseq = _QUARTERLY_POSITION.get(s["id"])
         group = "chain" if seq else ("quarterly" if qseq else "standalone")
-        out.append({"id": s["id"], "label": s["label"], "kind": s["kind"], "last_run": last,
+        label = s["label"]
+        if s.get("guard_fallback") and os.environ.get(s["guard_fallback"]) != "yes":
+            label += " (dry run only until enabled)"
+        out.append({"id": s["id"], "label": label, "kind": s["kind"], "last_run": last,
                     "group": group, "seq": seq or qseq,
                     "phase": _phase(s["id"]) if seq else _QUARTERLY_PHASE.get(s["id"]),
                     "locked": _locked(s)})

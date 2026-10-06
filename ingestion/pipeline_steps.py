@@ -21,7 +21,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import quarterly_refresh
+from ingestion import quarterly_refresh, refresh_dim_institutions
 from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_call_report_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
@@ -80,6 +80,12 @@ STEPS = [
      "kind": "ingest", "fn": _run_ingest(zhvi_ingest.main)},
     {"id": "rebuild_branches_master", "label": "Rebuild branches_master_v2",
      "kind": "rpc", "fn": _rebuild_branches_master},
+    # Reads the branch master (to keep AK/HI-headquartered institutions that have scored
+    # branches), so it runs right after it. Applies only when ALLOW_ANALYTICS_SWAP=yes;
+    # otherwise it does a dry run, which keeps "Run all" safe. See refresh_dim_institutions.py.
+    {"id": "refresh_dim_institutions", "label": "Refresh institution directory (ref.dim_institutions)",
+     "kind": "refresh", "fn": _run_ingest(refresh_dim_institutions.refresh_dim_institutions),
+     "guard_fallback": quarterly_refresh.GUARD_ENV},
     {"id": "rebuild_tiered", "label": "Rebuild tiered competitor system",
      "kind": "rpc", "fn": lambda: call_procedure("CALL public.refresh_tiered_competitor_system()")},
     {"id": "rebuild_10mi", "label": "Rebuild 10mi competitor system (capped top-50)",
