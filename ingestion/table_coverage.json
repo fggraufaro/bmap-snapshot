@@ -106,7 +106,7 @@
   "mechanism": "none (stray backup kept in analytics)",
   "owner": "Session 1",
   "cadence": "-",
-  "action": "Enable RLS now (it is off), then move to backup schema or drop",
+  "action": "Move to backup schema or drop (RLS is off but nothing outside service_role can read it)",
   "note": "Superseded by the a90 rebuild",
   "tools": []
  },
@@ -116,7 +116,7 @@
   "mechanism": "none (stray backup kept in analytics)",
   "owner": "Session 1",
   "cadence": "-",
-  "action": "Enable RLS now (it is off), then move to backup schema or drop",
+  "action": "Move to backup schema or drop (RLS is off but nothing outside service_role can read it)",
   "note": "Superseded by the a90 rebuild",
   "tools": []
  },

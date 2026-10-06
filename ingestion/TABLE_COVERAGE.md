@@ -26,8 +26,8 @@ None.
 
 ## Warnings (open items)
 
-- RLS OFF: analytics.branch_target_competitors_backup_pre_a55 (anon/authenticated may read it unfiltered if granted)
-- RLS OFF: analytics.branch_target_competitors_backup_pre_a55_v2 (anon/authenticated may read it unfiltered if granted)
+- RLS off, no anon/authenticated grant: analytics.branch_target_competitors_backup_pre_a55 (not exposed today; enable RLS so a later GRANT cannot expose it)
+- RLS off, no anon/authenticated grant: analytics.branch_target_competitors_backup_pre_a55_v2 (not exposed today; enable RLS so a later GRANT cannot expose it)
 - FEEDS A TOOL, NO PIPELINE REFRESH: geo.CBSA_zip [STATIC] -> Intelligence Hub, Opportunity View
 - FEEDS A TOOL, NO PIPELINE REFRESH: geo.uszips [STATIC] -> Growth Map, Intelligence Hub
 - FEEDS A TOOL, NO PIPELINE REFRESH: raw.raw_cfpb_complaints [GAP] -> Growth Map
@@ -85,8 +85,8 @@ None.
 |---|---|---|---|---|---|---|---|
 | `analytics.branch_cu_exposure` | 952,902 |  | none | Session 3 | - |  | Decide keep or drop (953K rows) - No loader, no reader in code or in any view/function |
 | `analytics.branch_target_competitors_backup_20260919` | 253,788 |  | none (stray backup kept in analytics) | Session 1 | - |  | Move to backup schema or drop - Superseded by the a90 rebuild |
-| `analytics.branch_target_competitors_backup_pre_a55` | 264,101 |  | none (stray backup kept in analytics) | Session 1 | - |  | Enable RLS now (it is off), then move to backup schema or drop - Superseded by the a90 rebuild |
-| `analytics.branch_target_competitors_backup_pre_a55_v2` | 256,151 |  | none (stray backup kept in analytics) | Session 1 | - |  | Enable RLS now (it is off), then move to backup schema or drop - Superseded by the a90 rebuild |
+| `analytics.branch_target_competitors_backup_pre_a55` | 264,101 |  | none (stray backup kept in analytics) | Session 1 | - |  | Move to backup schema or drop (RLS is off but nothing outside service_role can read it) - Superseded by the a90 rebuild |
+| `analytics.branch_target_competitors_backup_pre_a55_v2` | 256,151 |  | none (stray backup kept in analytics) | Session 1 | - |  | Move to backup schema or drop (RLS is off but nothing outside service_role can read it) - Superseded by the a90 rebuild |
 | `analytics.cu_institution_scores` | 4,624 |  | none | Session 3 | - |  | Decide keep or drop (4,624 rows) - No loader, no reader |
 | `analytics.institution_structure_changes` | 159 |  | none | Session 2 | - |  | Session 2 to confirm purpose or drop - No loader, no reader (159 rows) |
 | `pbi.branches_master` | 72,998 |  | none (Power BI legacy copy) | Session 1 | - |  | Confirm whether Power BI still reads it - 72,998 rows vs 94,076 in geo.branches_master_v2; stale copy |

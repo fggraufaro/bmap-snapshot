@@ -91,6 +91,12 @@ def _live(cur):
     cur.execute("""select c.relname, c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace
                    where c.relkind in ('r','p') and n.nspname = 'backup'""")
     backups = cur.fetchall()
+    cur.execute("""select distinct table_schema || '.' || table_name from information_schema.role_table_grants
+                   where grantee in ('anon','authenticated','PUBLIC') and privilege_type = 'SELECT'
+                   and table_schema = any(%s)""", (list(SCHEMAS),))
+    readable = {r[0] for r in cur.fetchall()}
+    for k in live:
+        live[k]["anon_read"] = k in readable
     return live, backups
 
 
@@ -190,7 +196,10 @@ def run(write=False):
             errors.append(f"{r['object']}: is a view but not marked DERIVED")
     for k, m in live.items():
         if m["kind"] in ("r", "p") and not m["rls"] and by_obj.get(k, {}).get("status") != "SYSTEM":
-            warnings.append(f"RLS OFF: {k} (anon/authenticated may read it unfiltered if granted)")
+            if m["anon_read"]:
+                warnings.append(f"RLS OFF AND READABLE BY anon/authenticated: {k} (exposed now)")
+            else:
+                warnings.append(f"RLS off, no anon/authenticated grant: {k} (not exposed today; enable RLS so a later GRANT cannot expose it)")
     for n, rls in backups:
         if not rls:
             warnings.append(f"RLS OFF: backup.{n}")
