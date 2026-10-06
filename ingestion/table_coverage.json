@@ -1,0 +1,1107 @@
+[
+ {
+  "object": "analytics.bank_financial_snapshot",
+  "status": "LOCKED",
+  "mechanism": "button: snapshot_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "Swap gated by ALLOW_ANALYTICS_SWAP + Coordinator sign-off",
+  "tools": []
+ },
+ {
+  "object": "analytics.bank_financial_snapshot_latest",
+  "status": "LOCKED",
+  "mechanism": "button: snapshot_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "Read by the opportunity-base rebuild: run that after the snapshot swap",
+  "tools": [
+   "Bank Assessment doc",
+   "Board Brief",
+   "Intelligence Hub",
+   "Opportunity View",
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "analytics.branch_cu_exposure",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 3",
+  "cadence": "-",
+  "action": "Decide keep or drop (953K rows)",
+  "note": "No loader, no reader in code or in any view/function",
+  "tools": []
+ },
+ {
+  "object": "analytics.branch_opportunity_base",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_opportunity_base (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After any source change",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc",
+   "Board Brief",
+   "Growth Map",
+   "Intelligence Hub",
+   "Opportunity View",
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "analytics.branch_opportunity_base_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Growth Map"
+  ]
+ },
+ {
+  "object": "analytics.branch_opportunity_minmax",
+  "status": "AUTO",
+  "mechanism": "written by the rebuild_opportunity_base procedure",
+  "owner": "Session 1",
+  "cadence": "With opportunity base",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "analytics.branch_target_competitors",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_target_competitors (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After opportunity base",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc",
+   "Board Brief",
+   "Intelligence Hub",
+   "Opportunity View",
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "analytics.branch_target_competitors_backup_20260919",
+  "status": "UNUSED",
+  "mechanism": "none (stray backup kept in analytics)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "Move to backup schema or drop",
+  "note": "Superseded by the a90 rebuild",
+  "tools": []
+ },
+ {
+  "object": "analytics.branch_target_competitors_backup_pre_a55",
+  "status": "UNUSED",
+  "mechanism": "none (stray backup kept in analytics)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "Enable RLS now (it is off), then move to backup schema or drop",
+  "note": "Superseded by the a90 rebuild",
+  "tools": []
+ },
+ {
+  "object": "analytics.branch_target_competitors_backup_pre_a55_v2",
+  "status": "UNUSED",
+  "mechanism": "none (stray backup kept in analytics)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "Enable RLS now (it is off), then move to backup schema or drop",
+  "note": "Superseded by the a90 rebuild",
+  "tools": []
+ },
+ {
+  "object": "analytics.cu_institution_scores",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 3",
+  "cadence": "-",
+  "action": "Decide keep or drop (4,624 rows)",
+  "note": "No loader, no reader",
+  "tools": []
+ },
+ {
+  "object": "analytics.institution_structure_changes",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 2",
+  "cadence": "-",
+  "action": "Session 2 to confirm purpose or drop",
+  "note": "No loader, no reader (159 rows)",
+  "tools": []
+ },
+ {
+  "object": "analytics.ubpr_bank_peer_group",
+  "status": "LOCKED",
+  "mechanism": "button: ubpr_layer_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "UBPR analytics layer (bank-to-peer-group map)",
+  "tools": []
+ },
+ {
+  "object": "analytics.ubpr_peer_stats_clean",
+  "status": "LOCKED",
+  "mechanism": "button: ubpr_layer_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "UBPR analytics layer (peer stats)",
+  "tools": []
+ },
+ {
+  "object": "analytics.ubpr_rank_clean",
+  "status": "LOCKED",
+  "mechanism": "button: ubpr_layer_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "UBPR analytics layer (ranks)",
+  "tools": []
+ },
+ {
+  "object": "analytics.ubpr_rank_coverage",
+  "status": "LOCKED",
+  "mechanism": "button: ubpr_layer_swap (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "UBPR analytics layer (rank coverage)",
+  "tools": []
+ },
+ {
+  "object": "geo.CBSA_zip",
+  "status": "STATIC",
+  "mechanism": "none (one-time load)",
+  "owner": "Session 1",
+  "cadence": "Yearly (CBSA delineation changes)",
+  "action": "Add a reference-refresh step, or document the source and a yearly review",
+  "note": "",
+  "tools": [
+   "Intelligence Hub",
+   "Opportunity View"
+  ]
+ },
+ {
+  "object": "geo.branch_competitors_10mi_v2",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_10mi (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After branch master",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Growth Map"
+  ]
+ },
+ {
+  "object": "geo.branch_competitors_10mi_v2_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_competitors_tiered_v1",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_tiered (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After branch master and institution directory",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_competitors_tiered_v1_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_radius_stats_10mi_v2",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_10mi (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After branch master",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_radius_stats_10mi_v2_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_radius_stats_tiered_v1",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_tiered (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After branch master and institution directory",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branch_radius_stats_tiered_v1_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.branches_master_v2",
+  "status": "AUTO",
+  "mechanism": "button: rebuild_branches_master (rebuild group)",
+  "owner": "Session 1",
+  "cadence": "After SOD / NCUA load",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc",
+   "Intelligence Hub",
+   "Opportunity View"
+  ]
+ },
+ {
+  "object": "geo.branches_master_v2_history",
+  "status": "ARCHIVE",
+  "mechanism": "button: archive_year (separate)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.dim_zip_cbsa",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "geo.uszips",
+  "status": "STATIC",
+  "mechanism": "none (one-time load)",
+  "owner": "Session 1",
+  "cadence": "Yearly",
+  "action": "Add a reference-refresh step, or document the source and a yearly review",
+  "note": "",
+  "tools": [
+   "Growth Map",
+   "Intelligence Hub"
+  ]
+ },
+ {
+  "object": "pbi.branches_master",
+  "status": "UNUSED",
+  "mechanism": "none (Power BI legacy copy)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "Confirm whether Power BI still reads it",
+  "note": "72,998 rows vs 94,076 in geo.branches_master_v2; stale copy",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_branch_competitors_10mi",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_branch_portfolio_matrix",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_branch_radius_stats_10mi",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_cert_to_bank_name",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_cu_cost_of_funds",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_rate_radar_history_v1_legacy",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_rate_radar_latest_v1_legacy",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_rate_radar_triggers",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "pbi.vw_zhvi_yoy",
+  "status": "DERIVED",
+  "mechanism": "view (Power BI schema)",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "Power BI legacy; follows its base tables",
+  "tools": []
+ },
+ {
+  "object": "public.assessment_jobs",
+  "status": "APP",
+  "mechanism": "written by the Hub assessment job queue (main.py)",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.bank_registry",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Per Rate Radar run",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_clauses",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_drafts",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_events",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_module_text",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_modules",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagement_versions",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.engagements",
+  "status": "APP",
+  "mechanism": "written by the engagement tool",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.extraction_cache",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Daily cache",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.geography_columns",
+  "status": "SYSTEM",
+  "mechanism": "PostGIS system view",
+  "owner": "-",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.geometry_columns",
+  "status": "SYSTEM",
+  "mechanism": "PostGIS system view",
+  "owner": "-",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.network_top_targets",
+  "status": "AUTO",
+  "mechanism": "button: refresh_network_top_targets (separate)",
+  "owner": "Session 1",
+  "cadence": "After target competitors",
+  "action": "",
+  "note": "Also updated in place by snapshot_swap (financial columns)",
+  "tools": [
+   "Bank Assessment doc",
+   "Board Brief",
+   "Intelligence Hub",
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "public.persona_runs",
+  "status": "SERVICE",
+  "mechanism": "persona layer (written per run)",
+  "owner": "Session 3",
+  "cadence": "Per persona run",
+  "action": "Show last run on the command center",
+  "note": "",
+  "tools": [
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "public.pipeline_jobs",
+  "status": "APP",
+  "mechanism": "written by the command center API",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.profiles",
+  "status": "APP",
+  "mechanism": "written by Supabase Auth + Users tab",
+  "owner": "App",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.rate_observations",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Per Rate Radar run",
+  "action": "Show last run on the command center",
+  "note": "",
+  "tools": [
+   "Intelligence Hub",
+   "Opportunity View",
+   "Rate Radar page"
+  ]
+ },
+ {
+  "object": "public.rate_radar_runs",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Per Rate Radar run",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.resonate_audience_enrichment",
+  "status": "SERVICE",
+  "mechanism": "Resonate integration (fetched)",
+  "owner": "Session 3",
+  "cadence": "On demand",
+  "action": "Confirm owner and refresh trigger",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc"
+  ]
+ },
+ {
+  "object": "public.resonate_audiences",
+  "status": "SERVICE",
+  "mechanism": "Resonate integration (fetched)",
+  "owner": "Session 3",
+  "cadence": "On demand",
+  "action": "Confirm owner and refresh trigger",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc"
+  ]
+ },
+ {
+  "object": "public.spatial_ref_sys",
+  "status": "SYSTEM",
+  "mechanism": "PostGIS system table",
+  "owner": "-",
+  "cadence": "-",
+  "action": "",
+  "note": "Security finding a92 (anon write grants, RLS off); Coordinator owns the fix; do not touch",
+  "tools": []
+ },
+ {
+  "object": "public.url_pattern_registry",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Per Rate Radar run",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_bank_directory",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_bank_financial_snapshot",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_branch_opportunity_cbsa",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_branch_opportunity_yoy_delta",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_cfpb_complaints_wow",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_network_top_targets",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_prospecting_score",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_rate_radar_history",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_rate_radar_latest",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_smb_index_by_zip",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "public.vw_zip_persona",
+  "status": "DERIVED",
+  "mechanism": "view",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.Raw_cu_fs220",
+  "status": "AUTO",
+  "mechanism": "button: ingest_ncua (sources group)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (NCUA)",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_cu_branches",
+  "status": "AUTO",
+  "mechanism": "button: ingest_ncua (sources group)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (NCUA)",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_UBPR",
+  "status": "AUTO",
+  "mechanism": "button: ingest_bank_quarter (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (FFIEC)",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_schedule_RC",
+  "status": "AUTO",
+  "mechanism": "button: ingest_bank_quarter (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (FFIEC)",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_schedule_RI",
+  "status": "AUTO",
+  "mechanism": "button: ingest_bank_quarter (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (FFIEC)",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_schedule_RCE",
+  "status": "GAP",
+  "mechanism": "none (stale since 5/29)",
+  "owner": "Session 1",
+  "cadence": "Quarterly (FFIEC)",
+  "action": "Add RCE to the call-report loader",
+  "note": "Read by the Board brief",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_schedule_RIE",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 1",
+  "cadence": "Quarterly (FFIEC)",
+  "action": "Add to the loader with RCE, or drop",
+  "note": "Read only by refresh_bmap_after_upload, which is never run",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_business_formation_state",
+  "status": "GAP",
+  "mechanism": "none (loaded by Session 2, no step)",
+  "owner": "Session 2",
+  "cadence": "Annual",
+  "action": "Wrap the loader as a standalone step",
+  "note": "Feeds the opportunity-base rebuild (via vw_smb_index_by_zip), so every tool",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_irs_migration_state",
+  "status": "GAP",
+  "mechanism": "none (loaded by Session 2, no step)",
+  "owner": "Session 2",
+  "cadence": "Annual",
+  "action": "Wrap the loader as a standalone step",
+  "note": "Feeds the opportunity-base rebuild directly",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_qcew_state",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 2",
+  "cadence": "Quarterly",
+  "action": "Session 2 to confirm it will be read, or drop",
+  "note": "No reader yet",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_cbp_totals",
+  "status": "GAP",
+  "mechanism": "none (one-time load)",
+  "owner": "Session 2",
+  "cadence": "Annual",
+  "action": "Wrap the loader as a standalone step",
+  "note": "Feeds the opportunity-base rebuild via vw_smb_index_by_zip",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_cfpb_complaints",
+  "status": "GAP",
+  "mechanism": "none (loaded by Session 2, no step)",
+  "owner": "Session 2",
+  "cadence": "Weekly/monthly",
+  "action": "Wrap the loader as a standalone step",
+  "note": "Feeds Growth Map via vw_cfpb_complaints_wow",
+  "tools": [
+   "Growth Map"
+  ]
+ },
+ {
+  "object": "raw.raw_cfpb_complaints_trend",
+  "status": "GAP",
+  "mechanism": "none (loaded by Session 2, no step)",
+  "owner": "Session 2",
+  "cadence": "Weekly/monthly",
+  "action": "Wrap the loader as a standalone step",
+  "note": "Feeds Growth Map via vw_cfpb_complaints_wow",
+  "tools": [
+   "Growth Map"
+  ]
+ },
+ {
+  "object": "raw.raw_fdic_structure_changes",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 2",
+  "cadence": "Quarterly",
+  "action": "Session 2 to confirm it will be read, or drop",
+  "note": "No reader yet (1,273 rows)",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_gdelt_news",
+  "status": "HELD",
+  "mechanism": "button: ingest_gdelt (standalone, held a87)",
+  "owner": "Session 1",
+  "cadence": "On demand",
+  "action": "",
+  "note": "Stays unclicked until a87 clears",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_income",
+  "status": "AUTO",
+  "mechanism": "button: ingest_census (sources group)",
+  "owner": "Session 1",
+  "cadence": "Annual (ACS ~Dec)",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Growth Map",
+   "Intelligence Hub",
+   "Opportunity View"
+  ]
+ },
+ {
+  "object": "raw.raw_population",
+  "status": "AUTO",
+  "mechanism": "button: ingest_census (sources group)",
+  "owner": "Session 1",
+  "cadence": "Annual (ACS ~Dec)",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc",
+   "Growth Map",
+   "Intelligence Hub",
+   "Opportunity View"
+  ]
+ },
+ {
+  "object": "raw.raw_occupation",
+  "status": "GAP",
+  "mechanism": "none (no loader exists)",
+  "owner": "Session 1",
+  "cadence": "Annual (ACS ~Dec)",
+  "action": "Extend the Census loader to the occupation table",
+  "note": "Stuck at ACS 2024",
+  "tools": [
+   "Bank Assessment doc",
+   "Growth Map",
+   "Intelligence Hub",
+   "Opportunity View"
+  ]
+ },
+ {
+  "object": "raw.raw_rate_radar",
+  "status": "SERVICE",
+  "mechanism": "Rate Radar service",
+  "owner": "Rate Radar",
+  "cadence": "Per Rate Radar run",
+  "action": "Show last run on the command center",
+  "note": "",
+  "tools": [
+   "Intelligence Hub",
+   "Opportunity View",
+   "Rate Radar page"
+  ]
+ },
+ {
+  "object": "raw.raw_sec_8k_filings",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 2",
+  "cadence": "-",
+  "action": "Drop (empty, no reader) or build the loader",
+  "note": "0 rows",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_sod",
+  "status": "AUTO",
+  "mechanism": "button: ingest_fdic_sod (sources group)",
+  "owner": "Session 1",
+  "cadence": "Yearly (SOD ~Jun-Jul)",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Bank Assessment doc",
+   "Intelligence Hub"
+  ]
+ },
+ {
+  "object": "raw.raw_ubpr_peer_stats",
+  "status": "AUTO",
+  "mechanism": "button: ingest_ubpr_peer_stats (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_ubpr_rank",
+  "status": "AUTO",
+  "mechanism": "button: ingest_ubpr_rank (new-quarter section)",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.ref_ubpr_rank_fields",
+  "status": "AUTO",
+  "mechanism": "written by the UBPR Rank ingest step",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.ref_ubpr_stats_fields",
+  "status": "AUTO",
+  "mechanism": "written by the UBPR Stats ingest step",
+  "owner": "Session 1",
+  "cadence": "Quarterly",
+  "action": "",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "raw.raw_zhvi",
+  "status": "AUTO",
+  "mechanism": "button: ingest_zhvi (sources group)",
+  "owner": "Session 1",
+  "cadence": "Monthly",
+  "action": "",
+  "note": "",
+  "tools": [
+   "Intelligence Hub"
+  ]
+ },
+ {
+  "object": "ref.bank_website",
+  "status": "STATIC",
+  "mechanism": "none (one-time load)",
+  "owner": "Session 1",
+  "cadence": "As institutions are added",
+  "action": "Add a refresh step, or tie it to the institution directory",
+  "note": "Feeds Hub, Board brief, Snapshot deck",
+  "tools": [
+   "Board Brief",
+   "Intelligence Hub",
+   "Snapshot deck"
+  ]
+ },
+ {
+  "object": "ref.banks",
+  "status": "STATIC",
+  "mechanism": "none found in code",
+  "owner": "Session 1",
+  "cadence": "Unverified",
+  "action": "Owner to confirm how it is loaded",
+  "note": "Read by the opportunity-base rebuild and many scripts; I found no loader",
+  "tools": []
+ },
+ {
+  "object": "ref.banks_stage",
+  "status": "UNUSED",
+  "mechanism": "none",
+  "owner": "Session 1",
+  "cadence": "-",
+  "action": "Drop (staging leftover, no reader)",
+  "note": "",
+  "tools": []
+ },
+ {
+  "object": "ref.dim_institutions",
+  "status": "LOCKED",
+  "mechanism": "button: refresh_dim_institutions (separate; dry run until enabled)",
+  "owner": "Session 1",
+  "cadence": "After branch master, before tiered",
+  "action": "",
+  "note": "Apply needs ALLOW_ANALYTICS_SWAP and sign-off; the tiered rebuild loops over this table",
+  "tools": [
+   "Board Brief",
+   "Growth Map",
+   "Intelligence Hub",
+   "Opportunity View",
+   "Snapshot deck"
+  ]
+ }
+]
