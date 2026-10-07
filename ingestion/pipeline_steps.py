@@ -24,7 +24,7 @@ triggered on its own.
 import sys
 from contextlib import contextmanager
 
-from ingestion import quarterly_refresh, refresh_dim_institutions, refresh_network_top_targets
+from ingestion import quarterly_refresh, refresh_dim_institutions, refresh_network_top_targets, session2_datasets
 from ingestion import census_acs_ingest, fdic_sod_ingest, ffiec_call_report_ingest, ffiec_ubpr_peer_stats_ingest, ffiec_ubpr_rank_ingest, gdelt_news_ingest, ncua_fs220_ingest, zhvi_ingest
 from ingestion.pg_direct import call_procedure
 from ingestion.supabase_client import get
@@ -109,6 +109,24 @@ NTT_STEP = {"id": "refresh_network_top_targets", "label": "Refresh top targets p
 ARCHIVE_STEP = {"id": "archive_year", "label": "Archive current year to history",
                 "kind": "rpc", "fn": _archive_year}
 
+# Group "datasets": the reference datasets Session 2 loaded by hand. They feed the opportunity-base rebuild
+# (CBP, Business Formation, IRS migration), the persona brief (QCEW) and Growth Map (CFPB trend), so run them
+# BEFORE the rebuild group. Each one reports a diff against the live table and applies only when
+# ALLOW_DATASET_LOAD=yes (separate from ALLOW_ANALYTICS_SWAP). See session2_datasets.py.
+_DS = session2_datasets
+DATASET_STEPS = [
+    {"id": "refresh_cbp", "label": "Refresh Census CBP ZIP business counts (SMB index)",
+     "kind": "refresh", "fn": _run_ingest(_DS.refresh_cbp), "guard_fallback": _DS.GUARD_ENV},
+    {"id": "refresh_business_formation", "label": "Refresh Census Business Formation (state)",
+     "kind": "refresh", "fn": _run_ingest(_DS.refresh_business_formation), "guard_fallback": _DS.GUARD_ENV},
+    {"id": "refresh_irs_migration", "label": "Refresh IRS state migration",
+     "kind": "refresh", "fn": _run_ingest(_DS.refresh_irs_migration), "guard_fallback": _DS.GUARD_ENV},
+    {"id": "refresh_qcew", "label": "Refresh BLS QCEW state wages (persona brief)",
+     "kind": "refresh", "fn": _run_ingest(_DS.refresh_qcew), "guard_fallback": _DS.GUARD_ENV},
+    {"id": "refresh_cfpb_trend", "label": "Refresh CFPB complaint trend (Growth Map, weekly)",
+     "kind": "refresh", "fn": _run_ingest(_DS.refresh_cfpb_trend), "guard_fallback": _DS.GUARD_ENV},
+]
+
 # Standalone -- not part of any group (see module docstring).
 GDELT_STEP = {"id": "ingest_gdelt", "label": "Ingest GDELT competitor news",
               "kind": "ingest", "fn": _run_ingest(gdelt_news_ingest.main)}
@@ -154,7 +172,7 @@ SNAPSHOT_SWAP_STEP = {"id": "snapshot_swap", "label": "Financial snapshot: refre
                        "kind": "refresh", "fn": _run_ingest(quarterly_refresh.snapshot_swap),
                        "guard_env": quarterly_refresh.GUARD_ENV}
 
-ALL_STEPS = STEPS + [DIM_STEP, NTT_STEP, ARCHIVE_STEP, GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP,
+ALL_STEPS = STEPS + DATASET_STEPS + [DIM_STEP, NTT_STEP, ARCHIVE_STEP, GDELT_STEP, UBPR_PEER_STATS_STEP, UBPR_RANK_STEP, CALL_REPORT_STEP,
                      UBPR_LAYER_DRY_RUN_STEP, UBPR_LAYER_SWAP_STEP, SNAPSHOT_DRY_RUN_STEP, SNAPSHOT_SWAP_STEP]
 STEP_BY_ID = {s["id"]: s for s in ALL_STEPS}
 
@@ -163,6 +181,11 @@ GROUPS = [
     {"id": "sources", "label": "Ingest all sources",
      "note": "Pulls SOD, NCUA, Census and ZHVI one after another. Each source also has its own button.",
      "steps": ["ingest_fdic_sod", "ingest_ncua", "ingest_census", "ingest_zhvi"]},
+    {"id": "datasets", "label": "Refresh other datasets",
+     "note": "CBP, Business Formation, IRS migration, QCEW and the CFPB trend. Run before the rebuild group: the first "
+             "three feed the opportunity base. Each step shows its changes against the live table and writes nothing "
+             "until ALLOW_DATASET_LOAD is enabled on the service.",
+     "steps": [s["id"] for s in DATASET_STEPS]},
     {"id": "rebuild", "label": "Rebuild BMAP tables",
      "note": "Branch master, tiered, 10mi, opportunity base, then target competitors, in that order. "
              "Takes a while (the last two alone are several minutes).",

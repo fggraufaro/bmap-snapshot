@@ -1,17 +1,17 @@
 # Table coverage control document
 
-Generated 2026-10-06 by `python -m ingestion.table_coverage --write` from the live database and `ingestion/table_coverage.json`. Do not edit by hand: edit the JSON, re-run, commit both.
+Generated 2026-10-07 by `python -m ingestion.table_coverage --write` from the live database and `ingestion/table_coverage.json`. Do not edit by hand: edit the JSON, re-run, commit both.
 
-**Result: PASS** - 0 errors, 17 warnings. 102 objects in the database (81 tables, 21 views) all have a row below; the backup schema (34 tables) is exempt.
+**Result: PASS** - 0 errors, 13 warnings. 102 objects in the database (81 tables, 21 views) all have a row below; the backup schema (34 tables) is exempt.
 
 ## Summary
 
 | Status | Objects | Meaning |
 |---|---|---|
-| GAP | 7 | Feeds a tool or rebuild, no refresh path |
-| STATIC | 4 | Loaded once, no refresh path |
-| UNUSED | 12 | No reader, no refresh: keep or drop |
-| LOCKED | 7 | Button exists, destructive part gated |
+| GAP | 2 | Feeds a tool or rebuild, no refresh path |
+| STATIC | 5 | Loaded once, no refresh path |
+| UNUSED | 11 | No reader, no refresh: keep or drop |
+| LOCKED | 12 | Button exists, destructive part gated |
 | HELD | 1 | Button exists, deliberately not clicked |
 | AUTO | 22 | Refreshed by a command-center button |
 | ARCHIVE | 6 | History, yearly archive button |
@@ -30,18 +30,14 @@ None.
 - RLS off, no anon/authenticated grant: analytics.branch_target_competitors_backup_pre_a55_v2 (not exposed today; enable RLS so a later GRANT cannot expose it)
 - FEEDS A TOOL, NO PIPELINE REFRESH: geo.CBSA_zip [STATIC] -> Intelligence Hub, Opportunity View
 - FEEDS A TOOL, NO PIPELINE REFRESH: geo.uszips [STATIC] -> Growth Map, Intelligence Hub
-- FEEDS A TOOL, NO PIPELINE REFRESH: raw.raw_cfpb_complaints [GAP] -> Growth Map
-- FEEDS A TOOL, NO PIPELINE REFRESH: raw.raw_cfpb_complaints_trend [GAP] -> Growth Map
+- FEEDS A TOOL, NO PIPELINE REFRESH: raw.raw_cfpb_complaints [STATIC] -> Growth Map
 - FEEDS A TOOL, NO PIPELINE REFRESH: raw.raw_occupation [GAP] -> Bank Assessment doc, Growth Map, Intelligence Hub, Opportunity View
 - FEEDS A TOOL, NO PIPELINE REFRESH: ref.bank_website [STATIC] -> Board Brief, Intelligence Hub, Snapshot deck
 - VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_branch_opportunity_cbsa <- geo.CBSA_zip
 - VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_zip_persona <- raw.raw_occupation
-- VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_cfpb_complaints_wow <- raw.raw_cfpb_complaints, raw.raw_cfpb_complaints_trend
-- VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_smb_index_by_zip <- raw.raw_business_formation_state, raw.raw_cbp_totals
+- VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_cfpb_complaints_wow <- raw.raw_cfpb_complaints
 - VIEW DEPENDS ON UNREFRESHED TABLE: geo.dim_zip_cbsa <- geo.CBSA_zip
 - VIEW DEPENDS ON UNREFRESHED TABLE: public.vw_bank_directory <- ref.bank_website
-- REBUILD INPUT NOT REFRESHED: analytics.refresh_branch_opportunity_base reads raw.raw_business_formation_state [GAP]
-- REBUILD INPUT NOT REFRESHED: analytics.refresh_branch_opportunity_base reads raw.raw_irs_migration_state [GAP]
 - REBUILD INPUT NOT REFRESHED: analytics.refresh_branch_opportunity_base reads ref.banks [STATIC]
 
 ## Rebuild chain: inputs of each procedure
@@ -52,34 +48,30 @@ None.
 | `analytics.rebuild_tiered_radius_batch` | `analytics.branch_opportunity_base` AUTO, `geo.branch_competitors_tiered_v1` AUTO, `geo.branches_master_v2` AUTO, `ref.dim_institutions` LOCKED |
 | `analytics.refresh_branch_competitors_tiered_v1` | `geo.branch_competitors_tiered_v1` AUTO, `geo.branches_master_v2` AUTO |
 | `geo.refresh_branch_competitors_10mi_v2` | `geo.branch_competitors_10mi_v2` AUTO, `geo.branches_master_v2` AUTO |
-| `analytics.refresh_branch_opportunity_base` | `analytics.bank_financial_snapshot_latest` LOCKED, `analytics.branch_opportunity_base` AUTO, `analytics.branch_opportunity_minmax` AUTO, `geo.branch_competitors_tiered_v1` AUTO, `geo.branch_radius_stats_tiered_v1` AUTO, `geo.branches_master_v2` AUTO, `public.vw_smb_index_by_zip` DERIVED, `raw.raw_business_formation_state` GAP, `raw.raw_income` AUTO, `raw.raw_irs_migration_state` GAP, `raw.raw_population` AUTO, `raw.raw_sod` AUTO, `raw.raw_zhvi` AUTO, `ref.banks` STATIC |
+| `analytics.refresh_branch_opportunity_base` | `analytics.bank_financial_snapshot_latest` LOCKED, `analytics.branch_opportunity_base` AUTO, `analytics.branch_opportunity_minmax` AUTO, `geo.branch_competitors_tiered_v1` AUTO, `geo.branch_radius_stats_tiered_v1` AUTO, `geo.branches_master_v2` AUTO, `public.vw_smb_index_by_zip` DERIVED, `raw.raw_business_formation_state` LOCKED, `raw.raw_income` AUTO, `raw.raw_irs_migration_state` LOCKED, `raw.raw_population` AUTO, `raw.raw_sod` AUTO, `raw.raw_zhvi` AUTO, `ref.banks` STATIC |
 | `analytics.refresh_branch_target_competitors` | `analytics.branch_opportunity_base` AUTO, `analytics.branch_target_competitors` AUTO, `geo.branches_master_v2` AUTO |
 | `public.populate_network_top_targets` | `analytics.bank_financial_snapshot_latest` LOCKED, `analytics.branch_opportunity_base` AUTO, `analytics.branch_target_competitors` AUTO, `public.network_top_targets` AUTO, `ref.dim_institutions` LOCKED |
 
 ## Every object
 
-### GAP (7)
+### GAP (2)
 
 | Object | Rows | Newest data | How it is refreshed | Owner | Cadence | Feeds | Action / note |
 |---|---|---|---|---|---|---|---|
-| `raw.raw_business_formation_state` | 51 |  | none (loaded by Session 2, no step) | Session 2 | Annual |  | Wrap the loader as a standalone step - Feeds the opportunity-base rebuild (via vw_smb_index_by_zip), so every tool |
-| `raw.raw_cbp_totals` | 34,954 |  | none (one-time load) | Session 2 | Annual |  | Wrap the loader as a standalone step - Feeds the opportunity-base rebuild via vw_smb_index_by_zip |
-| `raw.raw_cfpb_complaints` | 53 | 2026-09-11 | none (loaded by Session 2, no step) | Session 2 | Weekly/monthly | Growth Map | Wrap the loader as a standalone step - Feeds Growth Map via vw_cfpb_complaints_wow |
-| `raw.raw_cfpb_complaints_trend` | 106 | 2026-09-18 | none (loaded by Session 2, no step) | Session 2 | Weekly/monthly | Growth Map | Wrap the loader as a standalone step - Feeds Growth Map via vw_cfpb_complaints_wow |
-| `raw.raw_irs_migration_state` | 51 |  | none (loaded by Session 2, no step) | Session 2 | Annual |  | Wrap the loader as a standalone step - Feeds the opportunity-base rebuild directly |
 | `raw.raw_occupation` | 101,318 | 2024 | none (no loader exists) | Session 1 | Annual (ACS ~Dec) | Bank Assessment doc, Growth Map, Intelligence Hub, Opportunity View | Extend the Census loader to the occupation table - Stuck at ACS 2024 |
 | `raw.raw_schedule_RCE` | 22,224 |  | none (stale since 5/29) | Session 1 | Quarterly (FFIEC) |  | Add RCE to the call-report loader - Read by the Board brief |
 
-### STATIC (4)
+### STATIC (5)
 
 | Object | Rows | Newest data | How it is refreshed | Owner | Cadence | Feeds | Action / note |
 |---|---|---|---|---|---|---|---|
 | `geo.CBSA_zip` | 47,634 |  | none (one-time load) | Session 1 | Yearly (CBSA delineation changes) | Intelligence Hub, Opportunity View | Add a reference-refresh step, or document the source and a yearly review |
 | `geo.uszips` | 33,791 |  | none (one-time load) | Session 1 | Yearly | Growth Map, Intelligence Hub | Add a reference-refresh step, or document the source and a yearly review |
+| `raw.raw_cfpb_complaints` | 53 | 2026-09-11 | annual totals fixed at 2024/2023; the trend step refreshes the weekly table only | Session 2 | Yearly | Growth Map | Decide whether to roll the annual totals to 2025/2024 (needs a column rename) - Holds the institution-to-company mapping the trend loader uses; Growth Map reads only its name |
 | `ref.bank_website` | 4,403 |  | none (one-time load) | Session 1 | As institutions are added | Board Brief, Intelligence Hub, Snapshot deck | Add a refresh step, or tie it to the institution directory - Feeds Hub, Board brief, Snapshot deck |
 | `ref.banks` | 1,715 |  | none found in code | Session 1 | Unverified |  | Owner to confirm how it is loaded - Read by the opportunity-base rebuild and many scripts; I found no loader |
 
-### UNUSED (12)
+### UNUSED (11)
 
 | Object | Rows | Newest data | How it is refreshed | Owner | Cadence | Feeds | Action / note |
 |---|---|---|---|---|---|---|---|
@@ -91,12 +83,11 @@ None.
 | `analytics.institution_structure_changes` | 159 |  | none | Session 2 | - |  | Session 2 to confirm purpose or drop - No loader, no reader (159 rows) |
 | `pbi.branches_master` | 72,998 |  | none (Power BI legacy copy) | Session 1 | - |  | Confirm whether Power BI still reads it - 72,998 rows vs 94,076 in geo.branches_master_v2; stale copy |
 | `raw.raw_fdic_structure_changes` | 1,273 |  | none | Session 2 | Quarterly |  | Session 2 to confirm it will be read, or drop - No reader yet (1,273 rows) |
-| `raw.raw_qcew_state` | 51 |  | none | Session 2 | Quarterly |  | Session 2 to confirm it will be read, or drop - No reader yet |
 | `raw.raw_schedule_RIE` | 22,241 |  | none | Session 1 | Quarterly (FFIEC) |  | Add to the loader with RCE, or drop - Read only by refresh_bmap_after_upload, which is never run |
 | `raw.raw_sec_8k_filings` | 30 |  | none | Session 2 | - |  | Drop (empty, no reader) or build the loader - 0 rows |
 | `ref.banks_stage` | 1,715 |  | none | Session 1 | - |  | Drop (staging leftover, no reader) |
 
-### LOCKED (7)
+### LOCKED (12)
 
 | Object | Rows | Newest data | How it is refreshed | Owner | Cadence | Feeds | Action / note |
 |---|---|---|---|---|---|---|---|
@@ -106,6 +97,11 @@ None.
 | `analytics.ubpr_peer_stats_clean` | 48,994 |  | button: ubpr_layer_swap (new-quarter section) | Session 1 | Quarterly |  | UBPR analytics layer (peer stats) |
 | `analytics.ubpr_rank_clean` | 1,047,749 |  | button: ubpr_layer_swap (new-quarter section) | Session 1 | Quarterly |  | UBPR analytics layer (ranks) |
 | `analytics.ubpr_rank_coverage` | 4,349 |  | button: ubpr_layer_swap (new-quarter section) | Session 1 | Quarterly |  | UBPR analytics layer (rank coverage) |
+| `raw.raw_business_formation_state` | 51 |  | button: refresh_business_formation (datasets group; dry run until ALLOW_DATASET_LOAD) | Session 1 | Monthly source, load annually |  | Feeds the opportunity-base rebuild. Table columns are fixed to 2023-2025; the loader stops when a new complete year appears |
+| `raw.raw_cbp_totals` | 34,954 |  | button: refresh_cbp (datasets group; dry run until ALLOW_DATASET_LOAD) | Session 1 | Annual (Census CBP) |  | Feeds the opportunity-base rebuild via vw_smb_index_by_zip. Reproduces the live table exactly (0 differences) |
+| `raw.raw_cfpb_complaints_trend` | 106 | 2026-09-18 | button: refresh_cfpb_trend (datasets group; dry run until ALLOW_DATASET_LOAD) | Session 1 | Weekly (Thursday) | Growth Map | Feeds Growth Map via vw_cfpb_complaints_wow. Adds the latest two weeks; not yet run against the live CFPB API |
+| `raw.raw_irs_migration_state` | 51 |  | button: refresh_irs_migration (datasets group; dry run until ALLOW_DATASET_LOAD) | Session 1 | Annual (IRS SOI) |  | Feeds the opportunity-base rebuild directly. The reload fixes the 2x double count (a25); the scoring rate does not change. Keeps the vintage already loaded unless IRS_VINTAGE is set |
+| `raw.raw_qcew_state` | 51 |  | button: refresh_qcew (datasets group; dry run until ALLOW_DATASET_LOAD) | Session 1 | Annual (BLS QCEW) |  | Feeds the persona brief only; loading 2025 replaces 2024 and changes its wage-growth figures |
 | `ref.dim_institutions` | 8,846 |  | button: refresh_dim_institutions (separate; dry run until enabled) | Session 1 | After branch master, before tiered | Board Brief, Growth Map, Intelligence Hub, Opportunity View, Snapshot deck | Apply needs ALLOW_ANALYTICS_SWAP and sign-off; the tiered rebuild loops over this table |
 
 ### HELD (1)
