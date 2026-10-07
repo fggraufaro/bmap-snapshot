@@ -209,7 +209,28 @@ def _cfpb_count(company, start, end):
     return total["value"] if isinstance(total, dict) else total
 
 
-def _fetch_cfpb_trend(cur, schema, today=None, count=_cfpb_count):
+def _cfpb_calibrate(cur, schema, insts, count):
+    """Dry-run check: recompute the newest week already stored and report which window length reproduces it."""
+    tbl = _ident((schema, "raw_cfpb_complaints_trend"))
+    cur.execute(sql.SQL("select max(week_ending) from {}").format(tbl))
+    wk = cur.fetchone()[0]
+    if not wk:
+        return
+    cur.execute(sql.SQL("select inst_key, trailing_90d_count from {} where week_ending = %s").format(tbl), (wk,))
+    stored = dict(cur.fetchall())
+    for days, label in ((89, "90 days inclusive (start = week - 89)"), (90, "91 days inclusive (start = week - 90)")):
+        same = diff = n = 0
+        for k, name, _ in insts:
+            if k not in stored:
+                continue
+            got = count(name, wk - timedelta(days=days), wk)
+            n += 1
+            same += got == stored[k]
+            diff += abs(got - stored[k])
+        _log(f"  calibration vs stored week {wk}, window {label}: {same} of {n} institutions equal, total absolute difference {diff}")
+
+
+def _fetch_cfpb_trend(cur, schema, today=None, count=_cfpb_count, calibrate=None):
     """Two rows per institution: the latest completed week (Thursday) and the week before it, each the
     complaints received in the 90 days ending that Thursday. The volume flag follows the stored rule:
     fewer than 10 complaints in 2024."""
@@ -220,6 +241,10 @@ def _fetch_cfpb_trend(cur, schema, today=None, count=_cfpb_count):
     cur.execute(sql.SQL("select inst_key, cfpb_company_name, complaints_2024 from {} order by inst_key")
                 .format(_ident((schema, "raw_cfpb_complaints"))))
     insts = cur.fetchall()
+    if calibrate is None:
+        calibrate = os.environ.get(GUARD_ENV) != "yes"   # only in dry runs
+    if calibrate:
+        _cfpb_calibrate(cur, schema, insts, count)
     rows = []
     for k, name, c24 in insts:
         for wk in (w - timedelta(days=7), w):
