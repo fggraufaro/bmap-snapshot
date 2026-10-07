@@ -108,13 +108,34 @@ def _check_guard():
         )
 
 
-@contextmanager
-def _session():
-    """One direct connection (autocommit; statements that need a transaction open
-    their own) holding the advisory lock for the duration."""
+REFRESH_URL_ENV = "SUPABASE_REFRESH_DB_URL"   # connection string of the restricted login (a33)
+REFRESH_STEPS_ENV = "REFRESH_LOGIN_STEPS"      # comma-separated step ids that connect with it ("*" = all guarded steps)
+
+
+def _connection(step):
+    """Which database login a guarded step uses. Default is the full login (SUPABASE_DB_URL). A step listed in
+    REFRESH_LOGIN_STEPS uses the restricted pipeline_refresh login instead; if that login is not configured the
+    step stops rather than quietly falling back to the full login."""
+    wanted = {s.strip() for s in os.environ.get(REFRESH_STEPS_ENV, "").split(",") if s.strip()}
+    if step and (step in wanted or "*" in wanted):
+        url = os.environ.get(REFRESH_URL_ENV, "")
+        if not url:
+            raise RuntimeError(f"{step} is set to use the restricted login ({REFRESH_STEPS_ENV}) but {REFRESH_URL_ENV} "
+                               "is not set. Not falling back to the full login.")
+        return url, "restricted login (pipeline_refresh)"
     url = os.environ.get("SUPABASE_DB_URL", "")
     if not url:
         raise RuntimeError("SUPABASE_DB_URL is not set -- direct Postgres access is required.")
+    return url, "full login"
+
+
+@contextmanager
+def _session(step=None):
+    """One direct connection (autocommit; statements that need a transaction open
+    their own) holding the advisory lock for the duration. `step` is the command-center step id; it decides
+    which login is used (see _connection)."""
+    url, which = _connection(step)
+    _log(f"  database connection: {which}")
     conn = psycopg2.connect(url)
     conn.autocommit = True
     try:
@@ -295,7 +316,7 @@ def _ntt_changes(cur, targets=PROD, stg=STG["snapshot"]):
 
 def snapshot_dry_run():
     _log("Snapshot refresh DRY RUN: stage + validate only, no production table is touched.")
-    with _session() as conn, conn.cursor() as cur:
+    with _session("snapshot_dry_run") as conn, conn.cursor() as cur:
         try:
             new_period, rc_banks = _snapshot_precheck(cur)
             _stage_snapshot(cur)
@@ -373,7 +394,7 @@ def snapshot_swap():
     _check_guard()
     suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     _log(f"Snapshot refresh SWAP (backups suffixed {suffix}).")
-    with _session() as conn:
+    with _session("snapshot_swap") as conn:
         with conn.cursor() as cur:
             try:
                 new_period, rc_banks = _snapshot_precheck(cur)
@@ -472,7 +493,7 @@ def _validate_ubpr(cur, targets=PROD, stg=STG, strict=True):
 
 def ubpr_layer_dry_run():
     _log("UBPR layer DRY RUN: stage + validate only, no production table is touched.")
-    with _session() as conn, conn.cursor() as cur:
+    with _session("ubpr_layer_dry_run") as conn, conn.cursor() as cur:
         try:
             _stage_ubpr(cur)
             _validate_ubpr(cur, strict=False).raise_if_failed()
@@ -515,7 +536,7 @@ def ubpr_layer_swap():
     _check_guard()
     suffix = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     _log(f"UBPR layer SWAP (backups suffixed {suffix}).")
-    with _session() as conn:
+    with _session("ubpr_layer_swap") as conn:
         try:
             with conn.cursor() as cur:
                 _stage_ubpr(cur)

@@ -147,7 +147,7 @@ def _report(adds, renames, desired_n):
 
 def dry_run(target=PROD):
     _log("Institution directory refresh: DRY RUN (no table is changed).")
-    with _session() as conn, conn.cursor() as cur:
+    with _session("refresh_dim_institutions") as conn, conn.cursor() as cur:
         cur.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
         adds, renames, desired_n = _plan(cur, target)
         _report(adds, renames, desired_n)
@@ -159,7 +159,7 @@ def dry_run(target=PROD):
 def apply(target=PROD, backup_schema="backup", suffix=None):
     suffix = suffix or datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     _log(f"Institution directory refresh: APPLY (backup suffix {suffix}).")
-    with _session() as conn:
+    with _session("refresh_dim_institutions") as conn:
         with conn.cursor() as cur:
             adds, renames, desired_n = _plan(cur, target)
             _report(adds, renames, desired_n)

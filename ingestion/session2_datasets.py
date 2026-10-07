@@ -295,7 +295,7 @@ def refresh(name, schema="raw", backup_schema="backup", apply=None, fetch=None):
         spec["fetch"] = fetch
     apply = (os.environ.get(GUARD_ENV) == "yes") if apply is None else apply
     _log(f"[{name}] {'APPLY' if apply else 'DRY RUN (set ' + GUARD_ENV + '=yes to apply)'}")
-    with _session() as conn:
+    with _session("refresh_" + name) as conn:
         cur = conn.cursor()
         new, desc = spec["fetch"](cur, schema)
         if not new:

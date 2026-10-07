@@ -24,7 +24,7 @@ MAX_SHRINK = 0.20
 
 
 def refresh_network_top_targets():
-    with _session() as conn:
+    with _session("refresh_network_top_targets") as conn:
         cur = conn.cursor()
         old_n = _scalar(cur, "select count(*) from public.network_top_targets")
         _backup(cur, TABLE, "backup", "network_top_targets", time.strftime("%Y%m%d_%H%M%S"))
