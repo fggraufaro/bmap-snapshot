@@ -98,7 +98,7 @@ def main():
             return (len(name) + (end - start).days) % 17
 
         def fetch(cur_, schema_):
-            return s._fetch_cfpb_trend(cur_, schema_, today=date(2026, 10, 6), count=fake_count)
+            return s._fetch_cfpb_trend(cur_, schema_, today=date(2026, 10, 6), count=fake_count, calibrate=False)
 
         pre = fingerprint(cur, SCHEMA, spec["table"])[0]
         s.refresh("cfpb_trend", schema=SCHEMA, backup_schema=BAK, apply=True, fetch=fetch)
@@ -115,8 +115,20 @@ def main():
         cur.execute(f"select count(*) from {SCHEMA}.raw_cfpb_complaints_trend t join raw.raw_cfpb_complaints_trend p using (inst_key, week_ending) "
                     "where t.trailing_90d_count <> p.trailing_90d_count or t.insufficient_volume <> p.insufficient_volume")
         check("cfpb: the stored weeks 2026-09-10 and 2026-09-17 are untouched", cur.fetchone()[0] == 0)
+        # calibration: a mock API that matches the 90-day window must be reported as the better fit
+        cur.execute(f"select inst_key, trailing_90d_count from {SCHEMA}.raw_cfpb_complaints_trend where week_ending = (select max(week_ending) from {SCHEMA}.raw_cfpb_complaints_trend)")
+        stored = dict(cur.fetchall())
+        cur.execute(f"select inst_key, cfpb_company_name, complaints_2024 from {SCHEMA}.raw_cfpb_complaints order by inst_key")
+        insts = cur.fetchall()
+        byname = {n: k for k, n, _ in insts}
+        import contextlib, io
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            s._cfpb_calibrate(cur, SCHEMA, insts, lambda name, a, b: stored[byname[name]] + (0 if (b - a).days == 89 else 1))
+        out = buf.getvalue()
+        check("cfpb: calibration reports the matching window (53 of 53) and the wrong one (0 of 53)",
+              "start = week - 89): 53 of 53" in out and "start = week - 90): 0 of 53" in out, out)
         try:
-            s._cfpb_count.__wrapped__ if False else None
             import requests
             real = requests.get
             requests.get = lambda *a, **k: type("R", (), {"status_code": 403})()
