@@ -241,6 +241,35 @@ def _run_group_job(job_id, group_id):
                    log="\n".join(log_lines), finished_at=datetime.now(timezone.utc).isoformat())
 
 
+def _last_runs(step_ids):
+    """Latest pipeline_jobs row per step id, in as few requests as possible. One request fetches the newest 400 jobs
+    (enough for every step in normal use); only steps absent from that window get their own lookup."""
+    fields = "step_id,status,started_at,finished_at,error_message,log"
+    out = {}
+    complete = False   # True when the bulk request returned every job ever recorded
+    try:
+        r = http.get(f"{SUPA_URL}/rest/v1/pipeline_jobs?select={fields}&order=started_at.desc&limit=400",
+                     headers=_jobs_headers(), timeout=15)
+        rows = r.json() if r.ok else []
+        for row in rows:
+            out.setdefault(row["step_id"], {k: row.get(k) for k in fields.split(",") if k != "step_id"})
+        complete = r.ok and len(rows) < 400
+    except Exception:
+        pass
+    for sid in step_ids:
+        if sid not in out and complete:
+            out[sid] = None          # the whole history was in the window: this step has never run
+        elif sid not in out:
+            try:
+                r = http.get(f"{SUPA_URL}/rest/v1/pipeline_jobs?step_id=eq.{sid}&select={fields}&order=started_at.desc&limit=1",
+                             headers=_jobs_headers(), timeout=15)
+                rows = r.json() if r.ok else []
+                out[sid] = {k: rows[0].get(k) for k in fields.split(",") if k != "step_id"} if rows else None
+            except Exception:
+                out[sid] = None
+    return out
+
+
 _GROUP_OF = {sid: g["id"] for g in GROUPS for sid in g["steps"]}
 _GROUP_POSITION = {sid: i + 1 for g in GROUPS for i, sid in enumerate(g["steps"])}
 _SEPARATE = ["refresh_dim_institutions", "refresh_network_top_targets", "archive_year"]
@@ -264,14 +293,9 @@ def list_steps():
         return _cors_headers(jsonify({}))
 
     out = []
+    runs = _last_runs([s["id"] for s in ALL_STEPS])
     for s in ALL_STEPS:
-        url = (f"{SUPA_URL}/rest/v1/pipeline_jobs?step_id=eq.{s['id']}"
-               f"&select=status,started_at,finished_at,error_message&order=started_at.desc&limit=1")
-        try:
-            r = http.get(url, headers=_jobs_headers(), timeout=15)
-            last = r.json()[0] if r.ok and r.json() else None
-        except Exception:
-            last = None
+        last = runs.get(s["id"])
         qseq = _QUARTERLY_POSITION.get(s["id"])
         if s["id"] in _GROUP_OF:
             group, seq, phase = _GROUP_OF[s["id"]], _GROUP_POSITION[s["id"]], None
@@ -318,14 +342,9 @@ def list_groups():
     if request.method == "OPTIONS":
         return _cors_headers(jsonify({}))
     out = []
+    runs = _last_runs([f"group_{g['id']}" for g in GROUPS])
     for g in GROUPS:
-        url = (f"{SUPA_URL}/rest/v1/pipeline_jobs?step_id=eq.group_{g['id']}"
-               f"&select=status,started_at,finished_at,error_message,log&order=started_at.desc&limit=1")
-        try:
-            r = http.get(url, headers=_jobs_headers(), timeout=15)
-            last = r.json()[0] if r.ok and r.json() else None
-        except Exception:
-            last = None
+        last = runs.get(f"group_{g['id']}")
         out.append({"id": g["id"], "label": g["label"], "note": g["note"], "steps": g["steps"], "last_run": last})
     return jsonify(out)
 
