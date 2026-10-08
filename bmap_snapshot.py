@@ -6601,9 +6601,12 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
                       f"{f', in {branch_loc}' if branch_loc else ''}.")
     income = lead_branch.get("household_income") if lead_branch else None
     zhvi_yoy = lead_branch.get("zhvi_yoy_pct") if lead_branch else None
-    if income is not None and zhvi_yoy is not None:
-        strong.append(f"Home values there are climbing {'+' if float(zhvi_yoy) >= 0 else ''}"
-                      f"{float(zhvi_yoy):.1f}% a year on just ${float(income)/1000:.0f}K household income "
+    # a99: this bullet used to say "climbing" whatever the sign. Only a rise
+    # is a strength; a fall is surfaced under "What to validate next".
+    zhvi_falling = zhvi_yoy is not None and float(zhvi_yoy) < 0
+    if income is not None and zhvi_yoy is not None and not zhvi_falling:
+        strong.append(f"Home values in the branch's ZIP are about {float(zhvi_yoy):.1f}% higher over the "
+                      f"past year (Zillow), on just ${float(income)/1000:.0f}K household income "
                       f"— more headroom than it first looks.")
     if d.get("gap"):
         strong.append(f"Deposit growth is already running {d.get('gap')} "
@@ -6628,6 +6631,10 @@ def build_next_steps(prs, d, narr, logo_bytes, lead_branch=None, top_competitor=
     if lead_branch:
         validate.append("This Snapshot analyzed one priority branch in depth — validate whether the same "
                         "pattern holds across your other Invest-zone branches.")
+    if zhvi_falling:
+        validate.append(f"Home values in the branch's ZIP are about {abs(float(zhvi_yoy)):.1f}% lower over "
+                        f"the past year (Zillow) — worth checking local housing conditions before leaning "
+                        f"on the demographic case.")
     validate.append("ROA and deposit trends here reflect a single point in time — worth tracking quarter "
                     "over quarter, not just once.")
 

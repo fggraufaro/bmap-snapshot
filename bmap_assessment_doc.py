@@ -1414,7 +1414,7 @@ def _vulnerability_reasoning(c):
     if roa < 0.5:
         reasons.append(f"stressed profitability (ROA {roa:.2f}%) limiting their ability to compete on rate")
     if noncurrent > 2:
-        reasons.append(f"elevated asset-quality concerns ({noncurrent:.1f}% noncurrent) likely constraining growth appetite")
+        reasons.append(f"a reported noncurrent-asset ratio of {noncurrent:.1f}% — worth confirming what drives it before reading it as credit stress")
     if not reasons:
         return "a stable competitor — not showing acute weakness, but still a realistic size-based target"
     return "; ".join(reasons)
@@ -1447,8 +1447,12 @@ def _vulnerability_sentence(c, vuln_list):
         )
     if tag == "Losing deposits fast":
         return f"already losing deposits at scale ({yoy:+.1f}% YoY)"
-    if tag == "Highest credit stress of the three":
-        return f"carries the highest noncurrent-asset ratio of the three ({noncurrent:.1f}%), a real balance-sheet stress signal"
+    if tag == "Highest noncurrent ratio of the three":
+        return (
+            f"reports the highest noncurrent-asset ratio of the three ({noncurrent:.1f}%) — what drives it "
+            f"needs confirming before it is read as credit stress, since for some banks it is mostly "
+            f"government-guaranteed loans"
+        )
     if tag == "Weakest profitability of the three":
         return f"has the weakest profitability of the three (ROA {roa:.2f}%), limiting its ability to compete on rate"
     if tag == "Declining fastest of the three":
@@ -1502,7 +1506,7 @@ def _vulnerability_tags(vuln_list):
         elif yoy < -10:
             tags[name] = "Losing deposits fast"
         elif name == worst_noncurrent and _sf(c.get("noncurrent_pct")) > 1:
-            tags[name] = "Highest credit stress of the three"
+            tags[name] = "Highest noncurrent ratio of the three"
         elif name == worst_roa and _sf(c.get("roa")) < 1.5:
             tags[name] = "Weakest profitability of the three"
         elif name == worst_yoy and yoy < 0:
@@ -3549,12 +3553,28 @@ def render_branch_deep_dive(doc, b, strat, play, e, capped_yoy, branch_verdicts,
         # merger/reporting-driven decline got the same confident framing as
         # a genuinely declining competitor.
         top_is_unverified = _sf(top_target.get("yoy_pct")) < -20
-        closing_clause = (
-            "Confirm what's actually driving this decline against the bank's own filings before "
-            "building a capture plan around it."
-            if top_is_unverified else
-            "This is where deposit capture is realistically winnable, not just theoretically contestable."
+        # Same treatment for a target flagged only by its noncurrent ratio:
+        # that ratio can be mostly government-guaranteed past-dues, which is
+        # not credit stress, so it is a reason to verify, not to call the
+        # target "realistically winnable" (a88).
+        top_is_noncurrent_flag = (
+            _vulnerability_tags(vuln_list[:3]).get(top_target.get("bank_name"))
+            == "Highest noncurrent ratio of the three"
         )
+        if top_is_unverified:
+            closing_clause = (
+                "Confirm what's actually driving this decline against the bank's own filings before "
+                "building a capture plan around it."
+            )
+        elif top_is_noncurrent_flag:
+            closing_clause = (
+                "Confirm what drives that ratio in the bank's own filings before building a capture "
+                "plan around it."
+            )
+        else:
+            closing_clause = (
+                "This is where deposit capture is realistically winnable, not just theoretically contestable."
+            )
         p_win = doc.add_paragraph()
         p_win.paragraph_format.space_before = Pt(8)
         r_win_label = p_win.add_run("Priority target: ")
